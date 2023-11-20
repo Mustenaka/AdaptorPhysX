@@ -7,3 +7,8 @@ The project is still in its early stages.
 What is PBD: https://matthias-research.github.io/pages/publications/posBasedDyn.pdf
 
 TO-DO：
+
+new project name:
+
+Adaptive Physics Extension: AdaptorPhysX, APEX
+
