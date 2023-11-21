@@ -18,9 +18,9 @@ namespace APEX.Rope
         public GameObject obj;      // TO-DO: Use Material replace it.
         
         // physics param
-        public float mass;      // If you want the centroid offset, please change this generation method
-        [Range(0, 1f)] public float stiffness;
-        [Range(0, 1f)] public float damping;
+        public float mass = 1.0f;      // If you want the centroid offset, please change this generation method
+        [Range(0, 1f)] public float stiffness = 0.5f;
+        [Range(0, 1f)] public float damping = 0.5f;
         
         private void Start()
         {
