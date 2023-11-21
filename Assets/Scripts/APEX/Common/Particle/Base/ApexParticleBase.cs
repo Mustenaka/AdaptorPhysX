@@ -8,10 +8,16 @@ namespace APEX.Common.Particle
     /// </summary>
     public class ApexParticleBase
     {
+        public Vector3 previousPosition;
         public Vector3 position;
+        public Vector3 nextPosition;
+
         public Quaternion rotation;
         public Vector3 scale;
         
         public int index;
+
+        // physic param
+        public float mass;
     }
 }

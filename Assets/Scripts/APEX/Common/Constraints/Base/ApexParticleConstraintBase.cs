@@ -1,9 +1,7 @@
-namespace APEX.Common.Constraints.Base
+namespace APEX.Common.Constraints
 {
-    public class ApexParticleBase
+    public class ApexParticleConstraintBase
     {
-        public int index;
-        
         // particle left, particle right (both construct constraint)
         public int pl, pr;
     }
