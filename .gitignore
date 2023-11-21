@@ -43,35 +43,19 @@ sysinfo.txt
 *.log
 *.[Li][Oo][Gg]
 *.*.[Li][Oo][Gg]
-# this file is special
+
+# this file is so special
 /Logs/shadercompiler-UnityShaderCompiler.exe0.log
 
-# ES3 save json file
-Asset/SaveFile.json
+# something usersetting question
 /UserSettings/EditorUserSettings.asset
 /UserSettings/Layouts/default-2021.dwlt
 /UserSettings/Search.settings
-/Assets/SaveFile.json
-/Assets/Plugins/litjson-0.18.0
-/UserSettings/EditorUserSettings.asset
-/Assets/SaveFile.json.meta
+
 /ProjectSettings/ProjectVersion.txt
-/UserSettings/Layouts/default-2021.dwlt
-/UserSettings/EditorUserSettings.asset
+
 /Packages/packages-lock.json
-/Assets/SaveFile.json
-/UserSettings/Layouts/default-2021.dwlt
-/Packages/packages-lock.json
-/Packages/packages-lock.json
-/UserSettings/EditorUserSettings.asset
-<<<<<<< HEAD
-/Assets/Scenes/V1.0/LensPositioning/v0.2.0/LensPositioning_thrityLimit 1.unity
-/Assets/Scenes/V1.0/LensPositioning/v0.2.0/LensPositioning_thrityLimit 1.unity.meta
-=======
-/UserSettings/Layouts/default-2021.dwlt
->>>>>>> 92610c074ddf1c18e34e1422ca87e295017ae181
-/Assets/Scenes/V1.0/SOH/v0.0.0/ObjectClamping_Stage3.unity
-/Assets/Scenes/V1.0/SOH/v0.0.0/ObjectClamping_Stage3.unity.meta
-/Assets/Resources/New Physic Material.physicMaterial
-/Assets/Resources/New Physic Material.physicMaterial.meta
-/Assets/Temp.meta
+
+# IDE project
+.vscode/
+.idea/
