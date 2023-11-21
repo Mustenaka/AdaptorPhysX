@@ -57,5 +57,7 @@ sysinfo.txt
 /Packages/packages-lock.json
 
 # IDE project
+*.vscode/
 .vscode/
+*.idea/
 .idea/
