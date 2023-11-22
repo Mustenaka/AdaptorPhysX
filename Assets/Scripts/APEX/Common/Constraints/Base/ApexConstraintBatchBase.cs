@@ -10,12 +10,12 @@ namespace APEX.Common.Constraints
         public EApexConstraintBatchType constraintBatchType; // This ConstraintType 
         public Dictionary<int, List<T>> constraints;         // use hash table for quick search
 
-        private ApexConstraintBatchBase()
+        protected ApexConstraintBatchBase()
         {
             constraints = new Dictionary<int, List<T>>();
         }
 
-        private ApexConstraintBatchBase(EApexConstraintBatchType batchType)
+        protected ApexConstraintBatchBase(EApexConstraintBatchType batchType)
         {
             constraintBatchType = batchType;
             constraints = new Dictionary<int, List<T>>();
@@ -110,9 +110,19 @@ namespace APEX.Common.Constraints
         }
 
         /// <summary>
-        /// Do the constraint
+        /// Get Constraint by type
         /// </summary>
-        public void Do()
+        /// <param name="type">constraint type</param>
+        /// <returns>constraint</returns>
+        public virtual IApexConstraintBatch GetConstraintsByType(EApexConstraintBatchType type)
+        {
+            return this;
+        }
+
+        /// <summary>
+        /// Do the constraint, must override
+        /// </summary>
+        public virtual void Do()
         {
             // Do Constraint
         }

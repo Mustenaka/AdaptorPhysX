@@ -218,6 +218,9 @@ MonoBehaviour:
   stepSize: 1.2
   stepDirect: {x: -1, y: 0, z: 0}
   obj: {fileID: 0}
+  mass: 1
+  stiffness: 0
+  damping: 0
 --- !u!4 &268737613
 Transform:
   m_ObjectHideFlags: 0
