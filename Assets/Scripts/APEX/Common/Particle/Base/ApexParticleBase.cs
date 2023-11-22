@@ -16,7 +16,8 @@ namespace APEX.Common.Particle
         public Vector3 scale;
         
         public int index;
-
+        public bool isStatic;
+        
         // physic param
         public float mass;
     }

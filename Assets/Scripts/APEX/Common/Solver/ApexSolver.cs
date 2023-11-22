@@ -45,10 +45,14 @@ namespace APEX.Common.Solver
         
         private void SimulateGravity()
         {
-            Debug.Log(particles.Count);
             for (int i = 0; i < particles.Count; i++)
             {
-                Debug.Log("Debug: p.cnt" + particles.Count + " i:" +i);
+                // simplex pin
+                if (particles[i].isStatic)
+                {
+                    continue;
+                }
+                
                 particles[i].nextPosition = particles[i].nowPosition 
                                             + (1 - damping) * (particles[i].nowPosition - particles[i].previousPosition)
                                             + gravity * (dt * dt);
@@ -67,6 +71,11 @@ namespace APEX.Common.Solver
         {
             for (int i = 0; i < particles.Count; i++)
             {
+                if (particles[i].isStatic)
+                {
+                    continue;
+                }
+                
                 particles[i].previousPosition = particles[i].nowPosition;
                 particles[i].nowPosition = particles[i].nextPosition;
             }

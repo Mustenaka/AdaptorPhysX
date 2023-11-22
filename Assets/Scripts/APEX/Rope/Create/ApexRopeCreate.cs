@@ -30,6 +30,7 @@ namespace APEX.Rope
             if (obj == null)
             {
                 obj = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                Destroy(obj);
             }
             
             // is use self position, the firstParticlePosition is self
@@ -54,9 +55,6 @@ namespace APEX.Rope
             
             rope.particles = new List<ApexParticleBase>();
             rope.elements = new List<GameObject>();
-
-            solver.particles = new List<ApexParticleBase>();
-            solver.constraintBatch = new List<IApexConstraintBatch>();
             
             for (int i = 0; i < particleCount; i++)
             {
@@ -76,6 +74,17 @@ namespace APEX.Rope
                     scale = this.transform.localScale
                 };
 
+                // static the first particle
+                if (i == 0)
+                {
+                    p.isStatic = true;
+                }
+
+                if (i == 9)
+                {
+                    p.isStatic = true;
+                }
+                
                 rope.elements.Add(element);
                 rope.particles.Add(p);
             }
@@ -83,6 +92,9 @@ namespace APEX.Rope
             rope.solver.particles = rope.particles;
             rope.solver.stiffness = stiffness;
             rope.solver.damping = damping;
+
+            var distanceConstraint = new DistanceConstraint<ApexParticleBase>(ref rope.particles);
+            solver.constraintBatch.Add(distanceConstraint);
         }
     }
 }

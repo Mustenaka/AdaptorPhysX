@@ -11,9 +11,6 @@ namespace APEX.Rope
         public List<ApexParticleBase> particles = new List<ApexParticleBase>();
 
         private int ParticlesCount => particles.Count;
-
-        public List<Vector3> originStatus;
-        public List<Vector3> naturalPotentialEnergyRestingPosition;
         
         public ApexSolver solver;
         
