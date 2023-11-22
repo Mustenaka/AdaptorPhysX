@@ -5,11 +5,10 @@ using UnityEngine;
 
 namespace APEX.Common.Solver
 {
-    public class ApexSolver<T1> : MonoBehaviour 
-        where T1: ApexParticleBase
+    public class ApexSolver: MonoBehaviour 
     {
-        public List<IApexConstraintBatch> constraintBatch;
-        public List<T1> particles;
+        public List<IApexConstraintBatch> constraintBatch = new List<IApexConstraintBatch>();
+        public List<ApexParticleBase> particles = new List<ApexParticleBase>();
 
         // physics param
         public Vector3 gravity = new Vector3(0, -9.81f, 0);
@@ -20,12 +19,6 @@ namespace APEX.Common.Solver
         public float dt = 0.002f;
         public float accTime;
         public int iterator;
-
-        // private void Awake()
-        // {
-        //     constraintBatch = new List<IApexConstraintBatch>();
-        //     particles = new List<T1>();
-        // }
 
         private void Update()
         {
@@ -43,17 +36,19 @@ namespace APEX.Common.Solver
         private void Simulator()
         {
             // Do Gravite
-            SimulateGravite();
+            SimulateGravity();
             // Do Constraint
             SimulateConstraint();
             // Update
             SimulateUpdate();
         }
         
-        private void SimulateGravite()
+        private void SimulateGravity()
         {
+            Debug.Log(particles.Count);
             for (int i = 0; i < particles.Count; i++)
             {
+                Debug.Log("Debug: p.cnt" + particles.Count + " i:" +i);
                 particles[i].nextPosition = particles[i].nowPosition 
                                             + (1 - damping) * (particles[i].nowPosition - particles[i].previousPosition)
                                             + gravity * (dt * dt);

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using APEX.Common.Constraints;
 using APEX.Common.Particle;
 using APEX.Common.Solver;
 using Unity.VisualScripting;
@@ -47,11 +48,15 @@ namespace APEX.Rope
         private void InitRope()
         {
             var rope = this.AddComponent<ApexRope>();
-            var solver = this.AddComponent<ApexSolver<ApexLineParticle>>();
-            Debug.Log(solver.name);
+            var solver = this.AddComponent<ApexSolver>();
+
             rope.solver = solver;
-            rope.particles = new List<ApexLineParticle>();
+            
+            rope.particles = new List<ApexParticleBase>();
             rope.elements = new List<GameObject>();
+
+            solver.particles = new List<ApexParticleBase>();
+            solver.constraintBatch = new List<IApexConstraintBatch>();
             
             for (int i = 0; i < particleCount; i++)
             {
@@ -74,10 +79,10 @@ namespace APEX.Rope
                 rope.elements.Add(element);
                 rope.particles.Add(p);
             }
-            
-            solver.particles = rope.particles;
-            solver.stiffness = stiffness;
-            solver.damping = damping;
+
+            rope.solver.particles = rope.particles;
+            rope.solver.stiffness = stiffness;
+            rope.solver.damping = damping;
         }
     }
 }

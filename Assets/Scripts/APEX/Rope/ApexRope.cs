@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using APEX.Common.Particle;
 using APEX.Common.Solver;
@@ -8,15 +7,15 @@ namespace APEX.Rope
 {
     public class ApexRope : MonoBehaviour
     {
-        public List<GameObject> elements;  // TO-DO: Use Material or something else to replace it.
-        public List<ApexLineParticle> particles;
+        public List<GameObject> elements = new List<GameObject>();  // TO-DO: Use Material or something else to replace it.
+        public List<ApexParticleBase> particles = new List<ApexParticleBase>();
 
         private int ParticlesCount => particles.Count;
 
         public List<Vector3> originStatus;
         public List<Vector3> naturalPotentialEnergyRestingPosition;
         
-        public ApexSolver<ApexLineParticle> solver;
+        public ApexSolver solver;
         
         private void Update()
         {
