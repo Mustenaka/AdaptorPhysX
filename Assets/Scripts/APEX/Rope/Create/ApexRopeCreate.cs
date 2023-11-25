@@ -75,12 +75,7 @@ namespace APEX.Rope
                 };
 
                 // static the first particle
-                if (i == 0)
-                {
-                    p.isStatic = true;
-                }
-
-                if (i == 9)
+                if (i == 1)
                 {
                     p.isStatic = true;
                 }

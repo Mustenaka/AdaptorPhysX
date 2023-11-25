@@ -37,6 +37,8 @@ namespace APEX.Common.Solver
         {
             // Do Gravite
             SimulateGravity();
+            // Do Global ｜ Local Force
+            
             // Do Constraint
             SimulateConstraint();
             // Update
