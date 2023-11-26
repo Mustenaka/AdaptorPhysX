@@ -16,6 +16,7 @@ namespace APEX.Common.Constraints
         // particle group
         public List<T> particles;
 
+        // Create Constraint By particles
         public DistanceConstraint(ref List<T> particles)
         {
             constraintBatchType = EApexConstraintBatchType.DistanceConstraint;

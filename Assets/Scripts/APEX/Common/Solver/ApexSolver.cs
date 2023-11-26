@@ -57,7 +57,7 @@ namespace APEX.Common.Solver
                 
                 particles[i].nextPosition = particles[i].nowPosition 
                                             + (1 - damping) * (particles[i].nowPosition - particles[i].previousPosition)
-                                            + gravity * (dt * dt);
+                                            + gravity / particles[i].mass * (dt * dt);
             }
         }
 
