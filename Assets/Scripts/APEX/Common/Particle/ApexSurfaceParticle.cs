@@ -3,7 +3,8 @@ using System.Collections.Generic;
 namespace APEX.Common.Particle
 {
     /// <summary>
-    /// Particle implementation
+    /// Particle implementation:
+    ///     Use this for Softbody particle implementation.
     /// </summary>
     public class ApexSurfaceParticle : ApexParticleBase
     {

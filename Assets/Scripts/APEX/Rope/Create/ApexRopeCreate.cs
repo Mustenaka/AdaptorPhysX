@@ -70,12 +70,15 @@ namespace APEX.Rope
                     mass = mass,
                     previousPosition = particlePosition,
                     nowPosition = particlePosition,
-                    rotation = Quaternion.Euler(0,0,0),
+                    previousRotation = Quaternion.Euler(0,0,0),
+                    nowRotation =  Quaternion.Euler(0,0,0),
+                    nextRoatation = Quaternion.Euler(0,0,0),
+                    
                     scale = this.transform.localScale
                 };
 
                 // static the first particle
-                if (i == 1)
+                if (i == 0)
                 {
                     p.isStatic = true;
                 }

@@ -12,7 +12,10 @@ namespace APEX.Common.Particle
         public Vector3 nowPosition;
         public Vector3 nextPosition;
 
-        public Quaternion rotation;
+        public Quaternion previousRotation;
+        public Quaternion nowRotation;
+        public Quaternion nextRoatation;
+        
         public Vector3 scale;
         
         public int index;
