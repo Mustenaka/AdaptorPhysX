@@ -23,5 +23,9 @@ This project contains the following modules:
 
 
 
+About：
+
+My blog about PBD，URL：https://www.mustenaka.cn/index.php/2023/09/06/pbd-method-learn-01/
+
 Adaptive Physics Extension: AdaptorPhysX, APEX
 
