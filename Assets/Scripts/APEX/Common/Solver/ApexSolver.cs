@@ -9,7 +9,7 @@ namespace APEX.Common.Solver
     {
         public List<IApexConstraintBatch> constraintBatch = new List<IApexConstraintBatch>();
         public List<ApexParticleBase> particles = new List<ApexParticleBase>();
-
+        
         // physics param
         public Vector3 gravity = new Vector3(0, -9.81f, 0);
         [Range(0, 1f)] public float stiffness = 0.5f;
