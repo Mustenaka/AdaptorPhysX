@@ -5,20 +5,20 @@ using APEX.Common.Constraints.Base;
 
 namespace APEX.Common.Constraints
 {
-    public abstract class ApexConstraintBatchBase<T> : IApexConstraintBatch where T : ApexParticleConstraintBase, new()
+    public abstract class ApexConstraintBatchBase : IApexConstraintBatch
     {
         public EApexConstraintBatchType constraintBatchType; // This ConstraintType 
-        public Dictionary<int, List<T>> constraints;         // use hash table for quick search
+        public Dictionary<int, List<ApexConstraintPair>> constraints;         // use hash table for quick search
 
         protected ApexConstraintBatchBase()
         {
-            constraints = new Dictionary<int, List<T>>();
+            constraints = new Dictionary<int, List<ApexConstraintPair>>();
         }
 
         protected ApexConstraintBatchBase(EApexConstraintBatchType batchType)
         {
             constraintBatchType = batchType;
-            constraints = new Dictionary<int, List<T>>();
+            constraints = new Dictionary<int, List<ApexConstraintPair>>();
         }
 
         /// <summary>
@@ -28,7 +28,7 @@ namespace APEX.Common.Constraints
         /// <param name="pr"></param>
         public void AddConstraint(int pl, int pr)
         {
-            var t = new T
+            var t = new ApexConstraintPair
             {
                 pl = pl,
                 pr = pr
@@ -42,7 +42,7 @@ namespace APEX.Common.Constraints
             else
             {
                 // the constraint.key is empty than create the key and value
-                constraints.Add(pl, new List<T>()
+                constraints.Add(pl, new List<ApexConstraintPair>()
                 {
                     t
                 });
@@ -61,13 +61,8 @@ namespace APEX.Common.Constraints
             { 
                 throw new SystemException("particle" + l + " not have constraint to " + r);
             }
-                
-            var p = new ApexParticleConstraintBase()
-            {
-                pl = l,
-                pr = r
-            };
-            particleConstraints.Remove(p as T);
+            
+            particleConstraints.RemoveAll(c => c.pl == l && c.pr == r);
         }
 
         /// <summary>

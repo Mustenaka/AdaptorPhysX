@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace APEX.Common.Constraints
 {
-    public class DistanceConstraint<T> : ApexConstraintBatchBase<ApexParticleConstraintBase> where T : ApexParticleBase
+    public class DistanceConstraint<T> : ApexConstraintBatchBase where T : ApexParticleBase
     {
         // the rest length in its natural state
         public float restLength = 1.2f;
@@ -23,10 +23,10 @@ namespace APEX.Common.Constraints
             this.particles = particles;
 
             // TEMP: constraint connect particle construct function.
-            this.constraints = new Dictionary<int, List<ApexParticleConstraintBase>>();
+            this.constraints = new Dictionary<int, List<ApexConstraintPair>>();
             for (int i = 0; i < particles.Count - 1; i++)
             {
-                constraints[i] = new List<ApexParticleConstraintBase>()
+                constraints[i] = new List<ApexConstraintPair>()
                 {
                     new()
                     {
