@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using APEX.Common.Constraints.Base;
 using APEX.Common.Particle;
+using Unity.VisualScripting;
 using UnityEngine;
 
 namespace APEX.Common.Constraints
@@ -17,7 +18,7 @@ namespace APEX.Common.Constraints
         public List<T> particles;
 
         // Create Constraint By particles
-        public DistanceConstraint(ref List<T> particles)
+        public DistanceConstraint(ref List<T> particles, bool doubleConnect = true)
         {
             constraintBatchType = EApexConstraintBatchType.DistanceConstraint;
             this.particles = particles;
@@ -26,19 +27,17 @@ namespace APEX.Common.Constraints
             this.constraints = new Dictionary<int, List<ApexConstraintPair>>();
             for (int i = 0; i < particles.Count - 1; i++)
             {
-                constraints[i] = new List<ApexConstraintPair>()
+                var lToR = new ApexConstraintPair(this.particles[i].index, this.particles[i + 1].index);
+                var rToL = new ApexConstraintPair(this.particles[i + 1].index, this.particles[i].index);
+
+                constraints[i] ??= new List<ApexConstraintPair>();
+                constraints[i + 1] ??= new List<ApexConstraintPair>();
+
+                constraints[i].Add(lToR);
+                if (doubleConnect)
                 {
-                    new()
-                    {
-                        pl = this.particles[i].index,
-                        pr = this.particles[i + 1].index
-                    },
-                    // new()
-                    // {
-                    //     pl = this.particles[i + 1].index,
-                    //     pr = this.particles[i].index
-                    // }
-                };
+                    constraints[i + 1].Add(rToL);
+                }
             }
         }
 
