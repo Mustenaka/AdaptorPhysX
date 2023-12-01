@@ -30,6 +30,7 @@ namespace APEX.Common.Constraints
                 var lToR = new ApexConstraintPair(this.particles[i].index, this.particles[i + 1].index);
                 var rToL = new ApexConstraintPair(this.particles[i + 1].index, this.particles[i].index);
 
+                // Do not use ??= expression in Unity
                 if (!constraints.ContainsKey(i))
                 {
                     constraints.Add(i, new List<ApexConstraintPair>());
