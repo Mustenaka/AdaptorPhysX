@@ -50,14 +50,14 @@ namespace APEX.Common.Solver
             for (int i = 0; i < particles.Count; i++)
             {
                 // simplex pin
-                if (particles[i].IsStatic)
+                if (particles[i].isStatic)
                 {
                     continue;
                 }
                 
-                particles[i].NextPosition = particles[i].NowPosition 
-                                            + (1 - damping) * (particles[i].NowPosition - particles[i].PreviousPosition)
-                                            + gravity / particles[i].Mass * (dt * dt);
+                particles[i].nextPosition = particles[i].nowPosition 
+                                            + (1 - damping) * (particles[i].nowPosition - particles[i].previousPosition)
+                                            + gravity / particles[i].mass * (dt * dt);
             }
         }
 
@@ -73,13 +73,13 @@ namespace APEX.Common.Solver
         {
             for (int i = 0; i < particles.Count; i++)
             {
-                if (particles[i].IsStatic)
+                if (particles[i].isStatic)
                 {
                     continue;
                 }
                 
-                particles[i].PreviousPosition = particles[i].NowPosition;
-                particles[i].NowPosition = particles[i].NextPosition;
+                particles[i].previousPosition = particles[i].nowPosition;
+                particles[i].nowPosition = particles[i].nextPosition;
             }
         }
     }

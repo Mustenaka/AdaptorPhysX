@@ -9,25 +9,25 @@ namespace APEX.Common.Particle
     public class ApexParticleBase
     {
         /* position, serialize nowPosition */
-        public Vector3 PreviousPosition { get; set; }
-        public Vector3 NowPosition{ get; set; }
-        public Vector3 NextPosition{ get; set; }
+        public Vector3 previousPosition;
+        public Vector3 nowPosition;
+        public Vector3 nextPosition;
 
         /* rotation, serialize nowRotation, Rotation need adaptive game engine*/
-        public Quaternion PreviousRotation{ get; set; }
-        public Quaternion NowRotation{ get; set; }
-        public Quaternion NextRoatation{ get; set; }
+        public Quaternion previousRotation;
+        public Quaternion nowRotation;
+        public Quaternion nextRotation;
         
         /* scale equal transform.TransLocalScale */
-        public Vector3 Scale{ get; set; }
+        public Vector3 scale;
         
         /* Index of the particle array */
-        public int Index{ get; set; }
+        public int index;
         
         /* True - this particle nextPosition will not apply nowPosition */
-        public bool IsStatic{ get; set; }
+        public bool isStatic;
         
         /* physic param */
-        public float Mass{ get; set; }
+        public float mass;
     }
 }

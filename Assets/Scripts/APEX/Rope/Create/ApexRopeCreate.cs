@@ -75,7 +75,7 @@ namespace APEX.Rope
                     nowPosition = particlePosition,
                     previousRotation = Quaternion.Euler(0,0,0),
                     nowRotation =  Quaternion.Euler(0,0,0),
-                    nextRoatation = Quaternion.Euler(0,0,0),
+                    nextRotation = Quaternion.Euler(0,0,0),
                     
                     scale = this.transform.localScale
                 };
@@ -90,11 +90,11 @@ namespace APEX.Rope
                 rope.particles.Add(p);
             }
 
-            rope.solver.particles = rope.particles;
+            rope.solver.particles = new List<ApexParticleBase>(rope.particles);
             rope.solver.stiffness = stiffness;
             rope.solver.damping = damping;
 
-            var distanceConstraint = new DistanceConstraint<ApexParticleBase>(ref rope.particles);
+            var distanceConstraint = new DistanceConstraint<ApexLineParticle>(ref rope.particles);
             solver.constraintBatch.Add(distanceConstraint);
         }
     }
