@@ -27,9 +27,9 @@ namespace APEX.Common.Constraints
             this.constraints = new Dictionary<int, List<ApexConstraintPair>>();
             for (int i = 0; i < particles.Count - 1; i++)
             {
-                var lToR = new ApexConstraintPair(this.particles[i].index, this.particles[i + 1].index);
-                var rToL = new ApexConstraintPair(this.particles[i + 1].index, this.particles[i].index);
-
+                var lToR = new ApexConstraintPair(this.particles[i].Index, this.particles[i + 1].Index);
+                var rToL = new ApexConstraintPair(this.particles[i + 1].Index, this.particles[i].Index);
+                
                 constraints[i] ??= new List<ApexConstraintPair>();
                 constraints[i + 1] ??= new List<ApexConstraintPair>();
 
@@ -47,10 +47,10 @@ namespace APEX.Common.Constraints
             {
                 foreach (var single in constraint.Value)
                 {
-                    CalcParticleConstraint(ref particles[single.pl].nextPosition,
-                        ref particles[single.pr].nextPosition, 
-                        particles[single.pl].isStatic,
-                        particles[single.pr].isStatic);
+                    CalcParticleConstraint(ref particles[single.pl].NextPosition,
+                        ref particles[single.pr].NextPosition, 
+                        particles[single.pl].IsStatic,
+                        particles[single.pr].IsStatic);
                 }
             }
         }

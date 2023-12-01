@@ -8,7 +8,7 @@ namespace APEX.Rope
     public class ApexRope : MonoBehaviour
     {
         public List<GameObject> elements = new List<GameObject>();  // TO-DO: Use Material or something else to replace it.
-        public List<ApexParticleBase> particles = new List<ApexParticleBase>();
+        public List<ApexLineParticle> particles = new List<ApexLineParticle>();
 
         private int ParticlesCount => particles.Count;
         

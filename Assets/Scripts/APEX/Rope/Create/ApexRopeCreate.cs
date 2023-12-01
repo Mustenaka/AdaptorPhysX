@@ -7,6 +7,9 @@ using UnityEngine;
 
 namespace APEX.Rope
 {
+    /// <summary>
+    /// rope create
+    /// </summary>
     public class ApexRopeCreate : MonoBehaviour
     {
         public bool useSelfPosition;
@@ -19,7 +22,7 @@ namespace APEX.Rope
         
         public GameObject obj;      // TO-DO: Use Material replace it.
         
-        // physics param
+        // default physics param(only use for create)
         public float mass = 1.0f;      // If you want the centroid offset, please change this generation method
         [Range(0, 1f)] public float stiffness = 0.5f;
         [Range(0, 1f)] public float damping = 0.5f;
@@ -53,7 +56,7 @@ namespace APEX.Rope
 
             rope.solver = solver;
             
-            rope.particles = new List<ApexParticleBase>();
+            rope.particles = new List<ApexLineParticle>();
             rope.elements = new List<GameObject>();
             
             for (int i = 0; i < particleCount; i++)
