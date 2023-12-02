@@ -42,6 +42,7 @@ namespace APEX.Common.Constraints
                 }
 
                 constraints[i].Add(lToR);
+                
                 if (doubleConnect)
                 {
                     constraints[i + 1].Add(rToL);

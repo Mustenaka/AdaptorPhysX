@@ -18,7 +18,7 @@ namespace APEX.Common.Solver
         // simulator param
         public float dt = 0.002f;
         public float accTime;
-        public int iterator;
+        public int iterator = 10;
 
         private void Update()
         {
@@ -35,14 +35,19 @@ namespace APEX.Common.Solver
 
         private void Simulator()
         {
-            // Do Gravite
-            SimulateGravity();
-            // Do Global ｜ Local Force
+            for (int i = 0; i < iterator; i++)
+            {
+                // Do Gravite
+                SimulateGravity();
+                
+                // Do Global ｜ Local Force
             
-            // Do Constraint
-            SimulateConstraint();
-            // Update
-            SimulateUpdate();
+                // Do Constraint
+                SimulateConstraint();
+                
+                // Update
+                SimulateUpdate();
+            }
         }
         
         private void SimulateGravity()
