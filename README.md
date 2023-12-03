@@ -15,7 +15,15 @@ This project contains the following modules:
 
 ## Effect
 
+##### Rope:
+
+1 rope, with 100 particle, iterator 10, constraint have: distance, no optimize
+
+![rope-100p-constraint-distance](./Pic/Effect/Rope/rope-100p-constraint-distance.gif)
+
 (waiting for upload)
+
+
 
 ## Custom, rewrite
 
