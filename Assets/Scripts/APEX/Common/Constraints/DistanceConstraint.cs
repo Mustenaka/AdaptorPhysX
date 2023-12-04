@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using APEX.Common.Constraints.Base;
 using APEX.Common.Particle;
-using Unity.VisualScripting;
 using UnityEngine;
 
 namespace APEX.Common.Constraints
@@ -24,21 +23,21 @@ namespace APEX.Common.Constraints
             this.particles = particles;
 
             // TEMP: constraint connect particle construct function.
-            this.constraints = new Dictionary<int, List<ApexConstraintPair>>();
+            this.constraints = new Dictionary<int, List<Constraints.ApexConstraintParticleDouble>>();
             for (int i = 0; i < particles.Count - 1; i++)
             {
-                var lToR = new ApexConstraintPair(this.particles[i].index, this.particles[i + 1].index);
-                var rToL = new ApexConstraintPair(this.particles[i + 1].index, this.particles[i].index);
+                var lToR = new Constraints.ApexConstraintParticleDouble(this.particles[i].index, this.particles[i + 1].index);
+                var rToL = new Constraints.ApexConstraintParticleDouble(this.particles[i + 1].index, this.particles[i].index);
 
                 // Do not use ??= expression in Unity
                 if (!constraints.ContainsKey(i))
                 {
-                    constraints.Add(i, new List<ApexConstraintPair>());
+                    constraints.Add(i, new List<Constraints.ApexConstraintParticleDouble>());
                 }
 
                 if (!constraints.ContainsKey(i + 1))
                 {
-                    constraints.Add(i + 1, new List<ApexConstraintPair>());
+                    constraints.Add(i + 1, new List<Constraints.ApexConstraintParticleDouble>());
                 }
 
                 constraints[i].Add(lToR);

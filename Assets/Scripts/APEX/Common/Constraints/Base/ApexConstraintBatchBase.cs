@@ -7,18 +7,19 @@ namespace APEX.Common.Constraints
 {
     public abstract class ApexConstraintBatchBase : IApexConstraintBatch
     {
-        public EApexConstraintBatchType constraintBatchType; // This ConstraintType 
-        public Dictionary<int, List<ApexConstraintPair>> constraints;         // use hash table for quick search
+        public EApexConstraintBatchType constraintBatchType;                               // This ConstraintType 
+        
+        protected Dictionary<int, List<ApexConstraintParticleDouble>> constraints;         // use hash table for quick search
 
         protected ApexConstraintBatchBase()
         {
-            constraints = new Dictionary<int, List<ApexConstraintPair>>();
+            constraints = new Dictionary<int, List<ApexConstraintParticleDouble>>();
         }
 
         protected ApexConstraintBatchBase(EApexConstraintBatchType batchType)
         {
             constraintBatchType = batchType;
-            constraints = new Dictionary<int, List<ApexConstraintPair>>();
+            constraints = new Dictionary<int, List<ApexConstraintParticleDouble>>();
         }
 
         /// <summary>
@@ -28,7 +29,7 @@ namespace APEX.Common.Constraints
         /// <param name="pr"></param>
         public void AddConstraint(int pl, int pr)
         {
-            var t = new ApexConstraintPair
+            var t = new ApexConstraintParticleDouble
             {
                 pl = pl,
                 pr = pr
@@ -42,7 +43,7 @@ namespace APEX.Common.Constraints
             else
             {
                 // the constraint.key is empty than create the key and value
-                constraints.Add(pl, new List<ApexConstraintPair>()
+                constraints.Add(pl, new List<ApexConstraintParticleDouble>()
                 {
                     t
                 });

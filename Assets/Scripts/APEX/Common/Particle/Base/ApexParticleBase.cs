@@ -25,9 +25,6 @@ namespace APEX.Common.Particle
         /* Index of the particle array */
         public int index;
         
-        /* connect particle index */
-        public List<int> connectIndexs;
-        
         /* True - this particle nextPosition will not apply nowPosition */
         public bool isStatic;
         
