@@ -4,7 +4,7 @@ namespace APEX.Common.Constraints
     /// Constraint Connect
     ///     Double particle link
     /// </summary>
-    public class ApexConstraintParticleDouble : ApexConstraintParticleBase
+    public class ApexConstraintParticleDouble
     {
         // particle left, particle right (both construct constraint)
         public int pl, pr;

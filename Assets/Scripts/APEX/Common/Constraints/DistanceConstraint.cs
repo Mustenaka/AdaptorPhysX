@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace APEX.Common.Constraints
 {
-    public class DistanceConstraint<T> : ApexConstraintBatchBase where T : ApexParticleBase
+    public class DistanceConstraint<T> : ApexConstraintBatchDouble where T : ApexParticleBase
     {
         // the rest length in its natural state
         public float restLength = 1.2f;

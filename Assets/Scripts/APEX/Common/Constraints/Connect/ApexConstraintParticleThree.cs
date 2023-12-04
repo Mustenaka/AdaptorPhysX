@@ -4,7 +4,7 @@ namespace APEX.Common.Constraints
     /// Constraint Connect
     ///     Triple particle link
     /// </summary>
-    public class ApexConstraintParticleThree : ApexConstraintParticleBase
+    public class ApexConstraintParticleThree
     {
         // particle left, mid, right
         public int pl, pmid, pr;

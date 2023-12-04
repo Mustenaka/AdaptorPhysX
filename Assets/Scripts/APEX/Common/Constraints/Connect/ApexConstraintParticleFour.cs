@@ -4,7 +4,7 @@ namespace APEX.Common.Constraints
     /// Constraint Connect
     ///     Quadruple particle link
     /// </summary>
-    public class ApexConstraintParticleFour : ApexConstraintParticleBase
+    public class ApexConstraintParticleFour
     {
         // particle quadruple
         public int p1, p2, p3, p4;
