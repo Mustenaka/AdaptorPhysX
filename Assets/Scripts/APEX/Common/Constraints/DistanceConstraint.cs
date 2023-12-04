@@ -5,12 +5,16 @@ using UnityEngine;
 
 namespace APEX.Common.Constraints
 {
+    /// <summary>
+    /// Distance constraint, a constraint based on the target length
+    /// </summary>
+    /// <typeparam name="T">particle</typeparam>
     public class DistanceConstraint<T> : ApexConstraintBatchDouble where T : ApexParticleBase
     {
         // the rest length in its natural state
         public float restLength = 1.2f;
 
-        // Relaxation Parameter
+        // Relaxation Parameter Range(0, 1)
         public float stiffness = 0.5f;
 
         // particle group

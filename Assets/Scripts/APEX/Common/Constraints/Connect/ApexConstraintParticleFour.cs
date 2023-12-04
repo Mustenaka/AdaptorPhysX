@@ -2,7 +2,7 @@ namespace APEX.Common.Constraints
 {
     /// <summary>
     /// Constraint Connect
-    ///     Quadruple particle link
+    ///     Quadruple particle link, Often applied to square constraints
     /// </summary>
     public class ApexConstraintParticleFour
     {

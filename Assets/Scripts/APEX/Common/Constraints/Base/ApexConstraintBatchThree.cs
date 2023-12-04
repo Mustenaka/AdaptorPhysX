@@ -5,58 +5,59 @@ using APEX.Common.Constraints.Base;
 
 namespace APEX.Common.Constraints
 {
-    public abstract class ApexConstraintBatchDouble : IApexConstraintBatch
+    public abstract class ApexConstraintBatchThree : IApexConstraintBatch
     {
         public EApexConstraintBatchType constraintBatchType;                               // This ConstraintType 
         
-        protected Dictionary<int, List<ApexConstraintParticleDouble>> constraints;         // use hash table for quick search
+        protected Dictionary<int, List<ApexConstraintParticleThree>> constraints;         // use hash table for quick search
 
         /// <summary>
         /// Create ApexConstraintBatchDouble
         /// </summary>
-        protected ApexConstraintBatchDouble()
+        protected ApexConstraintBatchThree()
         {
-            constraints = new Dictionary<int, List<ApexConstraintParticleDouble>>();
+            constraints = new Dictionary<int, List<ApexConstraintParticleThree>>();
         }
 
         /// <summary>
         /// Create ApexConstraintBatchDouble and appoint batchType
         /// </summary>
         /// <param name="batchType"></param>
-        protected ApexConstraintBatchDouble(EApexConstraintBatchType batchType)
+        protected ApexConstraintBatchThree(EApexConstraintBatchType batchType)
         {
             constraintBatchType = batchType;
-            constraints = new Dictionary<int, List<ApexConstraintParticleDouble>>();
+            constraints = new Dictionary<int, List<ApexConstraintParticleThree>>();
         }
         
         /// <summary>
         /// Add Constraint
         /// </summary>
-        /// <param name="particles">the constraint particle(must have 2)</param>
-        /// <exception cref="SystemException">if the particles length is not 2, exception</exception>
+        /// <param name="particles">the constraint particle(must have 3)</param>
+        /// <exception cref="SystemException">if the particles length is not 3, exception</exception>
         public void AddConstraint(params int[] particles)
         {
             int len = particles.Length;
-            if (len != 2)
+            if (len != 3)
             {
-                throw new SystemException("AddConstraint must get 2 particle");
+                throw new SystemException("AddConstraint must get 3 particle");
             }
             
-            var t = new ApexConstraintParticleDouble
+            var t = new ApexConstraintParticleThree
             {
                 pl = particles[0],
-                pr = particles[1]
+                pmid = particles[1],
+                pr = particles[2],
             };
             
             // if constraint.key is alive, add the constraint
-            if (constraints.TryGetValue(particles[0], out var particleConstraints))
+            if (constraints.TryGetValue(particles[1], out var particleConstraints))
             {
                 particleConstraints.Add(t);
             }
             else
             {
                 // the constraint.key is empty than create the key and value
-                constraints.Add(particles[0], new List<ApexConstraintParticleDouble>()
+                constraints.Add(particles[1], new List<ApexConstraintParticleThree>()
                 {
                     t
                 });
@@ -71,17 +72,18 @@ namespace APEX.Common.Constraints
         public void RemoveConstraint(params int[] particles)
         {
             int len = particles.Length;
-            if (len != 2)
+            if (len != 3)
             {
-                throw new SystemException("AddConstraint must get 2 particle");
+                throw new SystemException("AddConstraint must get 3 particle");
             }
             
             if (!constraints.TryGetValue(particles[0], out var particleConstraints))
             { 
-                throw new SystemException("particle" + particles[0] + " not have constraint to " + particles[1]);
+                throw new SystemException("mid particle" + particles[1] + " not have constraint to " + particles[0] +
+                                          " and " + particles[2]);
             }
-            
-            particleConstraints.RemoveAll(c => c.pl == particles[0] && c.pr == particles[1]);
+
+            particleConstraints.RemoveAll(c => c.pl == particles[0] && c.pmid == particles[1] && c.pr == particles[2]);
         }
 
         /// <summary>
