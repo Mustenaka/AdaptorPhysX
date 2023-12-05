@@ -2,9 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using APEX.Common.Constraints.Base;
+using UnityEngine;
 
 namespace APEX.Common.Constraints
 {
+    [System.Serializable]
     public abstract class ApexConstraintBatchThree : IApexConstraintBatch
     {
         public EApexConstraintBatchType constraintBatchType;                               // This ConstraintType 

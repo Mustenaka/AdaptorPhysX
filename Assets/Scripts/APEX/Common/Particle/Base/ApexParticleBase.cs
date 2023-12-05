@@ -7,6 +7,7 @@ namespace APEX.Common.Particle
     /// The base type of the particle type,
     /// if you need to extend the build, please inherit this module
     /// </summary>
+    [System.Serializable]
     public class ApexParticleBase
     {
         /* position, serialize nowPosition */

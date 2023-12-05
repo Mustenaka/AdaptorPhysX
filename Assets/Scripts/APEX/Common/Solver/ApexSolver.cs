@@ -2,14 +2,15 @@ using System.Collections.Generic;
 using APEX.Common.Constraints;
 using APEX.Common.Particle;
 using APEX.Tools;
+using UnityEditor;
 using UnityEngine;
 
 namespace APEX.Common.Solver
 {
     public class ApexSolver: MonoBehaviour 
     {
-        public List<IApexConstraintBatch> constraintBatch = new List<IApexConstraintBatch>();
-        public List<ApexParticleBase> particles = new List<ApexParticleBase>();
+        [SerializeReference] public List<IApexConstraintBatch> constraintBatch = new List<IApexConstraintBatch>();
+        public List<ApexParticleBase> particles = new List<ApexParticleBase>();     // particle container
             
         // physics param
         public Vector3 gravity = new Vector3(0, -9.81f, 0);

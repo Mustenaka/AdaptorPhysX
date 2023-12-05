@@ -18,20 +18,20 @@ namespace APEX.Common.Constraints
         public float stiffness = 0.5f;
 
         // particle group
-        public List<T> particles;
+        private List<T> _particles;
 
         // Create Constraint By particles
         public DistanceConstraint(ref List<T> particles, bool doubleConnect = true)
         {
             constraintBatchType = EApexConstraintBatchType.DistanceConstraint;
-            this.particles = particles;
+            this._particles = particles;
 
             // TEMP: constraint connect particle construct function.
             this.constraints = new Dictionary<int, List<Constraints.ApexConstraintParticleDouble>>();
             for (int i = 0; i < particles.Count - 1; i++)
             {
-                var lToR = new Constraints.ApexConstraintParticleDouble(this.particles[i].index, this.particles[i + 1].index);
-                var rToL = new Constraints.ApexConstraintParticleDouble(this.particles[i + 1].index, this.particles[i].index);
+                var lToR = new Constraints.ApexConstraintParticleDouble(this._particles[i].index, this._particles[i + 1].index);
+                var rToL = new Constraints.ApexConstraintParticleDouble(this._particles[i + 1].index, this._particles[i].index);
 
                 // Do not use ??= expression in Unity
                 if (!constraints.ContainsKey(i))
@@ -59,10 +59,10 @@ namespace APEX.Common.Constraints
             {
                 foreach (var single in constraint.Value)
                 {
-                    CalcParticleConstraint(ref particles[single.pl].nextPosition,
-                        ref particles[single.pr].nextPosition, 
-                        particles[single.pl].isStatic,
-                        particles[single.pr].isStatic);
+                    CalcParticleConstraint(ref _particles[single.pl].nextPosition,
+                        ref _particles[single.pr].nextPosition, 
+                        _particles[single.pl].isStatic,
+                        _particles[single.pr].isStatic);
                 }
             }
         }

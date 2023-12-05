@@ -2,12 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using APEX.Common.Constraints.Base;
+using UnityEngine;
 
 namespace APEX.Common.Constraints
 {
+    [System.Serializable]
     public abstract class ApexConstraintBatchDouble : IApexConstraintBatch
     {
-        public EApexConstraintBatchType constraintBatchType;                               // This ConstraintType 
+        [SerializeField] public EApexConstraintBatchType constraintBatchType;                               // This ConstraintType 
         
         protected Dictionary<int, List<ApexConstraintParticleDouble>> constraints;         // use hash table for quick search
 

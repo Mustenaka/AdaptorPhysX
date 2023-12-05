@@ -1,26 +1,77 @@
+using System;
 using System.Collections.Generic;
 using APEX.Common.Constraints.Base;
 using APEX.Common.Particle;
+using UnityEditor;
 using UnityEngine;
 
 namespace APEX.Common.Constraints
 {
+    // [CustomPropertyDrawer(typeof(AngleConstraint<>))]
+    // public class AngleConstraintDrawer : PropertyDrawer
+    // {
+    //     public override void OnGUI(Rect position, SerializedProperty property, GUIContent label)
+    //     {
+    //         EditorGUI.BeginProperty(position, label, property);
+    //
+    //         EditorGUI.PrefixLabel(position, label);
+    //
+    //         EditorGUI.indentLevel++;
+    //
+    //         // Find the SerializedProperty of the desiredAngle and stiffness fields
+    //         SerializedProperty desiredAngleProperty = property.FindPropertyRelative("desiredAngle");
+    //         SerializedProperty stiffnessProperty = property.FindPropertyRelative("stiffness");
+    //
+    //         // Calculate the height of the fields
+    //         float desiredAngleHeight = EditorGUI.GetPropertyHeight(desiredAngleProperty);
+    //         float stiffnessHeight = EditorGUI.GetPropertyHeight(stiffnessProperty);
+    //
+    //         // Draw the desiredAngle field
+    //         Rect desiredAngleRect = new Rect(position.x, position.y + EditorGUIUtility.singleLineHeight, position.width, desiredAngleHeight);
+    //         EditorGUI.PropertyField(desiredAngleRect, desiredAngleProperty);
+    //
+    //         // Draw the stiffness field below the desiredAngle field
+    //         Rect stiffnessRect = new Rect(position.x, desiredAngleRect.y + desiredAngleHeight, position.width, stiffnessHeight);
+    //         EditorGUI.PropertyField(stiffnessRect, stiffnessProperty);
+    //
+    //         EditorGUI.indentLevel--;
+    //
+    //         EditorGUI.EndProperty();
+    //     }
+    //
+    //     public override float GetPropertyHeight(SerializedProperty property, GUIContent label)
+    //     {
+    //         // Find the SerializedProperty of the desiredAngle and stiffness fields
+    //         SerializedProperty desiredAngleProperty = property.FindPropertyRelative("desiredAngle");
+    //         SerializedProperty stiffnessProperty = property.FindPropertyRelative("stiffness");
+    //
+    //         // Calculate the height of the fields
+    //         float desiredAngleHeight = EditorGUI.GetPropertyHeight(desiredAngleProperty);
+    //         float stiffnessHeight = EditorGUI.GetPropertyHeight(stiffnessProperty);
+    //
+    //         // Return the total height of the fields
+    //         return EditorGUIUtility.singleLineHeight + desiredAngleHeight + stiffnessHeight;
+    //     }
+    // }
+    
     /// <summary>
     /// Angle constraint, a constraint based on the target three particle of the mid particle
     /// </summary>
     /// <typeparam name="T">particle</typeparam>
+    [Serializable]
     public class AngleConstraint<T> : ApexConstraintBatchThree where T : ApexParticleBase
     {
-        // 
-        public float desiredAngle = Mathf.PI / 2f;
-        [Range(0, 1)] public float stiffness = 0.9f;
+        // public float maxAngle = Mathf.PI / ?
+        [SerializeField] public float desiredAngle = Mathf.PI;
+        // public float minAngle = Mathf.PI / ?
+        [SerializeField] [Range(0, 1)] public float stiffness = 0.9f;
 
-        public List<T> particles;
+        private List<T> _particles;
 
         public AngleConstraint(ref List<T> particles, bool doubleConnect = false)
         {
             constraintBatchType = EApexConstraintBatchType.AngleConstraint;
-            this.particles = particles;
+            this._particles = particles;
 
             
             int cnt = particles.Count;
@@ -35,8 +86,8 @@ namespace APEX.Common.Constraints
             this.constraints = new Dictionary<int, List<ApexConstraintParticleThree>>();
             for (int i = 1; i < cnt - 1; i++)
             {
-                var lToR = new ApexConstraintParticleThree(this.particles[i - 1].index, this.particles[i].index,
-                    this.particles[i + 1].index);
+                var lToR = new ApexConstraintParticleThree(this._particles[i - 1].index, this._particles[i].index,
+                    this._particles[i + 1].index);
 
                 if (!constraints.ContainsKey(i))
                 {
@@ -48,8 +99,8 @@ namespace APEX.Common.Constraints
                 // Angle constraints often do not require a reverse connection
                 if (doubleConnect)
                 {
-                    var rToL = new ApexConstraintParticleThree(this.particles[i + 1].index, this.particles[i].index,
-                        this.particles[i - 1].index);
+                    var rToL = new ApexConstraintParticleThree(this._particles[i + 1].index, this._particles[i].index,
+                        this._particles[i - 1].index);
 
                     constraints[i].Add(rToL);
                 }
@@ -62,12 +113,12 @@ namespace APEX.Common.Constraints
             {
                 foreach (var single in constraint.Value)
                 {
-                    CalcParticleConstraint(ref particles[single.pl].nextPosition,
-                        ref particles[single.pmid].nextPosition,
-                        ref particles[single.pr].nextPosition,
-                        particles[single.pl].isStatic,
-                        particles[single.pmid].isStatic,
-                        particles[single.pr].isStatic);
+                    CalcParticleConstraint(ref _particles[single.pl].nextPosition,
+                        ref _particles[single.pmid].nextPosition,
+                        ref _particles[single.pr].nextPosition,
+                        _particles[single.pl].isStatic,
+                        _particles[single.pmid].isStatic,
+                        _particles[single.pr].isStatic);
                 }
             }
         }

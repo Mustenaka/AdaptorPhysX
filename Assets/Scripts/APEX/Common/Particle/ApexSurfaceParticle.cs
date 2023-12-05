@@ -6,6 +6,7 @@ namespace APEX.Common.Particle
     /// Particle implementation:
     ///     Use this for Softbody particle implementation.
     /// </summary>
+    [System.Serializable]
     public class ApexSurfaceParticle : ApexParticleBase
     {
         // particle self param

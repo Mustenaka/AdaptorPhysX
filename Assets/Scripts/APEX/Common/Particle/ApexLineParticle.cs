@@ -7,6 +7,7 @@ namespace APEX.Common.Particle
     /// Particle implementation:
     ///     Use this for Rope|Line particle implementation.
     /// </summary>
+    [System.Serializable]
     public class ApexLineParticle : ApexParticleBase
     {
         public Vector3 szie;
