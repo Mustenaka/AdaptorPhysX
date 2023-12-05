@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using APEX.Common.Constraints;
 using APEX.Common.Particle;
+using APEX.Tools;
 using UnityEngine;
 
 namespace APEX.Common.Solver
@@ -78,9 +79,16 @@ namespace APEX.Common.Solver
         {
             for (int i = 0; i < particles.Count; i++)
             {
+                // if particle is static, not apply
                 if (particles[i].isStatic)
                 {
                     continue;
+                }
+
+                // if the nextPosition is NaN, will not apply
+                if (NumberCheck.IsVector3NaN(particles[i].nextPosition))
+                {
+                    particles[i].nextPosition = particles[i].nowPosition;
                 }
                 
                 particles[i].previousPosition = particles[i].nowPosition;

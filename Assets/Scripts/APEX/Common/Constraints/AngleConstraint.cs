@@ -12,8 +12,8 @@ namespace APEX.Common.Constraints
     public class AngleConstraint<T> : ApexConstraintBatchThree where T : ApexParticleBase
     {
         // 
-        public float desiredAngle = 0.5f;
-        [Range(0, 1)] public float stiffness = 0.5f;
+        public float desiredAngle = Mathf.PI / 2f;
+        [Range(0, 1)] public float stiffness = 0.9f;
 
         public List<T> particles;
 
@@ -22,6 +22,7 @@ namespace APEX.Common.Constraints
             constraintBatchType = EApexConstraintBatchType.AngleConstraint;
             this.particles = particles;
 
+            
             int cnt = particles.Count;
 
             // quick return, angle constraint must have more than 3 particle
@@ -77,7 +78,11 @@ namespace APEX.Common.Constraints
             // calc now angle
             Vector3 dirLMid = (mid - l).normalized;
             Vector3 dirRMid = (mid - r).normalized;
-            float currentAngle = Mathf.Acos(Vector3.Dot(dirLMid, dirRMid));
+            // Avoiding potential NaN issues with Vector3.Dot and Mathf.Acos
+            float dotProduct = Vector3.Dot(dirLMid, dirRMid);
+            dotProduct = Mathf.Clamp(dotProduct, -1f, 1f); // Ensure dot product is within valid range [-1, 1]
+            float currentAngle = Mathf.Acos(dotProduct);
+            // float currentAngle = Mathf.Acos(Vector3.Dot(dirLMid, dirRMid));
 
             // calc error if angle
             float angleError = currentAngle - desiredAngle;
@@ -92,7 +97,7 @@ namespace APEX.Common.Constraints
 
             if (!midStatic)
             {
-                mid += correction;
+                // mid += correction;
             }
 
             if (!rStatic)

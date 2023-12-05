@@ -25,7 +25,7 @@ namespace APEX.Rope
         // default physics param(only use for create)
         public float mass = 1.0f;      // If you want the centroid offset, please change this generation method
         [Range(0, 1f)] public float stiffness = 0.5f;
-        [Range(0, 1f)] public float damping = 0.5f;
+        [Range(0, 1f)] public float damping = 0.005f;
         
         private void Start()
         {
@@ -95,7 +95,9 @@ namespace APEX.Rope
             rope.solver.damping = damping;
 
             var distanceConstraint = new DistanceConstraint<ApexLineParticle>(ref rope.particles);
-            solver.constraintBatch.Add(distanceConstraint);
+            var angleConstraint = new AngleConstraint<ApexLineParticle>(ref rope.particles);
+            // solver.constraintBatch.Add(distanceConstraint);
+            solver.constraintBatch.Add(angleConstraint);
         }
     }
 }
