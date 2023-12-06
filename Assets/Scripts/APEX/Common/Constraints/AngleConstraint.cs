@@ -1,59 +1,11 @@
 using System;
 using System.Collections.Generic;
-using APEX.Common.Constraints.Base;
 using APEX.Common.Particle;
 using UnityEditor;
 using UnityEngine;
 
 namespace APEX.Common.Constraints
 {
-    // [CustomPropertyDrawer(typeof(AngleConstraint<>))]
-    // public class AngleConstraintDrawer : PropertyDrawer
-    // {
-    //     public override void OnGUI(Rect position, SerializedProperty property, GUIContent label)
-    //     {
-    //         EditorGUI.BeginProperty(position, label, property);
-    //
-    //         EditorGUI.PrefixLabel(position, label);
-    //
-    //         EditorGUI.indentLevel++;
-    //
-    //         // Find the SerializedProperty of the desiredAngle and stiffness fields
-    //         SerializedProperty desiredAngleProperty = property.FindPropertyRelative("desiredAngle");
-    //         SerializedProperty stiffnessProperty = property.FindPropertyRelative("stiffness");
-    //
-    //         // Calculate the height of the fields
-    //         float desiredAngleHeight = EditorGUI.GetPropertyHeight(desiredAngleProperty);
-    //         float stiffnessHeight = EditorGUI.GetPropertyHeight(stiffnessProperty);
-    //
-    //         // Draw the desiredAngle field
-    //         Rect desiredAngleRect = new Rect(position.x, position.y + EditorGUIUtility.singleLineHeight, position.width, desiredAngleHeight);
-    //         EditorGUI.PropertyField(desiredAngleRect, desiredAngleProperty);
-    //
-    //         // Draw the stiffness field below the desiredAngle field
-    //         Rect stiffnessRect = new Rect(position.x, desiredAngleRect.y + desiredAngleHeight, position.width, stiffnessHeight);
-    //         EditorGUI.PropertyField(stiffnessRect, stiffnessProperty);
-    //
-    //         EditorGUI.indentLevel--;
-    //
-    //         EditorGUI.EndProperty();
-    //     }
-    //
-    //     public override float GetPropertyHeight(SerializedProperty property, GUIContent label)
-    //     {
-    //         // Find the SerializedProperty of the desiredAngle and stiffness fields
-    //         SerializedProperty desiredAngleProperty = property.FindPropertyRelative("desiredAngle");
-    //         SerializedProperty stiffnessProperty = property.FindPropertyRelative("stiffness");
-    //
-    //         // Calculate the height of the fields
-    //         float desiredAngleHeight = EditorGUI.GetPropertyHeight(desiredAngleProperty);
-    //         float stiffnessHeight = EditorGUI.GetPropertyHeight(stiffnessProperty);
-    //
-    //         // Return the total height of the fields
-    //         return EditorGUIUtility.singleLineHeight + desiredAngleHeight + stiffnessHeight;
-    //     }
-    // }
-    
     /// <summary>
     /// Angle constraint, a constraint based on the target three particle of the mid particle
     /// </summary>
@@ -61,9 +13,7 @@ namespace APEX.Common.Constraints
     [Serializable]
     public class AngleConstraint<T> : ApexConstraintBatchThree where T : ApexParticleBase
     {
-        // public float maxAngle = Mathf.PI / ?
         [SerializeField] public float desiredAngle = Mathf.PI;
-        // public float minAngle = Mathf.PI / ?
         [SerializeField] [Range(0, 1)] public float stiffness = 0.9f;
 
         private List<T> _particles;

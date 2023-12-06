@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using APEX.Common.Constraints.Base;
 
 namespace APEX.Common.Constraints
 {

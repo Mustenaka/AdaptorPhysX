@@ -94,10 +94,10 @@ namespace APEX.Rope
             rope.solver.stiffness = stiffness;
             rope.solver.damping = damping;
 
-            var distanceConstraint = new DistanceConstraint<ApexLineParticle>(ref rope.particles);
+            // var distanceConstraint = new DistanceConstraint<ApexLineParticle>(ref rope.particles);
             var angleConstraint = new AngleConstraint<ApexLineParticle>(ref rope.particles);
-            solver.constraintBatch.Add(distanceConstraint);
-            // solver.constraintBatch.Add(angleConstraint);
+            // solver.constraintBatch.Add(distanceConstraint);
+            solver.constraintBatch.Add(angleConstraint);
         }
     }
 }

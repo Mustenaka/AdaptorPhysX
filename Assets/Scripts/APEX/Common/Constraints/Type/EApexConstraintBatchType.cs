@@ -1,4 +1,4 @@
-namespace APEX.Common.Constraints.Base
+namespace APEX.Common.Constraints
 {
     public enum EApexConstraintBatchType
     {
