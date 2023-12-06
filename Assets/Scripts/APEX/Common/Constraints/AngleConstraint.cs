@@ -8,12 +8,11 @@ namespace APEX.Common.Constraints
     /// <summary>
     /// Angle constraint, a constraint based on the target three particle of the mid particle
     /// </summary>
-    /// <typeparam name="T">particle</typeparam>
     [Serializable]
     public class AngleConstraint : ApexConstraintBatchThree
     {
         [SerializeField] public float desiredAngle = Mathf.PI;
-        [SerializeField] [Range(0, 1)] public float stiffness = 0.9f;
+        [SerializeField] [Range(0, 1)] public float stiffness = 0.1f;
 
         private List<ApexParticleBase> _particles;
 
@@ -77,6 +76,7 @@ namespace APEX.Common.Constraints
             // calc now angle
             Vector3 dirLMid = (mid - l).normalized;
             Vector3 dirRMid = (mid - r).normalized;
+            
             // Avoiding potential NaN issues with Vector3.Dot and Mathf.Acos
             float dotProduct = Vector3.Dot(dirLMid, dirRMid);
             dotProduct = Mathf.Clamp(dotProduct, -1f, 1f); // Ensure dot product is within valid range [-1, 1]
@@ -88,7 +88,7 @@ namespace APEX.Common.Constraints
 
             // position calibration
             Vector3 correction = stiffness * angleError * (dirLMid + dirRMid);
-
+            
             if (!lStatic)
             {
                 l -= correction;
