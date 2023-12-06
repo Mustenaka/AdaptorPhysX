@@ -7,8 +7,7 @@ namespace APEX.Common.Constraints
     /// <summary>
     /// Distance constraint, a constraint based on the target length
     /// </summary>
-    /// <typeparam name="T">particle</typeparam>
-    public class DistanceConstraint<T> : ApexConstraintBatchDouble where T : ApexParticleBase
+    public class DistanceConstraint : ApexConstraintBatchDouble
     {
         // the rest length in its natural state
         public float restLength = 1.2f;
@@ -17,10 +16,10 @@ namespace APEX.Common.Constraints
         public float stiffness = 0.5f;
 
         // particle group
-        private List<T> _particles;
+        private List<ApexParticleBase> _particles;
 
         // Create Constraint By particles
-        public DistanceConstraint(ref List<T> particles, bool doubleConnect = true)
+        public DistanceConstraint(ref List<ApexParticleBase> particles, bool doubleConnect = true)
         {
             constraintBatchType = EApexConstraintBatchType.DistanceConstraint;
             this._particles = particles;

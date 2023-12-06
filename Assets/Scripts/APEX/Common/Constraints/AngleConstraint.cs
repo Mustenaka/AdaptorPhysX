@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using APEX.Common.Particle;
-using UnityEditor;
 using UnityEngine;
 
 namespace APEX.Common.Constraints
@@ -11,18 +10,17 @@ namespace APEX.Common.Constraints
     /// </summary>
     /// <typeparam name="T">particle</typeparam>
     [Serializable]
-    public class AngleConstraint<T> : ApexConstraintBatchThree where T : ApexParticleBase
+    public class AngleConstraint : ApexConstraintBatchThree
     {
         [SerializeField] public float desiredAngle = Mathf.PI;
         [SerializeField] [Range(0, 1)] public float stiffness = 0.9f;
 
-        private List<T> _particles;
+        private List<ApexParticleBase> _particles;
 
-        public AngleConstraint(ref List<T> particles, bool doubleConnect = false)
+        public AngleConstraint(ref List<ApexParticleBase> particles, bool doubleConnect = false)
         {
             constraintBatchType = EApexConstraintBatchType.AngleConstraint;
             this._particles = particles;
-
             
             int cnt = particles.Count;
 
