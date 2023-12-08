@@ -6,12 +6,14 @@ using UnityEngine;
 namespace APEX.Common.Constraints
 {
     /// <summary>
-    /// Angle constraint, a constraint based on the target three particle of the mid particle
+    /// Angle constraint, a constraint based on the target three particle of the mid particle.
+    ///     effect not good.
     /// </summary>
     [Serializable]
     public class AngleConstraint : ApexConstraintBatchThree
     {
-        [SerializeField] public float desiredAngle = Mathf.PI;
+        [Range(0.0f, 180.0f)] [SerializeField] public float minAngle = 110;
+        [Range(0.0f, 180.0f)] [SerializeField] public float maxAngle = 180;
         [SerializeField] [Range(0, 1)] public float stiffness = 0.1f;
 
         private List<ApexParticleBase> _particles;
@@ -20,7 +22,7 @@ namespace APEX.Common.Constraints
         {
             constraintBatchType = EApexConstraintBatchType.AngleConstraint;
             this._particles = particles;
-            
+
             int cnt = particles.Count;
 
             // quick return, angle constraint must have more than 3 particle
@@ -70,38 +72,23 @@ namespace APEX.Common.Constraints
             }
         }
 
-        public void CalcParticleConstraint(ref Vector3 l, ref Vector3 mid, ref Vector3 r, bool lStatic, bool midStatic,
-            bool rStatic)
+        public void CalcParticleConstraint(ref Vector3 l, ref Vector3 mid, ref Vector3 r,
+            bool lStatic, bool midStatic, bool rStatic)
         {
-            // calc now angle
-            Vector3 dirLMid = (mid - l).normalized;
-            Vector3 dirRMid = (mid - r).normalized;
-            
-            // Avoiding potential NaN issues with Vector3.Dot and Mathf.Acos
-            float dotProduct = Vector3.Dot(dirLMid, dirRMid);
-            dotProduct = Mathf.Clamp(dotProduct, -1f, 1f); // Ensure dot product is within valid range [-1, 1]
-            float currentAngle = Mathf.Acos(dotProduct);
-            // float currentAngle = Mathf.Acos(Vector3.Dot(dirLMid, dirRMid));
+            Vector3 dirL = l - mid;
+            Vector3 dirR = r - mid;
+            Vector3 dirLr = dirL + dirR;
 
-            // calc error if angle
-            float angleError = currentAngle - desiredAngle;
-
-            // position calibration
-            Vector3 correction = stiffness * angleError * (dirLMid + dirRMid);
-            
-            if (!lStatic)
+            float angle = Vector3.Angle(dirL, dirR);
+            if (angle > maxAngle)
             {
-                l -= correction;
+                Vector3 correction = stiffness * dirLr;
+                mid -= correction;
             }
-
-            if (!midStatic)
+            else if (angle < minAngle)
             {
-                // mid += correction;
-            }
-
-            if (!rStatic)
-            {
-                r += correction;
+                Vector3 correction = stiffness * dirLr;
+                mid += correction;
             }
         }
     }

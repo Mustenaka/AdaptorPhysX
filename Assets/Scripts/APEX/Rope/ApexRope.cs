@@ -18,7 +18,7 @@ namespace APEX.Rope
         {
             for (int i = 0; i < ParticlesCount; i++)
             {
-                elements[i].transform.position = particles[i].nowPosition;
+                elements[i].transform.localPosition = particles[i].nowPosition;
             }
         }
     }
