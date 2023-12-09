@@ -96,11 +96,11 @@ namespace APEX.Rope
             // rope.solver.iterator = 1;
 
             var distanceConstraint = new DistanceConstraint(ref rope.solver.particles);
-            var angleConstraint = new AngleConstraint(ref rope.solver.particles);
-            var bendConstraint = new BendConstraint(ref rope.solver.particles);
+            // var angleConstraint = new AngleConstraint(ref rope.solver.particles);
+            // var bendConstraint = new BendConstraint(ref rope.solver.particles);
             solver.constraintBatch.Add(distanceConstraint);
             // solver.constraintBatch.Add(angleConstraint);
-            solver.constraintBatch.Add(bendConstraint);
+            // solver.constraintBatch.Add(bendConstraint);
         }
     }
 }
