@@ -5,6 +5,7 @@ namespace APEX.Common.Constraints
         None = 0,     /* default constraint: None */
         DistanceConstraint,
         BendConstraint,
+        BendConstraint2,
         AngleConstraint,
         VolumePreservationConstraint,
         CollisionConstraint,
