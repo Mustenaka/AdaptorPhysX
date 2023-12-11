@@ -14,11 +14,6 @@ namespace APEX.Common.Particle
         public Vector3 previousPosition;
         public Vector3 nowPosition;
         public Vector3 nextPosition;
-
-        /* rotation, serialize nowRotation, Rotation need adaptive game engine*/
-        public Quaternion previousRotation;
-        public Quaternion nowRotation;
-        public Quaternion nextRotation;
         
         /* scale equal transform.TransLocalScale */
         public Vector3 scale;
@@ -30,6 +25,7 @@ namespace APEX.Common.Particle
         public bool isStatic;
         
         /* physic param */
+        public Vector3 forceExt;
         public float mass;
     }
 }

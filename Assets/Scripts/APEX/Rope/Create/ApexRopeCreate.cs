@@ -73,10 +73,8 @@ namespace APEX.Rope
                     mass = mass,
                     previousPosition = particlePosition,
                     nowPosition = particlePosition,
-                    previousRotation = Quaternion.Euler(0, 0, 0),
-                    nowRotation = Quaternion.Euler(0, 0, 0),
-                    nextRotation = Quaternion.Euler(0, 0, 0),
-
+                    forceExt = Vector3.zero,
+                    
                     scale = this.transform.localScale
                 };
 

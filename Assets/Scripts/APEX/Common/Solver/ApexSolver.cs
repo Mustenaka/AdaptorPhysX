@@ -15,6 +15,8 @@ namespace APEX.Common.Solver
             
         // physics param
         public Vector3 gravity = new Vector3(0, -9.81f, 0);
+        public float airDrag = 0.2f;
+        public Vector3 airVelocity = new Vector3(0, 0, 0);
         [Range(0, 1f)] public float stiffness = 0.5f;
         [Range(0, 1f)] public float damping = 0.5f;
         
@@ -40,11 +42,9 @@ namespace APEX.Common.Solver
         {
             for (int i = 0; i < iterator; i++)
             {
-                // Do Gravite
+                // Do Force
                 SimulateGravity();
                 
-                // Do Global ｜ Local Force
-            
                 // Do Constraint
                 SimulateConstraint();
                 
@@ -62,10 +62,11 @@ namespace APEX.Common.Solver
                 {
                     continue;
                 }
-                
+
+                particles[i].forceExt += gravity;
                 particles[i].nextPosition = particles[i].nowPosition 
                                             + (1 - damping) * (particles[i].nowPosition - particles[i].previousPosition)
-                                            + gravity / particles[i].mass * (dt * dt);
+                                            + particles[i].forceExt / particles[i].mass * (dt * dt);
             }
         }
 
