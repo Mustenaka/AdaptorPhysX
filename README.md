@@ -7,6 +7,14 @@ PBD algorithm is more used in non-rigid body fabric algorithm, so I decided to t
 
 What is PBD: https://matthias-research.github.io/pages/publications/posBasedDyn.pdf
 
+## Require
+
+ Require unity ECS architecture. (Entities is not necessary), plz Windows – Package Manager – Add package from git URL - input: com.unity.jobs 
+
+- com.unity.burst - 1.8.9
+- com.unity.jobs  - 0.70.0-preview.7
+- com.unity.mathematics - 1.2.6
+
 ## Models
 
 This project contains the following modules:

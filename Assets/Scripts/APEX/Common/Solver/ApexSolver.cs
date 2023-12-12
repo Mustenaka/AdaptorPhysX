@@ -15,7 +15,6 @@ namespace APEX.Common.Solver
         public Vector3 gravity = new Vector3(0, -9.81f, 0);
         public Vector3 globalForce = new Vector3(0, 0, 0);
         public float airDrag = 0.2f;
-        public Vector3 airVelocity = new Vector3(0, 0, 0);
         [Range(0, 1f)] public float stiffness = 0.5f;
         [Range(0, 1f)] public float damping = 0.5f;
         
