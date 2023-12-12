@@ -25,7 +25,8 @@ namespace APEX.Common.Particle
         public bool isStatic;
         
         /* physic param */
-        public Vector3 forceExt;
+        public Vector3 forceExt;        // calc physic
+        public Vector3 forceApply;      // apply physic
         public float mass;
     }
 }

@@ -2,8 +2,6 @@ using System.Collections.Generic;
 using APEX.Common.Constraints;
 using APEX.Common.Particle;
 using APEX.Tools;
-using UnityEditor;
-using UnityEditorInternal;
 using UnityEngine;
 
 namespace APEX.Common.Solver
@@ -15,6 +13,7 @@ namespace APEX.Common.Solver
             
         // physics param
         public Vector3 gravity = new Vector3(0, -9.81f, 0);
+        public Vector3 globalForce = new Vector3(0, 0, 0);
         public float airDrag = 0.2f;
         public Vector3 airVelocity = new Vector3(0, 0, 0);
         [Range(0, 1f)] public float stiffness = 0.5f;
@@ -42,8 +41,8 @@ namespace APEX.Common.Solver
         {
             for (int i = 0; i < iterator; i++)
             {
-                // Do Force
-                SimulateGravity();
+                // Do Force(in: Gravity, Local force, Global Force)
+                SimulateForceExt();
                 
                 // Do Constraint
                 SimulateConstraint();
@@ -53,7 +52,7 @@ namespace APEX.Common.Solver
             }
         }
         
-        private void SimulateGravity()
+        private void SimulateForceExt()
         {
             for (int i = 0; i < particles.Count; i++)
             {
@@ -63,10 +62,14 @@ namespace APEX.Common.Solver
                     continue;
                 }
 
-                particles[i].forceExt += gravity;
+                // calc air resistance
+                Vector3 airResistance = -airDrag * (particles[i].nowPosition - particles[i].previousPosition) / dt;
+
+                // calc force apply.
+                particles[i].forceApply = gravity + globalForce + airResistance + particles[i].forceExt;
                 particles[i].nextPosition = particles[i].nowPosition 
                                             + (1 - damping) * (particles[i].nowPosition - particles[i].previousPosition)
-                                            + particles[i].forceExt / particles[i].mass * (dt * dt);
+                                            + particles[i].forceApply / particles[i].mass * (dt * dt);
             }
         }
 
