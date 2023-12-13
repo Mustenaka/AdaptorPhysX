@@ -48,7 +48,7 @@ namespace APEX.Common.Particle
         /// Convert Burst Type to BaseUnityType
         /// </summary>
         /// <returns>ApexParticleBase</returns>
-        public ApexParticleBase Convert()
+        public ApexParticleBase ConvertBaseClass()
         {
             return new ApexLineParticle()
             {

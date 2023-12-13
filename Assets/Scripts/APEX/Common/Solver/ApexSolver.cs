@@ -1,23 +1,26 @@
 using System.Collections.Generic;
+using System.Linq;
 using APEX.Common.Constraints;
 using APEX.Common.Particle;
 using APEX.Tools;
+using Unity.Collections;
+using Unity.Jobs;
 using UnityEngine;
 
 namespace APEX.Common.Solver
 {
-    public class ApexSolver: MonoBehaviour 
+    public class ApexSolver : MonoBehaviour
     {
         [SerializeReference] public List<IApexConstraintBatch> constraintBatch = new List<IApexConstraintBatch>();
-        public List<ApexParticleBase> particles = new List<ApexParticleBase>();     // particle container
-            
+        public List<ApexParticleBase> particles = new List<ApexParticleBase>(); // particle container
+
         // physics param
         public Vector3 gravity = new Vector3(0, -9.81f, 0);
         public Vector3 globalForce = new Vector3(0, 0, 0);
         public float airDrag = 0.2f;
         [Range(0, 1f)] public float stiffness = 0.5f;
         [Range(0, 1f)] public float damping = 0.5f;
-        
+
         // simulator param
         public float dt = 0.002f;
         public float accTime = 0.0f;
@@ -30,27 +33,60 @@ namespace APEX.Common.Solver
 
             for (int i = 0; i < cnt; i++)
             {
-                Simulator();
+                TestSimulator();
             }
 
             accTime %= dt;
         }
-        
+
+        private void TestSimulator()
+        {
+            var handle = new JobHandle();
+            var job = new SimulateParticlesJob()
+            {
+                particles = new NativeArray<ApexParticleBaseBurst>(
+                    particles.Select(p => p.ConvertBurst()).ToArray(),
+                    Allocator.TempJob),
+                gravity = gravity,
+                globalForce = globalForce,
+                airDrag = airDrag,
+                damping = damping,
+                dt = dt
+            };
+
+            
+            Debug.Log("before" + job.particles[1].nextPosition);
+            // innerLoopBatchCount recommend multiples of 32 - i use 64
+            handle = job.Schedule(particles.Count, handle);
+            handle.Complete();
+            
+            Debug.Log("after" + job.particles[1].nextPosition);
+            particles = job.particles.Select(p => p.ConvertBaseClass()).ToList();
+
+            job.particles.Dispose();
+            
+            // Do Constraint
+            SimulateConstraint();
+            
+            // Update
+            SimulateUpdate();
+        }
+
         private void Simulator()
         {
             for (int i = 0; i < iterator; i++)
             {
                 // Do Force(in: Gravity, Local force, Global Force)
                 SimulateForceExt();
-                
+
                 // Do Constraint
                 SimulateConstraint();
-                
+
                 // Update
                 SimulateUpdate();
             }
         }
-        
+
         private void SimulateForceExt()
         {
             for (int i = 0; i < particles.Count; i++)
@@ -66,7 +102,7 @@ namespace APEX.Common.Solver
 
                 // calc force apply.
                 particles[i].forceApply = gravity + globalForce + airResistance + particles[i].forceExt;
-                particles[i].nextPosition = particles[i].nowPosition 
+                particles[i].nextPosition = particles[i].nowPosition
                                             + (1 - damping) * (particles[i].nowPosition - particles[i].previousPosition)
                                             + particles[i].forceApply / particles[i].mass * (dt * dt);
             }
@@ -95,7 +131,7 @@ namespace APEX.Common.Solver
                 {
                     particles[i].nextPosition = particles[i].nowPosition;
                 }
-                
+
                 particles[i].previousPosition = particles[i].nowPosition;
                 particles[i].nowPosition = particles[i].nextPosition;
             }

@@ -28,5 +28,10 @@ namespace APEX.Common.Particle
         public Vector3 forceExt;        // calc physic
         public Vector3 forceApply;      // apply physic
         public float mass;
+
+        public ApexParticleBaseBurst ConvertBurst()
+        {
+            return new ApexParticleBaseBurst(this);
+        } 
     }
 }

@@ -7,15 +7,15 @@ using Unity.Mathematics;
 namespace APEX.Common.Solver
 {
     [BurstCompile]
-    public struct SimulateParticlesJob: IJobParallelFor
+    public struct SimulateParticlesJob: IJobFor
     {            
         public NativeArray<ApexParticleBaseBurst> particles;
-        public int iterator;
-        public float3 gravity;
-        public float3 globalForce;
-        public float airDrag;
-        public float damping;
-        public float dt;
+        [ReadOnly] public int iterator;
+        [ReadOnly] public float3 gravity;
+        [ReadOnly] public float3 globalForce;
+        [ReadOnly] public float airDrag;
+        [ReadOnly] public float damping;
+        [ReadOnly] public float dt;
         
         /// <summary>
         /// Execute force extend.
@@ -29,16 +29,20 @@ namespace APEX.Common.Solver
             if (particle.isStatic)
                 return;
 
-            // calc air resistance
-            float3 airResistance = -airDrag * (particle.nowPosition - particle.previousPosition) / dt;
+            // batch iteration
+            for (int i = 0; i < iterator; i++)
+            {
+                // calc air resistance
+                float3 airResistance = -airDrag * (particle.nowPosition - particle.previousPosition) / dt;
 
-            // calc force apply.
-            particle.forceApply = gravity + globalForce + airResistance + particle.forceExt;
-            particle.nextPosition = particle.nowPosition
-                                    + (1 - damping) * (particle.nowPosition - particle.previousPosition)
-                                    + particle.forceApply / particle.mass * (dt * dt);
+                // calc force apply.
+                particle.forceApply = gravity + globalForce + airResistance + particle.forceExt;
+                particle.nextPosition = particle.nowPosition
+                                        + (1 - damping) * (particle.nowPosition - particle.previousPosition)
+                                        + particle.forceApply / particle.mass * (dt * dt);
 
-            particles[index] = particle;
+                particles[index] = particle;
+            }
         }
     }
 }
