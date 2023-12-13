@@ -20,7 +20,7 @@ namespace APEX.Common.Solver
         
         // simulator param
         public float dt = 0.002f;
-        public float accTime;
+        public float accTime = 0.0f;
         public int iterator = 10;
 
         private void Update()
@@ -35,7 +35,7 @@ namespace APEX.Common.Solver
 
             accTime %= dt;
         }
-
+        
         private void Simulator()
         {
             for (int i = 0; i < iterator; i++)
