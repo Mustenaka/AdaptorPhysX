@@ -3,11 +3,12 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
+using UnityEngine;
 
 namespace APEX.Common.Solver
 {
     [BurstCompile]
-    public struct SimulateParticlesJob: IJobFor
+    public struct SimulateParticlesJob: IJobParallelFor
     {            
         public NativeArray<ApexParticleBaseBurst> particles;
         [ReadOnly] public int iterator;
@@ -18,7 +19,7 @@ namespace APEX.Common.Solver
         [ReadOnly] public float dt;
         
         /// <summary>
-        /// Execute force extend.
+        /// Execute force extend. (Contain air resistance, force apply)
         /// </summary>
         /// <param name="index">the particle index</param>
         public void Execute(int index)

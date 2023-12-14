@@ -45,26 +45,21 @@ namespace APEX.Common.Particle
         }
 
         /// <summary>
-        /// Convert Burst Type to BaseUnityType
+        /// Convert Burst Type to ApexParticleBase
         /// </summary>
         /// <returns>ApexParticleBase</returns>
-        public ApexParticleBase ConvertBaseClass()
+        public void ConvertBaseClass(ApexParticleBase particle)
         {
-            return new ApexLineParticle()
-            {
-                previousPosition = this.previousPosition.ToVector3(),
-                nowPosition = this.nowPosition.ToVector3(),
-                nextPosition = this.nextPosition.ToVector3(),
-                
-                scale = this.scale.ToVector3(),
-                
-                index = this.index,
-                
-                forceExt = this.forceExt.ToVector3(),
-                forceApply = this.forceApply.ToVector3(),
-                
-                mass = this.mass,
-            };
+            particle.previousPosition = this.previousPosition.ToVector3();
+            particle.nowPosition = this.nowPosition.ToVector3();
+            particle.nextPosition = this.nextPosition.ToVector3();
+            
+            particle.scale = this.scale.ToVector3();
+            particle.index = this.index;
+            
+            particle.forceExt = this.forceExt.ToVector3();
+            particle.forceApply = this.forceApply.ToVector3();
+            particle.mass = this.mass;
         }
     }
 }
