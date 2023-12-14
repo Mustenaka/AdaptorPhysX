@@ -27,6 +27,10 @@ namespace APEX.Common.Particle
         public float3 forceApply;      // apply physic
         public float mass;
 
+        /// <summary>
+        /// constructor by ParticleBase
+        /// </summary>
+        /// <param name="ori">origin particle</param>
         public ApexParticleBaseBurst(ApexParticleBase ori)
         {
             previousPosition = ori.previousPosition.ToFloat3();

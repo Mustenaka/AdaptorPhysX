@@ -33,8 +33,8 @@ namespace APEX.Common.Solver
 
             for (int i = 0; i < cnt; i++)
             {
-                TestSimulator();    // burst
-                // Simulator();        // no burst
+                // TestSimulator();    // burst
+                Simulator(); // no burst
             }
 
             accTime %= dt;
@@ -42,7 +42,7 @@ namespace APEX.Common.Solver
 
         private void TestSimulator()
         {
-            var job = new SimulateParticlesJob()
+            var job = new SimulateForceExtJob()
             {
                 particles = new NativeArray<ApexParticleBaseBurst>(
                     particles.Select(p => p.ConvertBurst()).ToArray(),
@@ -51,26 +51,23 @@ namespace APEX.Common.Solver
                 globalForce = globalForce,
                 airDrag = airDrag,
                 damping = damping,
-                iterator = iterator,
                 dt = dt
             };
 
-            // innerLoopBatchCount recommend multiples of 32 - i use 64
-            var handle = job.Schedule(particles.Count, 128);
-            handle.Complete();
-
-            for (int i = 0; i < particles.Count(); i++)
+            for (int it = 0; it < iterator; it++)
             {
-                job.particles[i].ConvertBaseClass(particles[i]);
+                // innerLoopBatchCount recommend multiples of 32 - i use 64
+                var handle = job.Schedule(particles.Count, 128);
+                handle.Complete();
+                job.ParticleCallback(particles);
+                job.particles.Dispose();
+
+                // Do Constraint
+                SimulateConstraint();
+
+                // Update
+                SimulateUpdate();
             }
-
-            job.particles.Dispose();
-
-            // Do Constraint
-            SimulateConstraint();
-
-            // Update
-            SimulateUpdate();
         }
 
         private void Simulator()
