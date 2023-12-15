@@ -58,6 +58,6 @@ sysinfo.txt
 
 # IDE project
 *.vscode/
-.vscode/
+.vscode/*
 *.idea/
-.idea/
+.idea/*
