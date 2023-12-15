@@ -4,16 +4,11 @@ namespace APEX.Common.Constraints
     /// Constraint Connect
     ///     Double particle link
     /// </summary>
-    public class ApexConstraintParticleDouble
+    public struct ApexConstraintParticleDouble
     {
         // particle left, particle right (both construct constraint)
         public int pl, pr;
-
-        public ApexConstraintParticleDouble()
-        {
-            
-        }
-
+        
         public ApexConstraintParticleDouble(int pl, int pr)
         {
             this.pl = pl;

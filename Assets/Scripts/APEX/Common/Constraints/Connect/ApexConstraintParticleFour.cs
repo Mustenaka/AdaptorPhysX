@@ -4,15 +4,10 @@ namespace APEX.Common.Constraints
     /// Constraint Connect
     ///     Quadruple particle link, Often applied to square constraints
     /// </summary>
-    public class ApexConstraintParticleFour
+    public struct ApexConstraintParticleFour
     {
         // particle quadruple
         public int p1, p2, p3, p4;
-
-        public ApexConstraintParticleFour()
-        {
-            
-        }
 
         public ApexConstraintParticleFour(int p1, int p2, int p3, int p4)
         {
