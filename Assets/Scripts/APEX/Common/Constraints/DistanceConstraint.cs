@@ -65,7 +65,7 @@ namespace APEX.Common.Constraints
             }
         }
 
-        public void CalcParticleConstraint(ref Vector3 l, ref Vector3 r, bool lStatic, bool rStatic)
+        private void CalcParticleConstraint(ref Vector3 l, ref Vector3 r, bool lStatic, bool rStatic)
         {
             var delta = l - r;
             float currentDistance = delta.magnitude;
