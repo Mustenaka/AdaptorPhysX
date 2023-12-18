@@ -26,6 +26,7 @@ namespace APEX.Rope
         public float mass = 1.0f; // If you want the centroid offset, please change this generation method
         [Range(0, 1f)] public float stiffness = 0.5f;
         [Range(0, 1f)] public float damping = 0.005f;
+        [Range(1, 20)] public int iterator = 10;
 
         private void Start()
         {
@@ -91,7 +92,7 @@ namespace APEX.Rope
             rope.solver.particles = new List<ApexParticleBase>(rope.particles);
             rope.solver.stiffness = stiffness;
             rope.solver.damping = damping;
-            // rope.solver.iterator = 1;
+            rope.solver.iterator = iterator;
 
             var distanceConstraint = new DistanceConstraint(ref rope.solver.particles);
             // var angleConstraint = new AngleConstraint(ref rope.solver.particles);

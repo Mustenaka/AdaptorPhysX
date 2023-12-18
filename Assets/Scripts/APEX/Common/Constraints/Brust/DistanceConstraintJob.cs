@@ -11,34 +11,34 @@ namespace APEX.Common.Constraints
     /// <summary>
     /// Distance constraint burst version, a constraint based on the target length
     /// </summary>
-    public class DistanceConstraintJob : IJobParallelFor
+    public struct DistanceConstraintJob : IJobParallelFor
     {
-        public NativeArray<ApexParticleBaseBurst> _particles;
+        public NativeArray<ApexParticleBaseBurst> particles;
 
         [ReadOnly] public NativeParallelHashMap<int, NativeArray<ApexConstraintParticleDouble>> constraints;
-        [ReadOnly] public float restLength = 1.2f;
-        [ReadOnly] public float stiffness = 0.5f;
+        [ReadOnly] public float restLength;
+        [ReadOnly] public float stiffness;
 
         public void ParticleCallback(List<ApexParticleBase> callbackParticle)
         {
-            for (int i = 0; i < _particles.Length; i++)
+            for (int i = 0; i < particles.Length; i++)
             {
-                _particles[i].ConvertBaseClass(callbackParticle[i]);
+                particles[i].ConvertBaseClass(callbackParticle[i]);
             }
         }
 
-        public void ConstraintConstructor(ref List<ApexParticleBase> particles, bool doubleConnect = true)
+        /// <summary>
+        /// Line Constructor:
+        ///     particle one by one connect.
+        /// </summary>
+        /// <param name="doubleConnect">Reverse connection (2x)</param>
+        public void LineConstructor(bool doubleConnect = true)
         {
-            this._particles = new NativeArray<ApexParticleBaseBurst>(
-                particles.Select(p => p.ConvertBurst()).ToArray(),
-                Allocator.TempJob);
-
-            // TEMP: constraint connect particle construct function.
-            this.constraints = new NativeParallelHashMap<int, NativeArray<ApexConstraintParticleDouble>>();
-            for (int i = 0; i < particles.Count - 1; i++)
+            constraints = new NativeParallelHashMap<int, NativeArray<ApexConstraintParticleDouble>>();
+            for (int i = 0; i < particles.Length - 1; i++)
             {
-                var lToR = new ApexConstraintParticleDouble(this._particles[i].index, this._particles[i + 1].index);
-                var rToL = new ApexConstraintParticleDouble(this._particles[i + 1].index, this._particles[i].index);
+                var lToR = new ApexConstraintParticleDouble(this.particles[i].index, this.particles[i + 1].index);
+                var rToL = new ApexConstraintParticleDouble(this.particles[i + 1].index, this.particles[i].index);
 
                 // Do not use ??= expression in Unity
                 if (!constraints.ContainsKey(i))
@@ -70,10 +70,10 @@ namespace APEX.Common.Constraints
             {
                 foreach (var single in constraint.Value)
                 {
-                    CalcParticleConstraint(_particles[single.pl].nextPosition,
-                        _particles[single.pr].nextPosition,
-                        _particles[single.pl].isStatic,
-                        _particles[single.pr].isStatic);
+                    CalcParticleConstraint(particles[single.pl].nextPosition,
+                        particles[single.pr].nextPosition,
+                        particles[single.pl].isStatic,
+                        particles[single.pr].isStatic);
                 }
             }
         }

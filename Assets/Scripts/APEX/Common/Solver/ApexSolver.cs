@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using APEX.Common.Constraints;
@@ -11,6 +12,7 @@ namespace APEX.Common.Solver
 {
     public class ApexSolver : MonoBehaviour
     {
+        // particle and constraint param
         [SerializeReference] public List<IApexConstraintBatch> constraintBatch = new List<IApexConstraintBatch>();
         public List<ApexParticleBase> particles = new List<ApexParticleBase>(); // particle container
 
@@ -25,6 +27,9 @@ namespace APEX.Common.Solver
         public float dt = 0.002f;
         public float accTime = 0.0f;
         public int iterator = 10;
+        
+        // run it by Jobs
+        public bool runJobs = true;
 
         private void Update()
         {
@@ -33,8 +38,14 @@ namespace APEX.Common.Solver
 
             for (int i = 0; i < cnt; i++)
             {
-                // TestSimulator();    // burst
-                Simulator(); // no burst
+                if (runJobs)
+                {
+                    TestSimulator(); // burst
+                }
+                else
+                {
+                    Simulator(); // no burst
+                }
             }
 
             accTime %= dt;
@@ -46,14 +57,14 @@ namespace APEX.Common.Solver
             {
                 particles = new NativeArray<ApexParticleBaseBurst>(
                     particles.Select(p => p.ConvertBurst()).ToArray(),
-                    Allocator.TempJob),
+                    Allocator.Persistent),
                 gravity = gravity,
                 globalForce = globalForce,
                 airDrag = airDrag,
                 damping = damping,
                 dt = dt
             };
-
+            
             for (int it = 0; it < iterator; it++)
             {
                 // Do Force(in: Gravity, Local force, Global Force)
@@ -61,7 +72,6 @@ namespace APEX.Common.Solver
                 var handle = simulateForceExtJob.Schedule(particles.Count, 128);
                 handle.Complete();
                 simulateForceExtJob.ParticleCallback(particles);
-                simulateForceExtJob.particles.Dispose();
 
                 // Do Constraint
                 SimulateConstraint();
@@ -69,8 +79,11 @@ namespace APEX.Common.Solver
                 // Update
                 SimulateUpdate();
             }
-        }
 
+            // finish simulator (by one dt )
+            simulateForceExtJob.particles.Dispose();
+        }
+        
         private void Simulator()
         {
             for (int i = 0; i < iterator; i++)
