@@ -66,10 +66,11 @@ namespace APEX.Common.Solver
                     damping = damping,
                     dt = dt
                 };
-                
+                JobHandle sheduleJobDependency = new JobHandle();
+
                 // Do Force(in: Gravity, Local force, Global Force)
                 // innerLoopBatchCount recommend multiples of 32 - i use 64
-                var handle = simulateForceExtJob.Schedule(particles.Count, 32);
+                var handle = simulateForceExtJob.ScheduleParallel(simulateForceExtJob.particles.Length,5, sheduleJobDependency);
                 handle.Complete();
                 simulateForceExtJob.ParticleCallback(particles);
                 simulateForceExtJob.particles.Dispose();

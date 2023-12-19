@@ -8,7 +8,7 @@ using Unity.Mathematics;
 namespace APEX.Common.Solver
 {
     [BurstCompile]
-    public struct SimulateForceExtJob : IJobParallelFor
+    public struct SimulateForceExtJob : IJobFor
     {
         public NativeArray<ApexParticleBaseBurst> particles;
 
