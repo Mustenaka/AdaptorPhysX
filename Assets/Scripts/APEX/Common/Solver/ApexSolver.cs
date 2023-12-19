@@ -53,35 +53,33 @@ namespace APEX.Common.Solver
 
         private void TestSimulator()
         {
-            var simulateForceExtJob = new SimulateForceExtJob()
-            {
-                particles = new NativeArray<ApexParticleBaseBurst>(
-                    particles.Select(p => p.ConvertBurst()).ToArray(),
-                    Allocator.Persistent),
-                gravity = gravity,
-                globalForce = globalForce,
-                airDrag = airDrag,
-                damping = damping,
-                dt = dt
-            };
-            
             for (int it = 0; it < iterator; it++)
             {
+                var simulateForceExtJob = new SimulateForceExtJob()
+                {
+                    particles = new NativeArray<ApexParticleBaseBurst>(
+                        particles.Select(p => p.ConvertBurst()).ToArray(),
+                        Allocator.Persistent),
+                    gravity = gravity,
+                    globalForce = globalForce,
+                    airDrag = airDrag,
+                    damping = damping,
+                    dt = dt
+                };
+                
                 // Do Force(in: Gravity, Local force, Global Force)
                 // innerLoopBatchCount recommend multiples of 32 - i use 64
-                var handle = simulateForceExtJob.Schedule(particles.Count, 128);
+                var handle = simulateForceExtJob.Schedule(particles.Count, 32);
                 handle.Complete();
                 simulateForceExtJob.ParticleCallback(particles);
-
+                simulateForceExtJob.particles.Dispose();
+                
                 // Do Constraint
                 SimulateConstraint();
 
                 // Update
                 SimulateUpdate();
             }
-
-            // finish simulator (by one dt )
-            simulateForceExtJob.particles.Dispose();
         }
         
         private void Simulator()
