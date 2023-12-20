@@ -10,19 +10,26 @@ namespace APEX.Common.Solver
     [BurstCompile]
     public struct SimulateForceExtJob : IJobFor
     {
-        public NativeArray<ApexParticleBaseBurst> particles;
-
+        [ReadOnly] public NativeArray<float3> previousPosition;
+        [ReadOnly] public NativeArray<float3> nowPosition;
+        [ReadOnly] public NativeArray<bool> isStatic;
+        [ReadOnly] public NativeArray<float3> forceExt;
+        [ReadOnly] public NativeArray<float> mass;
+        
+        [WriteOnly] public NativeArray<float3> nextPosition;
+        
         [ReadOnly] public float3 gravity;
         [ReadOnly] public float3 globalForce;
         [ReadOnly] public float airDrag;
         [ReadOnly] public float damping;
         [ReadOnly] public float dt;
-
+        [ReadOnly] public int iterator;     // default is 1
+        
         public void ParticleCallback(List<ApexParticleBase> callbackParticle)
         {
-            for (int i = 0; i < particles.Length; i++)
+            for (int i = 0; i < nextPosition.Length; i++)
             {
-                particles[i].ConvertBaseClass(callbackParticle[i]);
+                callbackParticle[i].nextPosition = nextPosition[i];
             }
         }
 
@@ -32,23 +39,26 @@ namespace APEX.Common.Solver
         /// <param name="index">the particle index</param>
         public void Execute(int index)
         {
-            var particle = particles[index];
-
+            // iterator adjust
+            if (iterator <= 1)
+            {
+                iterator = 1;
+            }
+            
             // simplex pin
-            if (particle.isStatic)
+            if (isStatic[index])
+            {
                 return;
-
+            }
+            
             // calc air resistance
-            float3 airResistance = -airDrag * (particle.nowPosition - particle.previousPosition) / dt;
+            float3 airResistance = -airDrag * (nowPosition[index] - previousPosition[index]) / dt;
 
             // calc force apply.
-            particle.forceApply = gravity + globalForce + airResistance + particle.forceExt;
-            particle.nextPosition = particle.nowPosition
-                                    + (1 - damping) * (particle.nowPosition - particle.previousPosition)
-                                    + particle.forceApply / particle.mass * (dt * dt);
-
-            // set particle nextPosition back
-            particles[index] = particle;
+            var forceApply = gravity + globalForce + airResistance + forceExt[index];
+            nextPosition[index] = nowPosition[index]
+                                    + (1 - damping) * (nowPosition[index] - previousPosition[index])
+                                    + forceApply / mass[index] * (dt * dt) * iterator;
         }
     }
 }

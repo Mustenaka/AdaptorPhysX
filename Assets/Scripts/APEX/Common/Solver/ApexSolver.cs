@@ -1,11 +1,12 @@
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using APEX.Common.Constraints;
 using APEX.Common.Particle;
 using APEX.Tools;
+using APEX.Tools.MathematicsTools;
 using Unity.Collections;
 using Unity.Jobs;
+using Unity.Mathematics;
 using UnityEngine;
 
 namespace APEX.Common.Solver
@@ -24,10 +25,10 @@ namespace APEX.Common.Solver
         [Range(0, 1f)] public float damping = 0.5f;
 
         // simulator param
-        public float dt = 0.002f;
+        public float dt = 0.001f;
         public float accTime = 0.0f;
         public int iterator = 10;
-        
+
         // run it by Jobs
         public bool runJobs = true;
 
@@ -53,36 +54,49 @@ namespace APEX.Common.Solver
 
         private void TestSimulator()
         {
-            for (int it = 0; it < iterator; it++)
+            var simulateForceExtJob = new SimulateForceExtJob()
             {
-                var simulateForceExtJob = new SimulateForceExtJob()
-                {
-                    particles = new NativeArray<ApexParticleBaseBurst>(
-                        particles.Select(p => p.ConvertBurst()).ToArray(),
-                        Allocator.Persistent),
-                    gravity = gravity,
-                    globalForce = globalForce,
-                    airDrag = airDrag,
-                    damping = damping,
-                    dt = dt
-                };
-                JobHandle sheduleJobDependency = new JobHandle();
+                previousPosition = new NativeArray<float3>(
+                    particles.Select(p => p.previousPosition.ToFloat3()).ToArray(),
+                    Allocator.TempJob),
+                nowPosition = new NativeArray<float3>(
+                    particles.Select(p => p.nowPosition.ToFloat3()).ToArray(),
+                    Allocator.TempJob),
+                nextPosition = new NativeArray<float3>(particles.Count, Allocator.TempJob),
 
-                // Do Force(in: Gravity, Local force, Global Force)
-                // innerLoopBatchCount recommend multiples of 32 - i use 64
-                var handle = simulateForceExtJob.ScheduleParallel(simulateForceExtJob.particles.Length,5, sheduleJobDependency);
-                handle.Complete();
-                simulateForceExtJob.ParticleCallback(particles);
-                simulateForceExtJob.particles.Dispose();
-                
-                // Do Constraint
-                SimulateConstraint();
+                isStatic = new NativeArray<bool>(
+                    particles.Select(p => p.isStatic).ToArray(),
+                    Allocator.TempJob),
+                forceExt = new NativeArray<float3>(
+                    particles.Select(p => p.forceExt.ToFloat3()).ToArray(),
+                    Allocator.TempJob),
+                mass = new NativeArray<float>(
+                    particles.Select(p => p.mass).ToArray(),
+                    Allocator.TempJob),
 
-                // Update
-                SimulateUpdate();
-            }
+                gravity = gravity,
+                globalForce = globalForce,
+                airDrag = airDrag,
+                damping = damping,
+                dt = dt,
+                iterator = iterator,
+            };
+            JobHandle sheduleJobDependency = new JobHandle();
+
+            // Do Force(in: Gravity, Local force, Global Force)
+            // innerLoopBatchCount recommend multiples of 32 - i use 64
+            var handle =
+                simulateForceExtJob.ScheduleParallel(simulateForceExtJob.nowPosition.Length, 5, sheduleJobDependency);
+            handle.Complete();
+            simulateForceExtJob.ParticleCallback(particles);
+
+            // Do Constraint
+            SimulateConstraint();
+
+            // Update
+            SimulateUpdate();
         }
-        
+
         private void Simulator()
         {
             for (int i = 0; i < iterator; i++)
