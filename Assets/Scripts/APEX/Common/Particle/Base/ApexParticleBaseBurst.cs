@@ -5,6 +5,8 @@ namespace APEX.Common.Particle
 {
     /// <summary>
     /// particle base, struct use for Burst
+    /// For performance reasons, do not use this structure, but use whatever you need.
+    /// But if you want convenience, you can still use this
     /// </summary>
     public struct ApexParticleBaseBurst
     {
