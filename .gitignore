@@ -53,8 +53,10 @@ sysinfo.txt
 /UserSettings/Search.settings
 
 /ProjectSettings/ProjectVersion.txt
-
 /Packages/packages-lock.json
+
+# macOS generate
+.DS_Store
 
 # IDE project
 *.vscode/
