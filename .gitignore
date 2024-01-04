@@ -15,7 +15,6 @@ ExportedObj/
 *.unityproj
 *.sln
 *.suo
-
 *.tmp
 *.user
 *.userprefs
@@ -55,8 +54,9 @@ sysinfo.txt
 /ProjectSettings/ProjectVersion.txt
 /Packages/packages-lock.json
 
-# macOS generate
+# macOS generated files
 .DS_Store
+.DS_Store?
 
 # IDE project
 *.vscode/
