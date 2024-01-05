@@ -124,6 +124,15 @@ namespace APEX.Common.Constraints
 
             return particleConstraints.Select(p => p.pr).ToList();
         }
+        
+        /// <summary>
+        /// Get this constraint type
+        /// </summary>
+        /// <returns>EApexConstraintBatchType type</returns>
+        public EApexConstraintBatchType GetConstraintType()
+        {
+            return this.constraintBatchType;
+        }
 
         /// <summary>
         /// Get Constraint by type

@@ -125,6 +125,15 @@ namespace APEX.Common.Constraints
         }
 
         /// <summary>
+        /// Get this constraint type
+        /// </summary>
+        /// <returns>EApexConstraintBatchType type</returns>
+        public EApexConstraintBatchType GetConstraintType()
+        {
+            return this.constraintBatchType;
+        }
+
+        /// <summary>
         /// Get Constraint by type
         /// </summary>
         /// <param name="type">constraint type</param>

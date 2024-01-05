@@ -9,6 +9,7 @@ namespace APEX.Common.Constraints
         void ClearConstraint(int index);
         void ClearAllConstraint();
         List<int> GetTargetParticle(int index);
+        EApexConstraintBatchType GetConstraintType();
         IApexConstraintBatch GetConstraintsByType(EApexConstraintBatchType type);
         void Do();
     }
