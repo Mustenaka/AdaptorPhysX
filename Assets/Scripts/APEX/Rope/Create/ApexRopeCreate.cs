@@ -27,7 +27,7 @@ namespace APEX.Rope
         [Range(0, 1f)] public float stiffness = 0.5f;
         [Range(0, 1f)] public float damping = 0.005f;
         [Range(1, 20)] public int iterator = 10;
-        public bool runJobs = true;
+        public EApexSolverBackend backend = EApexSolverBackend.JobsMultithreading;
         
         private void Start()
         {
@@ -94,7 +94,7 @@ namespace APEX.Rope
             rope.solver.stiffness = stiffness;
             rope.solver.damping = damping;
             rope.solver.iterator = iterator;
-            rope.solver.runJobs = runJobs;
+            rope.solver.backend = backend;
 
             var distanceConstraint = new DistanceConstraint(ref rope.solver.particles);
             // var angleConstraint = new AngleConstraint(ref rope.solver.particles);

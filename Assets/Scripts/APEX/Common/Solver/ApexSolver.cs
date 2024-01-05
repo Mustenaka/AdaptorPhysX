@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using APEX.Common.Constraints;
@@ -13,6 +14,9 @@ namespace APEX.Common.Solver
 {
     public class ApexSolver : MonoBehaviour
     {
+        // runtime type
+        public EApexSolverBackend backend;
+
         // particle and constraint param
         [SerializeReference] public List<IApexConstraintBatch> constraintBatch = new List<IApexConstraintBatch>();
         public List<ApexParticleBase> particles = new List<ApexParticleBase>(); // particle container
@@ -29,9 +33,6 @@ namespace APEX.Common.Solver
         public float accTime = 0.0f;
         public int iterator = 10;
 
-        // run it by Jobs
-        public bool runJobs = true;
-
         private void Update()
         {
             accTime += Time.deltaTime;
@@ -39,13 +40,17 @@ namespace APEX.Common.Solver
 
             for (int i = 0; i < cnt; i++)
             {
-                if (runJobs)
+                switch (backend)
                 {
-                    TestSimulator(); // burst
-                }
-                else
-                {
-                    Simulator(); // no burst
+                    case EApexSolverBackend.SingleThread:
+                        Simulator();    // no burst simulator
+                        break;
+                    case EApexSolverBackend.JobsMultithreading:
+                        TestSimulator();// burst simulator
+                        break;
+                    default:
+                        Simulator();    // default: no burst simulator
+                        break;
                 }
             }
 
