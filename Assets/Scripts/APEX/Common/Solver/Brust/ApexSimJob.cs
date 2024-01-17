@@ -18,6 +18,7 @@ namespace APEX.Common.Solver
         private NativeArray<ApexParticleBaseBurst> _particles;
 
         /* distance constraint */
+        private bool runDistanceConstraint = false;
         private NativeArray<DistanceConstraintJob> _distanceConstraint;
         
         /* bend constraint */
@@ -36,7 +37,22 @@ namespace APEX.Common.Solver
             /* generate job persistence constraint: from input constraint */
             foreach (var con in constraintBatch)
             {
-                Debug.Log(con.GetConstraintType());
+                Debug.Log("construct constraint: " + con.GetConstraintType());
+                switch (con.GetConstraintType())
+                {
+                    case EApexConstraintBatchType.DistanceConstraint:
+                        runDistanceConstraint = true;
+                        _distanceConstraint = new NativeArray<DistanceConstraintJob>(
+                            
+                        );
+                        break;
+                    default:
+                        runDistanceConstraint = true;
+                        _distanceConstraint = new NativeArray<DistanceConstraintJob>(
+                            
+                        );
+                        break;
+                }
             }
         }
     }

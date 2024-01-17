@@ -4,6 +4,7 @@ using APEX.Common.Particle;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
+using Unity.VisualScripting;
 using UnityEngine;
 
 namespace APEX.Common.Constraints
@@ -66,15 +67,13 @@ namespace APEX.Common.Constraints
 
         public void Execute(int index)
         {
-            foreach (var constraint in constraints)
+            var con = constraints[index];
+            foreach (var single in con)
             {
-                foreach (var single in constraint.Value)
-                {
-                    CalcParticleConstraint(particles[single.pl].nextPosition,
-                        particles[single.pr].nextPosition,
-                        particles[single.pl].isStatic,
-                        particles[single.pr].isStatic);
-                }
+                CalcParticleConstraint(particles[single.pl].nextPosition,
+                    particles[single.pr].nextPosition,
+                    particles[single.pl].isStatic,
+                    particles[single.pr].isStatic);
             }
         }
 
