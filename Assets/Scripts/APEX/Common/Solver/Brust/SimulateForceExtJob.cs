@@ -12,12 +12,12 @@ namespace APEX.Common.Solver
     {
         [ReadOnly] public NativeArray<float3> previousPosition;
         [ReadOnly] public NativeArray<float3> nowPosition;
-        [ReadOnly] public NativeArray<bool> isStatic;
-        [ReadOnly] public NativeArray<float3> forceExt;
-        [ReadOnly] public NativeArray<float> mass;
-        
         [WriteOnly] public NativeArray<float3> nextPosition;
         
+        [ReadOnly] public NativeArray<int> pinIndex;
+        
+        [ReadOnly] public NativeArray<float3> forceExt;
+        [ReadOnly] public NativeArray<float> mass;
         [ReadOnly] public float3 gravity;
         [ReadOnly] public float3 globalForce;
         [ReadOnly] public float airDrag;
@@ -46,7 +46,7 @@ namespace APEX.Common.Solver
             }
             
             // simplex pin
-            if (isStatic[index])
+            if (pinIndex.Contains(index))
             {
                 return;
             }

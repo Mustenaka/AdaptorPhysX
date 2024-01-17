@@ -7,5 +7,6 @@ namespace APEX.Common.Solver
     {
         SingleThread, 
         JobsMultithreading,
+        GPU,
     }
 }

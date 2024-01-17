@@ -43,13 +43,13 @@ namespace APEX.Common.Solver
                 switch (backend)
                 {
                     case EApexSolverBackend.SingleThread:
-                        Simulator();    // no burst simulator
+                        SingleSimulator(); // no burst simulator
                         break;
                     case EApexSolverBackend.JobsMultithreading:
-                        TestSimulator();// burst simulator
+                        BurstSimulator(); // burst simulator
                         break;
                     default:
-                        Simulator();    // default: no burst simulator
+                        SingleSimulator(); // default: no burst simulator
                         break;
                 }
             }
@@ -57,7 +57,7 @@ namespace APEX.Common.Solver
             accTime %= dt;
         }
 
-        private void TestSimulator()
+        private void BurstSimulator()
         {
             var simulateForceExtJob = new SimulateForceExtJob()
             {
@@ -68,10 +68,6 @@ namespace APEX.Common.Solver
                     particles.Select(p => p.nowPosition.ToFloat3()).ToArray(),
                     Allocator.TempJob),
                 nextPosition = new NativeArray<float3>(particles.Count, Allocator.TempJob),
-
-                isStatic = new NativeArray<bool>(
-                    particles.Select(p => p.isStatic).ToArray(),
-                    Allocator.TempJob),
                 forceExt = new NativeArray<float3>(
                     particles.Select(p => p.forceExt.ToFloat3()).ToArray(),
                     Allocator.TempJob),
@@ -96,13 +92,45 @@ namespace APEX.Common.Solver
             simulateForceExtJob.ParticleCallback(particles);
 
             // Do Constraint
-            SimulateConstraint();
+            JobsSimulateConstraint();
 
             // Update
             SimulateUpdate();
         }
 
-        private void Simulator()
+        private void JobsSimulateConstraint()
+        {
+            JobHandle sheduleJobDependency = new JobHandle();
+            
+            foreach (var constraint in constraintBatch)
+            {
+                var typeOfConstraint = constraint.GetConstraintType();
+
+                switch (typeOfConstraint)
+                {
+                    case EApexConstraintBatchType.DistanceConstraint:
+                        var distanceConstraint = constraint as DistanceConstraint;
+                        var distanceConstraintJob = new DistanceConstraintJob()
+                        {
+                            restLength = distanceConstraint.restLength,
+                            stiffness = distanceConstraint.stiffness,
+                            particlesNextPosition = new NativeArray<float3>(
+                                particles.Select(p => p.nowPosition.ToFloat3()).ToArray(),
+                                Allocator.TempJob),
+                        };
+                        distanceConstraintJob.LineConstructor(); // TEMP: constraint element
+                        
+                        var handle = distanceConstraintJob.ScheduleParallel(
+                            distanceConstraintJob.particlesNextPosition.Length, 5, sheduleJobDependency);
+                        handle.Complete();
+                        distanceConstraintJob.ParticleCallback(particles);
+                        
+                        break;
+                }
+            }
+        }
+
+        private void SingleSimulator()
         {
             for (int i = 0; i < iterator; i++)
             {

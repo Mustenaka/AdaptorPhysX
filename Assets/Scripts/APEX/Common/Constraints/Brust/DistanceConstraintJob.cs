@@ -12,19 +12,21 @@ namespace APEX.Common.Constraints
     /// <summary>
     /// Distance constraint burst version, a constraint based on the target length
     /// </summary>
-    public struct DistanceConstraintJob : IJobParallelFor
+    public struct DistanceConstraintJob : IJobFor
     {
-        public NativeArray<ApexParticleBaseBurst> particles;
+        [ReadOnly] public NativeArray<float3> particlesNextPosition;
+        [WriteOnly] public NativeArray<float3> particlesAdjustNextPosition;
 
+        [ReadOnly] public NativeArray<int> pinIndex;
         [ReadOnly] public NativeParallelHashMap<int, NativeArray<ApexConstraintParticleDouble>> constraints;
         [ReadOnly] public float restLength;
         [ReadOnly] public float stiffness;
 
         public void ParticleCallback(List<ApexParticleBase> callbackParticle)
         {
-            for (int i = 0; i < particles.Length; i++)
+            for (int i = 0; i < particlesNextPosition.Length; i++)
             {
-                particles[i].ConvertBaseClass(callbackParticle[i]);
+                callbackParticle[i].nextPosition = particlesAdjustNextPosition[i];
             }
         }
 
@@ -36,10 +38,10 @@ namespace APEX.Common.Constraints
         public void LineConstructor(bool doubleConnect = true)
         {
             constraints = new NativeParallelHashMap<int, NativeArray<ApexConstraintParticleDouble>>();
-            for (int i = 0; i < particles.Length - 1; i++)
+            for (int i = 0; i < particlesNextPosition.Length - 1; i++)
             {
-                var lToR = new ApexConstraintParticleDouble(this.particles[i].index, this.particles[i + 1].index);
-                var rToL = new ApexConstraintParticleDouble(this.particles[i + 1].index, this.particles[i].index);
+                var lToR = new ApexConstraintParticleDouble(i, i + 1);
+                var rToL = new ApexConstraintParticleDouble(i + 1, i);
 
                 // Do not use ??= expression in Unity
                 if (!constraints.ContainsKey(i))
@@ -70,14 +72,21 @@ namespace APEX.Common.Constraints
             var con = constraints[index];
             foreach (var single in con)
             {
-                CalcParticleConstraint(particles[single.pl].nextPosition,
-                    particles[single.pr].nextPosition,
-                    particles[single.pl].isStatic,
-                    particles[single.pr].isStatic);
+                // position correction through constraint
+                CalcParticleConstraint(particlesNextPosition[single.pl],
+                    particlesNextPosition[single.pr],
+                    pinIndex.Contains(single.pr),
+                    pinIndex.Contains(single.pl),
+                    out float3 resultL, out float3 resultR);
+
+                // apply the position
+                particlesAdjustNextPosition[single.pl] = resultL;
+                particlesAdjustNextPosition[single.pr] = resultR;
             }
         }
 
-        private void CalcParticleConstraint(float3 l, float3 r, bool lStatic, bool rStatic)
+        private void CalcParticleConstraint(float3 l, float3 r, bool lStatic, bool rStatic,
+            out float3 resultL, out float3 resultR)
         {
             var delta = l - r;
             float currentDistance = math.length(delta);
@@ -102,6 +111,9 @@ namespace APEX.Common.Constraints
                     l -= (correction + correction);
                 }
             }
+
+            resultL = l;
+            resultR = r;
         }
     }
 }
