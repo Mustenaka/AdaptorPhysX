@@ -23,7 +23,7 @@ namespace APEX.Common.Constraints
         public void ParticleCallback(List<ApexParticleBase> callbackParticle)
         {
             Debug.Log(callbackParticle[1].nextPosition + " ----- " + adjustNextPosition[1]);
-            
+
             for (int i = 0; i < adjustNextPosition.Length; i++)
             {
                 callbackParticle[i].nextPosition = adjustNextPosition[i];
@@ -33,25 +33,50 @@ namespace APEX.Common.Constraints
         public void Execute(int index)
         {
             var con = constraints[index];
-            var l = con.pl;
-            var r = con.pr;
+
+            var delta = nextPosition[con.pl] - nextPosition[con.pr];
+            float currentDistance = math.length(delta);
+            float error = currentDistance - restLength;
+
+            var lStatic = pinIndex.Contains(con.pl);
+            var rStatic = pinIndex.Contains(con.pr);
+
+            if (currentDistance > Mathf.Epsilon)
+            {
+                float3 correction = math.normalize(delta) * (error * stiffness);
+
+                // if one side Static, than static one sid, the other side double offset
+                if (!lStatic && !rStatic)
+                {
+                    adjustNextPosition[con.pl] = nextPosition[con.pl] - correction;
+                    adjustNextPosition[con.pr] = nextPosition[con.pr] + correction;
+                }
+                else if (lStatic && !rStatic)
+                {
+                    adjustNextPosition[con.pr] = nextPosition[con.pr] + correction * 2;
+                }
+                else if (!lStatic && rStatic)
+                {
+                    adjustNextPosition[con.pl] = nextPosition[con.pl] - correction * 2;
+                }
+            }
 
             // position correction through constraint
-            CalcParticleConstraint(nextPosition[l],
-                nextPosition[r],
-                pinIndex.Contains(l),
-                pinIndex.Contains(r),
-                out float3 resultL, out float3 resultR);
+            // CalcParticleConstraint(nextPosition[l],
+            //     nextPosition[r],
+            //     pinIndex.Contains(l),
+            //     pinIndex.Contains(r),
+            //     out float3 resultL, out float3 resultR);
 
             // apply the position
-            adjustNextPosition[l] = resultL;
-            adjustNextPosition[r] = resultR;
-
-            if (pinIndex.Contains(l))
-            {
-                Debug.Log(nextPosition[r] + " " + adjustNextPosition[r] + " " + resultL + " " +
-                          resultR);
-            }
+            // adjustNextPosition[l] = resultL;
+            // adjustNextPosition[r] = resultR;
+            //
+            // if (pinIndex.Contains(l))
+            // {
+            //     Debug.Log(nextPosition[r] + " " + adjustNextPosition[r] + " " + resultL + " " +
+            //               resultR);
+            // }
         }
 
         private void CalcParticleConstraint(float3 l, float3 r, bool lStatic, bool rStatic,

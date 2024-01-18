@@ -173,18 +173,15 @@ namespace APEX.Common.Solver
                             nextPosition = new NativeArray<float3>(
                                 particles.Select(p => p.nextPosition.ToFloat3()).ToArray(),
                                 Allocator.TempJob),
-                            adjustNextPosition = new NativeArray<float3>(particles.Count, Allocator.Persistent),
+                            adjustNextPosition = new NativeArray<float3>(particles.Count, Allocator.TempJob),
                         };
 
-                        
+
                         var ahandle = distanceConstraintJob.Schedule(
                             distanceConstraintJob.constraints.Length, handle);
                         ahandle.Complete();
-                        
-                        Debug.Log("++++++++++++++" + distanceConstraintJob.adjustNextPosition[1]);
-                        distanceConstraintJob.ParticleCallback(particles);
-                        distanceConstraintJob.adjustNextPosition.Dispose();
 
+                        distanceConstraintJob.ParticleCallback(particles);
                         break;
                 }
             }
