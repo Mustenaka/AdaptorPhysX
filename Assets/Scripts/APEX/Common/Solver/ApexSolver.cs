@@ -38,6 +38,7 @@ namespace APEX.Common.Solver
 
         private void Update()
         {
+            // time consequence control
             accTime += Time.deltaTime;
             int cnt = (int)(accTime / dt);
 
@@ -91,18 +92,17 @@ namespace APEX.Common.Solver
             // Do Force(in: Gravity, Local force, Global Force)
             // innerLoopBatchCount recommend multiples of 32 - i use 64
             var handle =
-                simulateForceExtJob.ScheduleParallel(simulateForceExtJob.nowPosition.Length, 5, sheduleJobDependency);
+                simulateForceExtJob.ScheduleParallel(simulateForceExtJob.nowPosition.Length, 8, sheduleJobDependency);
             handle.Complete();
             simulateForceExtJob.ParticleCallback(particles);
 
             // Do Constraint
-            JobsSimulateConstraint();
+            JobsSimulateConstraint(sheduleJobDependency);
 
             // Update
             SimulateUpdate();
         }
 
-        // TEMP: test code for jobs constraint test.
         private NativeArray<ApexConstraintParticleDouble> _cons;
 
         /// <summary>
@@ -121,14 +121,13 @@ namespace APEX.Common.Solver
                 magnification = 2;
             }
 
-            _cons = new NativeArray<ApexConstraintParticleDouble>(length * magnification, Allocator.Persistent);
+            _cons = new NativeArray<ApexConstraintParticleDouble>(length * magnification - magnification,
+                Allocator.Persistent);
 
             for (int i = 0, j = 0; i < length - 1; i++, j += 2)
             {
                 var lToR = new ApexConstraintParticleDouble(particles[i].index, particles[i + 1].index);
                 var rToL = new ApexConstraintParticleDouble(particles[i + 1].index, particles[i].index);
-
-                Debug.Log("generate constraint for jobs");
 
                 if (doubleConnect)
                 {
@@ -141,15 +140,16 @@ namespace APEX.Common.Solver
                 }
             }
 
-            foreach (var con in _cons)
-            {
-                Debug.Log(con.ToString());
-            }
+            // Debug.Log("Distance Constraint count:" + _cons.Length);
+            // foreach (var con in _cons)
+            // {
+            //     Debug.Log("con: " + con);
+            // }
         }
 
-        private void JobsSimulateConstraint()
+        private void JobsSimulateConstraint(JobHandle sheduleJobDependency)
         {
-            JobHandle sheduleJobDependency = new JobHandle();
+            // JobHandle asheduleJobDependency = new JobHandle();
 
             foreach (var constraint in constraintBatch)
             {
@@ -160,24 +160,29 @@ namespace APEX.Common.Solver
                     case EApexConstraintBatchType.DistanceConstraint:
                         var distanceConstraint = constraint as DistanceConstraint;
 
+                        if (distanceConstraint is null)
+                        {
+                            continue;
+                        }
+
                         var distanceConstraintJob = new DistanceConstraintJob()
                         {
                             restLength = distanceConstraint.restLength,
                             stiffness = distanceConstraint.stiffness,
                             pinIndex = pinIndex,
-                            // constraints = cons,
+                            constraints = _cons,
 
-                            particlesNextPosition = new NativeArray<float3>(
-                                particles.Select(p => p.nowPosition.ToFloat3()).ToArray(),
+                            nextPosition = new NativeArray<float3>(
+                                particles.Select(p => p.nextPosition.ToFloat3()).ToArray(),
                                 Allocator.TempJob),
-                            particlesAdjustNextPosition = new NativeArray<float3>(particles.Count, Allocator.TempJob),
+                            adjustNextPosition = new NativeArray<float3>(particles.Count, Allocator.TempJob),
                         };
 
                         var handle = distanceConstraintJob.ScheduleParallel(
-                            distanceConstraintJob.particlesNextPosition.Length, 5, sheduleJobDependency);
+                            distanceConstraintJob.constraints.Length, 256, sheduleJobDependency);
                         handle.Complete();
                         distanceConstraintJob.ParticleCallback(particles);
-
+                        
                         break;
                 }
             }
@@ -192,7 +197,7 @@ namespace APEX.Common.Solver
 
                 // Do Constraint
                 SimulateConstraint();
-
+                
                 // Update
                 SimulateUpdate();
             }

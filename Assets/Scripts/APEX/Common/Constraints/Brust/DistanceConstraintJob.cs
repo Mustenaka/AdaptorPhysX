@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using APEX.Common.Particle;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using Unity.Mathematics;
 using Unity.VisualScripting;
@@ -14,38 +15,51 @@ namespace APEX.Common.Constraints
     /// </summary>
     public struct DistanceConstraintJob : IJobFor
     {
-        [ReadOnly] public NativeArray<float3> particlesNextPosition;
-        [WriteOnly] public NativeArray<float3> particlesAdjustNextPosition;
+        [ReadOnly] public NativeArray<float3> nextPosition;
+        [WriteOnly] public NativeArray<float3> adjustNextPosition;
 
         [ReadOnly] public NativeArray<int> pinIndex;
-        [ReadOnly] public NativeParallelHashMap<int, NativeArray<ApexConstraintParticleDouble>> constraints;
+        [ReadOnly] public NativeArray<ApexConstraintParticleDouble> constraints;
         [ReadOnly] public float restLength;
         [ReadOnly] public float stiffness;
 
         public void ParticleCallback(List<ApexParticleBase> callbackParticle)
         {
-            for (int i = 0; i < particlesNextPosition.Length; i++)
+            // Debug.Log(callbackParticle[3].nextPosition + " ----- " + adjustNextPosition[3]);
+            
+            for (int i = 0; i < adjustNextPosition.Length; i++)
             {
-                callbackParticle[i].nextPosition = particlesAdjustNextPosition[i];
+                callbackParticle[i].nextPosition = adjustNextPosition[i];
             }
         }
-        
+
         public void Execute(int index)
         {
             var con = constraints[index];
-            foreach (var single in con)
-            {
-                // position correction through constraint
-                CalcParticleConstraint(particlesNextPosition[single.pl],
-                    particlesNextPosition[single.pr],
-                    pinIndex.Contains(single.pr),
-                    pinIndex.Contains(single.pl),
-                    out float3 resultL, out float3 resultR);
+            var l = con.pl;
+            var r = con.pr;
 
-                // apply the position
-                particlesAdjustNextPosition[single.pl] = resultL;
-                particlesAdjustNextPosition[single.pr] = resultR;
-            }
+            // position correction through constraint
+            CalcParticleConstraint(nextPosition[l],
+                nextPosition[r],
+                pinIndex.Contains(l),
+                pinIndex.Contains(r),
+                out float3 resultL, out float3 resultR);
+
+            // apply the position
+            adjustNextPosition[l] = resultL;
+            adjustNextPosition[r] = resultR;
+
+            // if (pinIndex.Contains(l) || pinIndex.Contains(r))
+            // {
+            //     Debug.Log(l + " " + r);
+            // }
+
+            // if (pinIndex.Contains(l))
+            // {
+            //     Debug.Log(nextPosition[3] + " " + adjustNextPosition[3] + " " + resultL + " " +
+            //               resultR);
+            // }
         }
 
         private void CalcParticleConstraint(float3 l, float3 r, bool lStatic, bool rStatic,
@@ -73,6 +87,11 @@ namespace APEX.Common.Constraints
                 {
                     l -= (correction + correction);
                 }
+
+                // if (lStatic)
+                // {
+                //     Debug.Log(correction + " ----- " + r);
+                // }
             }
 
             resultL = l;
