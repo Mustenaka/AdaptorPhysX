@@ -1,11 +1,8 @@
 using System.Collections.Generic;
-using System.Linq;
 using APEX.Common.Particle;
 using Unity.Collections;
-using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using Unity.Mathematics;
-using Unity.VisualScripting;
 using UnityEngine;
 
 namespace APEX.Common.Constraints
@@ -16,7 +13,7 @@ namespace APEX.Common.Constraints
     public struct DistanceConstraintJob : IJobFor
     {
         [ReadOnly] public NativeArray<float3> nextPosition;
-        [WriteOnly] public NativeArray<float3> adjustNextPosition;
+        public NativeArray<float3> adjustNextPosition;
 
         [ReadOnly] public NativeArray<int> pinIndex;
         [ReadOnly] public NativeArray<ApexConstraintParticleDouble> constraints;
@@ -25,7 +22,7 @@ namespace APEX.Common.Constraints
 
         public void ParticleCallback(List<ApexParticleBase> callbackParticle)
         {
-            // Debug.Log(callbackParticle[3].nextPosition + " ----- " + adjustNextPosition[3]);
+            Debug.Log(callbackParticle[1].nextPosition + " ----- " + adjustNextPosition[1]);
             
             for (int i = 0; i < adjustNextPosition.Length; i++)
             {
@@ -50,16 +47,11 @@ namespace APEX.Common.Constraints
             adjustNextPosition[l] = resultL;
             adjustNextPosition[r] = resultR;
 
-            // if (pinIndex.Contains(l) || pinIndex.Contains(r))
-            // {
-            //     Debug.Log(l + " " + r);
-            // }
-
-            // if (pinIndex.Contains(l))
-            // {
-            //     Debug.Log(nextPosition[3] + " " + adjustNextPosition[3] + " " + resultL + " " +
-            //               resultR);
-            // }
+            if (pinIndex.Contains(l))
+            {
+                Debug.Log(nextPosition[r] + " " + adjustNextPosition[r] + " " + resultL + " " +
+                          resultR);
+            }
         }
 
         private void CalcParticleConstraint(float3 l, float3 r, bool lStatic, bool rStatic,

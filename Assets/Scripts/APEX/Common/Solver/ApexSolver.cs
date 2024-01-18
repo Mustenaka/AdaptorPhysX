@@ -97,7 +97,7 @@ namespace APEX.Common.Solver
             simulateForceExtJob.ParticleCallback(particles);
 
             // Do Constraint
-            JobsSimulateConstraint(sheduleJobDependency);
+            JobsSimulateConstraint(handle);
 
             // Update
             SimulateUpdate();
@@ -147,10 +147,8 @@ namespace APEX.Common.Solver
             // }
         }
 
-        private void JobsSimulateConstraint(JobHandle sheduleJobDependency)
+        private void JobsSimulateConstraint(JobHandle handle)
         {
-            // JobHandle asheduleJobDependency = new JobHandle();
-
             foreach (var constraint in constraintBatch)
             {
                 var typeOfConstraint = constraint.GetConstraintType();
@@ -175,14 +173,18 @@ namespace APEX.Common.Solver
                             nextPosition = new NativeArray<float3>(
                                 particles.Select(p => p.nextPosition.ToFloat3()).ToArray(),
                                 Allocator.TempJob),
-                            adjustNextPosition = new NativeArray<float3>(particles.Count, Allocator.TempJob),
+                            adjustNextPosition = new NativeArray<float3>(particles.Count, Allocator.Persistent),
                         };
 
-                        var handle = distanceConstraintJob.ScheduleParallel(
-                            distanceConstraintJob.constraints.Length, 256, sheduleJobDependency);
-                        handle.Complete();
-                        distanceConstraintJob.ParticleCallback(particles);
                         
+                        var ahandle = distanceConstraintJob.Schedule(
+                            distanceConstraintJob.constraints.Length, handle);
+                        ahandle.Complete();
+                        
+                        Debug.Log("++++++++++++++" + distanceConstraintJob.adjustNextPosition[1]);
+                        distanceConstraintJob.ParticleCallback(particles);
+                        distanceConstraintJob.adjustNextPosition.Dispose();
+
                         break;
                 }
             }
@@ -197,7 +199,7 @@ namespace APEX.Common.Solver
 
                 // Do Constraint
                 SimulateConstraint();
-                
+
                 // Update
                 SimulateUpdate();
             }
