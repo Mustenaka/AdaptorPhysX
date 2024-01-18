@@ -8,11 +8,16 @@ namespace APEX.Common.Constraints
     {
         // particle left, particle right (both construct constraint)
         public int pl, pr;
-        
+
         public ApexConstraintParticleDouble(int pl, int pr)
         {
             this.pl = pl;
             this.pr = pr;
+        }
+
+        public override string ToString()
+        {
+            return "(" + this.pl + ", " + this.pr + ")";
         }
     }
 }
