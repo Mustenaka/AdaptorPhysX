@@ -21,6 +21,9 @@ namespace APEX.Common.Solver
         [SerializeReference] public List<IApexConstraintBatch> constraintBatch = new List<IApexConstraintBatch>();
         public List<ApexParticleBase> particles = new List<ApexParticleBase>(); // particle container
 
+        // pin(attach) point
+        public NativeArray<int> pinIndex;
+
         // physics param
         public Vector3 gravity = new Vector3(0, -9.81f, 0);
         public Vector3 globalForce = new Vector3(0, 0, 0);
@@ -68,6 +71,7 @@ namespace APEX.Common.Solver
                     particles.Select(p => p.nowPosition.ToFloat3()).ToArray(),
                     Allocator.TempJob),
                 nextPosition = new NativeArray<float3>(particles.Count, Allocator.TempJob),
+                pinIndex = pinIndex,
                 forceExt = new NativeArray<float3>(
                     particles.Select(p => p.forceExt.ToFloat3()).ToArray(),
                     Allocator.TempJob),
@@ -98,10 +102,75 @@ namespace APEX.Common.Solver
             SimulateUpdate();
         }
 
+        // TEMP: test code for jobs constraint test.
+        public NativeParallelHashMap<int, NativeArray<ApexConstraintParticleDouble>> cons;
+
+        /// <summary>
+        /// Line Constructor:
+        ///     particle one by one connect.
+        /// </summary>
+        /// <param name="doubleConnect">Reverse connection (2x)</param>
+        public void LineConstructor(bool doubleConnect = true)
+        {
+            var length = particles.Count;
+            Debug.Log(length);
+            /*
+             * NativeArray<ApexConstraintParticleDouble> 因为没有创建所以，不是固定内存，
+             * unity job认为不占据内存就没有创建空间，因此产生报错
+             * ArgumentException: Unity.Collections.NativeArray`1[APEX.Common.Constraints.ApexConstraintParticleDouble]
+             * used in native collection is not blittable, not primitive, or contains a type tagged as NativeContainer
+             * 解决方案想法：
+             *      1. 看看能不能像c/c++ setmem的方式人工分配内存空间
+             *      2. 需要修改数据结构，从Hash方法降级为Line方法，这样会增加约束定位的时间
+             */
+            cons =
+                new NativeParallelHashMap<int, NativeArray<ApexConstraintParticleDouble>>(length, Allocator.Persistent);
+            for (int i = 0; i < length - 1; i++)
+            {
+                var lToR = new ApexConstraintParticleDouble(particles[i].index, particles[i + 1].index);
+                var rToL = new ApexConstraintParticleDouble(particles[i + 1].index, particles[i].index);
+
+                Debug.Log("asdasdasd");
+
+                // // Do not use ??= expression in Unity
+                // if (!cons.ContainsKey(i))
+                // {
+                //     // In general, the length constraint to which a particle is connected is at most 8 (surface body).
+                //     cons.Add(i, new NativeArray<ApexConstraintParticleDouble>(8, Allocator.Persistent));
+                // }
+                //
+                // if (!cons.ContainsKey(i + 1))
+                // {
+                //     cons.Add(i + 1, new NativeArray<ApexConstraintParticleDouble>(8, Allocator.Persistent));
+                // }
+                //
+                // // Tail-in data
+                // var apexConstraintParticleDoubles = cons[i];
+                // apexConstraintParticleDoubles[apexConstraintParticleDoubles.Length] = lToR;
+                //
+                // if (doubleConnect)
+                // {
+                //     var constraintParticleDoubles = cons[i];
+                //     constraintParticleDoubles[constraintParticleDoubles.Length] = rToL;
+                // }
+            }
+
+            foreach (var con in cons)
+            {
+                string one = con.Key + " : ";
+                foreach (var single in con.Value)
+                {
+                    one += "(" + single.pl + ", " + single.pr + ")";
+                }
+
+                Debug.Log(one);
+            }
+        }
+
         private void JobsSimulateConstraint()
         {
             JobHandle sheduleJobDependency = new JobHandle();
-            
+
             foreach (var constraint in constraintBatch)
             {
                 var typeOfConstraint = constraint.GetConstraintType();
@@ -110,21 +179,25 @@ namespace APEX.Common.Solver
                 {
                     case EApexConstraintBatchType.DistanceConstraint:
                         var distanceConstraint = constraint as DistanceConstraint;
+
                         var distanceConstraintJob = new DistanceConstraintJob()
                         {
                             restLength = distanceConstraint.restLength,
                             stiffness = distanceConstraint.stiffness,
+                            pinIndex = pinIndex,
+                            constraints = cons,
+
                             particlesNextPosition = new NativeArray<float3>(
                                 particles.Select(p => p.nowPosition.ToFloat3()).ToArray(),
                                 Allocator.TempJob),
+                            particlesAdjustNextPosition = new NativeArray<float3>(particles.Count, Allocator.TempJob),
                         };
-                        distanceConstraintJob.LineConstructor(); // TEMP: constraint element
-                        
+
                         var handle = distanceConstraintJob.ScheduleParallel(
                             distanceConstraintJob.particlesNextPosition.Length, 5, sheduleJobDependency);
                         handle.Complete();
                         distanceConstraintJob.ParticleCallback(particles);
-                        
+
                         break;
                 }
             }

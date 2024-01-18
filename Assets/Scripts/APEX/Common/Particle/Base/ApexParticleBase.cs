@@ -14,19 +14,19 @@ namespace APEX.Common.Particle
         public Vector3 previousPosition;
         public Vector3 nowPosition;
         public Vector3 nextPosition;
-        
+
         /* scale equal transform.TransLocalScale */
         public Vector3 scale;
-        
+
         /* Index of the particle array */
         public int index;
-        
+
         /* True - this particle nextPosition will not apply nowPosition */
         public bool isStatic;
-        
+
         /* physic param */
-        public Vector3 forceExt;        // calc physic
-        public Vector3 forceApply;      // apply physic
+        public Vector3 forceExt; // calc physic
+        public Vector3 forceApply; // apply physic
         public float mass;
     }
 }

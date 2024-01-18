@@ -3,6 +3,7 @@ using System.Linq;
 using APEX.Common.Constraints;
 using APEX.Common.Particle;
 using APEX.Common.Solver;
+using Unity.Collections;
 using Unity.VisualScripting;
 using UnityEngine;
 
@@ -28,7 +29,7 @@ namespace APEX.Rope
         [Range(0, 1f)] public float damping = 0.005f;
         [Range(1, 20)] public int iterator = 10;
         public EApexSolverBackend backend = EApexSolverBackend.JobsMultithreading;
-        
+
         private void Start()
         {
             // if the obj is empty, create sphere to fill it
@@ -55,6 +56,7 @@ namespace APEX.Rope
         {
             var rope = this.AddComponent<ApexRope>();
             var solver = this.AddComponent<ApexSolver>();
+            var pin = new NativeArray<int>(4, Allocator.Persistent);
 
             rope.solver = solver;
 
@@ -76,11 +78,12 @@ namespace APEX.Rope
                     previousPosition = particlePosition,
                     nowPosition = particlePosition,
                     forceExt = Vector3.zero,
-                    
+
                     scale = this.transform.localScale
                 };
 
                 // static the first particle
+                pin[0] = 0;
                 if (i == 0)
                 {
                     p.isStatic = true;
@@ -89,13 +92,17 @@ namespace APEX.Rope
                 rope.elements.Add(element);
                 rope.particles.Add(p);
             }
-
+  
             rope.solver.particles = new List<ApexParticleBase>(rope.particles);
             rope.solver.stiffness = stiffness;
             rope.solver.damping = damping;
             rope.solver.iterator = iterator;
             rope.solver.backend = backend;
+            rope.solver.pinIndex = pin;
 
+            // TEMP: outlive generate line constructor
+            rope.solver.LineConstructor();
+            
             var distanceConstraint = new DistanceConstraint(ref rope.solver.particles);
             // var angleConstraint = new AngleConstraint(ref rope.solver.particles);
             // var bendConstraint = new BendConstraint(ref rope.solver.particles);

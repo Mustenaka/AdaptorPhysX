@@ -29,44 +29,7 @@ namespace APEX.Common.Constraints
                 callbackParticle[i].nextPosition = particlesAdjustNextPosition[i];
             }
         }
-
-        /// <summary>
-        /// Line Constructor:
-        ///     particle one by one connect.
-        /// </summary>
-        /// <param name="doubleConnect">Reverse connection (2x)</param>
-        public void LineConstructor(bool doubleConnect = true)
-        {
-            constraints = new NativeParallelHashMap<int, NativeArray<ApexConstraintParticleDouble>>();
-            for (int i = 0; i < particlesNextPosition.Length - 1; i++)
-            {
-                var lToR = new ApexConstraintParticleDouble(i, i + 1);
-                var rToL = new ApexConstraintParticleDouble(i + 1, i);
-
-                // Do not use ??= expression in Unity
-                if (!constraints.ContainsKey(i))
-                {
-                    // In general, the length constraint to which a particle is connected is at most 8 (surface body).
-                    constraints.Add(i, new NativeArray<ApexConstraintParticleDouble>(8, Allocator.Persistent));
-                }
-
-                if (!constraints.ContainsKey(i + 1))
-                {
-                    constraints.Add(i + 1, new NativeArray<ApexConstraintParticleDouble>(8, Allocator.Persistent));
-                }
-
-                // Tail-in data
-                var apexConstraintParticleDoubles = constraints[i];
-                apexConstraintParticleDoubles[apexConstraintParticleDoubles.Length] = lToR;
-
-                if (doubleConnect)
-                {
-                    var constraintParticleDoubles = constraints[i];
-                    constraintParticleDoubles[constraintParticleDoubles.Length] = rToL;
-                }
-            }
-        }
-
+        
         public void Execute(int index)
         {
             var con = constraints[index];
