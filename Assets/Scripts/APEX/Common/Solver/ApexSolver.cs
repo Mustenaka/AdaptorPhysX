@@ -5,6 +5,7 @@ using APEX.Common.Constraints;
 using APEX.Common.Particle;
 using APEX.Tools;
 using APEX.Tools.MathematicsTools;
+using Temp.JobTest;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
@@ -149,42 +150,57 @@ namespace APEX.Common.Solver
 
         private void JobsSimulateConstraint(JobHandle handle)
         {
-            foreach (var constraint in constraintBatch)
+            // foreach (var constraint in constraintBatch)
+            // {
+            //     var typeOfConstraint = constraint.GetConstraintType();
+            //
+            //     switch (typeOfConstraint)
+            //     {
+            //
+            //     }
+            // }
+
+            // case EApexConstraintBatchType.DistanceConstraint:
+            var distanceConstraint = constraintBatch[0] as DistanceConstraint;
+
+            // if (distanceConstraint is null)
+            // {
+            //     continue;
+            // }
+
+
+            var distanceConstraintJob = new DistanceConstraintJob()
             {
-                var typeOfConstraint = constraint.GetConstraintType();
+                restLength = distanceConstraint.restLength,
+                stiffness = distanceConstraint.stiffness,
+                pinIndex = pinIndex,
+                constraints = _cons,
+                way = new float3(0, 0, 0),
+                nextPosition = new NativeArray<float3>(
+                    particles.Select(p => p.nextPosition.ToFloat3()).ToArray(),
+                    Allocator.TempJob),
+                // adjustNextPosition = new NativeArray<float3>(128, Allocator.TempJob),
+            };
 
-                switch (typeOfConstraint)
-                {
-                    case EApexConstraintBatchType.DistanceConstraint:
-                        var distanceConstraint = constraint as DistanceConstraint;
+            handle = distanceConstraintJob.Schedule(
+                distanceConstraintJob.constraints.Length, handle);
+            handle.Complete();
 
-                        if (distanceConstraint is null)
-                        {
-                            continue;
-                        }
+            // var managed1 = distanceConstraintJob.nextPosition.GetHashCode();
+            // var managed2 = distanceConstraintJob.adjustNextPosition.GetHashCode();
+            // Debug.Log("Managed Array Address: " + managed1 + " " + managed2);
+            // Debug.Log(distanceConstraintJob.adjustNextPosition[1] + " ----- " + distanceConstraintJob.way);
 
-                        var distanceConstraintJob = new DistanceConstraintJob()
-                        {
-                            restLength = distanceConstraint.restLength,
-                            stiffness = distanceConstraint.stiffness,
-                            pinIndex = pinIndex,
-                            constraints = _cons,
+            distanceConstraintJob.ParticleCallback(particles);
+            // distanceConstraintJob.adjustNextPosition.Dispose();
+            // break;
 
-                            nextPosition = new NativeArray<float3>(
-                                particles.Select(p => p.nextPosition.ToFloat3()).ToArray(),
-                                Allocator.TempJob),
-                            adjustNextPosition = new NativeArray<float3>(particles.Count, Allocator.TempJob),
-                        };
-
-
-                        var ahandle = distanceConstraintJob.Schedule(
-                            distanceConstraintJob.constraints.Length, handle);
-                        ahandle.Complete();
-
-                        distanceConstraintJob.ParticleCallback(particles);
-                        break;
-                }
-            }
+            
+            // SimpleJob simpleJob = new SimpleJob
+            // {
+            //     inputData = new NativeArray<int>(100, Allocator.TempJob),
+            //     resultData = new NativeArray<int>(100, Allocator.TempJob)
+            // };
         }
 
         private void SingleSimulator()

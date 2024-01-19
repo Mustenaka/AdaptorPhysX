@@ -4,6 +4,7 @@ using APEX.Common.Constraints;
 using APEX.Common.Particle;
 using APEX.Common.Solver;
 using Unity.Collections;
+using Unity.Mathematics;
 using Unity.VisualScripting;
 using UnityEngine;
 
@@ -92,7 +93,7 @@ namespace APEX.Rope
                 rope.elements.Add(element);
                 rope.particles.Add(p);
             }
-  
+
             rope.solver.particles = new List<ApexParticleBase>(rope.particles);
             rope.solver.stiffness = stiffness;
             rope.solver.damping = damping;
@@ -102,7 +103,7 @@ namespace APEX.Rope
 
             // TEMP: outlive generate line constructor
             rope.solver.LineConstructor();
-            
+
             var distanceConstraint = new DistanceConstraint(ref rope.solver.particles);
             // var angleConstraint = new AngleConstraint(ref rope.solver.particles);
             // var bendConstraint = new BendConstraint(ref rope.solver.particles);
