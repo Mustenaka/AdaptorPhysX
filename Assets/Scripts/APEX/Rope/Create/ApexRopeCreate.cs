@@ -57,7 +57,7 @@ namespace APEX.Rope
         {
             var rope = this.AddComponent<ApexRope>();
             var solver = this.AddComponent<ApexSolver>();
-            var pin = new NativeArray<int>(4, Allocator.Persistent);
+            var pin = new NativeArray<int>(1, Allocator.Persistent);
 
             rope.solver = solver;
 
@@ -102,7 +102,7 @@ namespace APEX.Rope
             rope.solver.pinIndex = pin;
 
             // TEMP: outlive generate line constructor
-            rope.solver.LineConstructor();
+            rope.solver.LineConstructor(true);
 
             var distanceConstraint = new DistanceConstraint(ref rope.solver.particles);
             // var angleConstraint = new AngleConstraint(ref rope.solver.particles);

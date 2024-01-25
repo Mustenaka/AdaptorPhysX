@@ -140,67 +140,50 @@ namespace APEX.Common.Solver
                     _cons[i] = lToR;
                 }
             }
-
-            // Debug.Log("Distance Constraint count:" + _cons.Length);
-            // foreach (var con in _cons)
-            // {
-            //     Debug.Log("con: " + con);
-            // }
         }
 
         private void JobsSimulateConstraint(JobHandle handle)
         {
-            // foreach (var constraint in constraintBatch)
-            // {
-            //     var typeOfConstraint = constraint.GetConstraintType();
-            //
-            //     switch (typeOfConstraint)
-            //     {
-            //
-            //     }
-            // }
-
-            // case EApexConstraintBatchType.DistanceConstraint:
-            var distanceConstraint = constraintBatch[0] as DistanceConstraint;
-
-            // if (distanceConstraint is null)
-            // {
-            //     continue;
-            // }
-
-
-            var distanceConstraintJob = new DistanceConstraintJob()
+            foreach (var constraint in constraintBatch)
             {
-                restLength = distanceConstraint.restLength,
-                stiffness = distanceConstraint.stiffness,
-                pinIndex = pinIndex,
-                constraints = _cons,
-                way = new float3(0, 0, 0),
-                nextPosition = new NativeArray<float3>(
-                    particles.Select(p => p.nextPosition.ToFloat3()).ToArray(),
-                    Allocator.TempJob),
-                // adjustNextPosition = new NativeArray<float3>(128, Allocator.TempJob),
-            };
+                var typeOfConstraint = constraint.GetConstraintType();
 
-            handle = distanceConstraintJob.Schedule(
-                distanceConstraintJob.constraints.Length, handle);
-            handle.Complete();
+                switch (typeOfConstraint)
+                {
+                    case EApexConstraintBatchType.DistanceConstraint:
+                        // Constraint Type check
+                        if (constraint is not DistanceConstraint distanceConstraint)
+                        {
+                            continue;
+                        }
 
-            // var managed1 = distanceConstraintJob.nextPosition.GetHashCode();
-            // var managed2 = distanceConstraintJob.adjustNextPosition.GetHashCode();
-            // Debug.Log("Managed Array Address: " + managed1 + " " + managed2);
-            // Debug.Log(distanceConstraintJob.adjustNextPosition[1] + " ----- " + distanceConstraintJob.way);
+                        // Create job
+                        var distanceConstraintJob = new DistanceConstraintJob()
+                        {
+                            restLength = distanceConstraint.restLength,
+                            stiffness = distanceConstraint.stiffness,
+                            pinIndex = pinIndex,
+                            constraints = _cons,
+                            nextPosition = new NativeArray<float3>(
+                                particles.Select(p => p.nextPosition.ToFloat3()).ToArray(),
+                                Allocator.TempJob),
+                            // adjustNextPosition = new NativeArray<float3>(particles.Count, Allocator.TempJob),
+                        };
 
-            distanceConstraintJob.ParticleCallback(particles);
-            // distanceConstraintJob.adjustNextPosition.Dispose();
-            // break;
+                        handle = distanceConstraintJob.Schedule(
+                            distanceConstraintJob.constraints.Length, handle);
+                        handle.Complete();
 
-            
-            // SimpleJob simpleJob = new SimpleJob
-            // {
-            //     inputData = new NativeArray<int>(100, Allocator.TempJob),
-            //     resultData = new NativeArray<int>(100, Allocator.TempJob)
-            // };
+                        // var managed1 = distanceConstraintJob.nextPosition.GetHashCode();
+                        // var managed2 = distanceConstraintJob.adjustNextPosition.GetHashCode();
+                        // Debug.Log("Managed Array Address: " + managed1 + " " + managed2);
+                        // Debug.Log(distanceConstraintJob.adjustNextPosition[1] + " ----- " + distanceConstraintJob.way);
+
+                        distanceConstraintJob.ParticleCallback(particles);
+                        // distanceConstraintJob.adjustNextPosition.Dispose();
+                        break;
+                }
+            }
         }
 
         private void SingleSimulator()
