@@ -1,11 +1,9 @@
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using APEX.Common.Constraints;
 using APEX.Common.Particle;
 using APEX.Tools;
 using APEX.Tools.MathematicsTools;
-using Temp.JobTest;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
