@@ -16,10 +16,13 @@ namespace APEX.Common.Constraints
     public struct DistanceConstraintJob : IJobFor
     {
         [NativeDisableUnsafePtrRestriction] public NativeArray<float3> nextPosition;
-        [ReadOnly] public NativeArray<int> pinIndex;
         [ReadOnly] public NativeArray<ApexConstraintParticleDouble> constraints;
+
         [ReadOnly] public float restLength;
         [ReadOnly] public float stiffness;
+
+        [ReadOnly] public NativeArray<float> masses;
+        [ReadOnly] public float d;
 
         public void ParticleCallback(List<ApexParticleBase> callbackParticle)
         {
@@ -38,27 +41,16 @@ namespace APEX.Common.Constraints
             float currentDistance = math.length(delta);
             float error = currentDistance - restLength;
 
-            var lStatic = pinIndex.Contains(con.pl);
-            var rStatic = pinIndex.Contains(con.pr);
-
             if (currentDistance > Mathf.Epsilon)
             {
                 float3 correction = math.normalize(delta) * (error * stiffness);
 
-                // if one side Static, than static one sid, the other side double offset
-                if (!lStatic && !rStatic)
-                {
-                    nextPosition[con.pl] -= correction;
-                    nextPosition[con.pr] += correction;
-                }
-                else if (lStatic && !rStatic)
-                {
-                    nextPosition[con.pr] += correction * 2;
-                }
-                else if (!lStatic && rStatic)
-                {
-                    nextPosition[con.pl] -= correction * 2;
-                }
+                var ml = masses[con.pl];
+                var mr = masses[con.pr];
+                var totalM = ml + mr;
+
+                nextPosition[con.pl] -= correction * d * ml / totalM;
+                nextPosition[con.pr] += correction * d * mr / totalM;
             }
         }
     }

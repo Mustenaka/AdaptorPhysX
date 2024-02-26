@@ -14,12 +14,12 @@ namespace APEX.Common.Solver
         [ReadOnly] public NativeArray<float3> nowPosition;
         [WriteOnly] public NativeArray<float3> nextPosition;
         
-        [ReadOnly] public NativeArray<int> pinIndex;
+        [ReadOnly] public NativeArray<float> mass;
         
         [ReadOnly] public NativeArray<float3> forceExt;
-        [ReadOnly] public NativeArray<float> mass;
         [ReadOnly] public float3 gravity;
         [ReadOnly] public float3 globalForce;
+        
         [ReadOnly] public float airDrag;
         [ReadOnly] public float damping;
         [ReadOnly] public float dt;
@@ -45,14 +45,8 @@ namespace APEX.Common.Solver
                 iterator = 1;
             }
             
-            // simplex pin
-            if (pinIndex.Contains(index))
-            {
-                return;
-            }
-            
             // calc air resistance
-            float3 airResistance = -airDrag * (nowPosition[index] - previousPosition[index]) / dt;
+            var airResistance = -airDrag * (nowPosition[index] - previousPosition[index]) / dt;
 
             // calc force apply.
             var forceApply = gravity + globalForce + airResistance + forceExt[index];

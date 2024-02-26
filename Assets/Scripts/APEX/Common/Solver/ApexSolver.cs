@@ -79,7 +79,6 @@ namespace APEX.Common.Solver
                     particles.Select(p => p.nowPosition.ToFloat3()).ToArray(),
                     Allocator.TempJob),
                 nextPosition = new NativeArray<float3>(particles.Count, Allocator.TempJob),
-                pinIndex = pinIndex,
                 forceExt = new NativeArray<float3>(
                     particles.Select(p => p.forceExt.ToFloat3()).ToArray(),
                     Allocator.TempJob),
@@ -168,7 +167,6 @@ namespace APEX.Common.Solver
                         {
                             restLength = distanceConstraint.restLength,
                             stiffness = distanceConstraint.stiffness,
-                            pinIndex = pinIndex,
                             constraints = _cons,
                             nextPosition = new NativeArray<float3>(
                                 particles.Select(p => p.nextPosition.ToFloat3()).ToArray(),
