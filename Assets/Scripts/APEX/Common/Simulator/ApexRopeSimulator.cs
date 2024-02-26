@@ -49,9 +49,8 @@ namespace APEX.Common.Simulator
         /// consider pin, iterator, collider... do the final constraint
         /// </summary>
         /// <param name="depend">job handle depend</param>
-        /// <param name="iterIndex">the iterator index</param>
         /// <returns>job handle depend</returns>
-        private JobHandle DoFinalConstraintJobs(JobHandle depend, int iterIndex)
+        private JobHandle DoFinalConstraintJobs(JobHandle depend)
         {
             // float d = 1.0f / (iterator - iterIndex);
             var finalConstraintJob = new FinalConstraintJob()
@@ -92,15 +91,14 @@ namespace APEX.Common.Simulator
         /// do all constraint jobs
         /// </summary>
         /// <param name="depend">job handle depend</param>
-        /// <param name="dt">delta time</param>
         /// <returns>job handle depend</returns>
-        private JobHandle DoConstraintJobs(JobHandle depend, float dt)
+        private JobHandle DoConstraintJobs(JobHandle depend)
         {
             JobHandle jobDepend = depend;
             for (var i = 0; i < iterator; i++)
             {
                 jobDepend = DoDistanceConstraintJobs(jobDepend, i);
-                jobDepend = DoFinalConstraintJobs(jobDepend, i);
+                jobDepend = DoFinalConstraintJobs(jobDepend);
             }
 
             return jobDepend;
@@ -146,7 +144,7 @@ namespace APEX.Common.Simulator
         {
             var handle = DoForceJobs(dt); // 1. predict next position
             // TODO: 2. collider constraint.. 
-            handle = DoConstraintJobs(handle, dt); // 3. revise next position
+            handle = DoConstraintJobs(handle); // 3. revise next position
             _jobHandle = handle;
         }
 
