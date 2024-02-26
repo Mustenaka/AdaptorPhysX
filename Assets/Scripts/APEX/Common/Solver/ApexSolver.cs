@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using APEX.Common.Constraints;
 using APEX.Common.Particle;
+using APEX.Common.Simulator;
 using APEX.Tools;
 using APEX.Tools.MathematicsTools;
 using Unity.Collections;
@@ -35,13 +36,16 @@ namespace APEX.Common.Solver
         public float accTime = 0.0f;
         public int iterator = 10;
 
+        // simulator actors
+        public ApexSimulatorBase actors;
+
         private void Update()
         {
             // time consequence control
             accTime += Time.deltaTime;
-            int cnt = (int)(accTime / dt);
+            var cnt = (int)(accTime / dt);
 
-            for (int i = 0; i < cnt; i++)
+            for (var i = 0; i < cnt; i++)
             {
                 switch (backend)
                 {
@@ -51,6 +55,7 @@ namespace APEX.Common.Solver
                     case EApexSolverBackend.JobsMultithreading:
                         BurstSimulator(); // burst simulator
                         break;
+                    case EApexSolverBackend.GPU:
                     default:
                         SingleSimulator(); // default: no burst simulator
                         break;
@@ -165,20 +170,13 @@ namespace APEX.Common.Solver
                             nextPosition = new NativeArray<float3>(
                                 particles.Select(p => p.nextPosition.ToFloat3()).ToArray(),
                                 Allocator.TempJob),
-                            // adjustNextPosition = new NativeArray<float3>(particles.Count, Allocator.TempJob),
                         };
 
                         handle = distanceConstraintJob.Schedule(
                             distanceConstraintJob.constraints.Length, handle);
                         handle.Complete();
 
-                        // var managed1 = distanceConstraintJob.nextPosition.GetHashCode();
-                        // var managed2 = distanceConstraintJob.adjustNextPosition.GetHashCode();
-                        // Debug.Log("Managed Array Address: " + managed1 + " " + managed2);
-                        // Debug.Log(distanceConstraintJob.adjustNextPosition[1] + " ----- " + distanceConstraintJob.way);
-
                         distanceConstraintJob.ParticleCallback(particles);
-                        // distanceConstraintJob.adjustNextPosition.Dispose();
                         break;
                 }
             }
