@@ -12,11 +12,11 @@ using UnityEngine;
 
 namespace APEX.Common.Solver
 {
+    /// <summary>
+    /// All Solver
+    /// </summary>
     public class ApexSolver : MonoBehaviour
     {
-        // runtime type
-        public EApexSolverBackend backend;
-
         // particle and constraint param
         [SerializeReference] public List<IApexConstraintBatch> constraintBatch = new List<IApexConstraintBatch>();
         public List<ApexParticleBase> particles = new List<ApexParticleBase>(); // particle container
@@ -33,11 +33,11 @@ namespace APEX.Common.Solver
 
         // simulator param
         public float dt = 0.001f;
-        public float accTime = 0.0f;
+        public float accTime;
         public int iterator = 10;
 
         // simulator actors
-        public ApexSimulatorBase actors;
+        private ApexSimulatorBase[] _actors;
 
         private void Update()
         {
@@ -47,22 +47,25 @@ namespace APEX.Common.Solver
 
             for (var i = 0; i < cnt; i++)
             {
-                switch (backend)
+                foreach (var actor in _actors)
                 {
-                    case EApexSolverBackend.SingleThread:
-                        SingleSimulator(); // no burst simulator
-                        break;
-                    case EApexSolverBackend.JobsMultithreading:
-                        BurstSimulator(); // burst simulator
-                        break;
-                    case EApexSolverBackend.GPU:
-                    default:
-                        SingleSimulator(); // default: no burst simulator
-                        break;
+                    actor.Step(dt);
+                    if (i < cnt - 1)
+                    {
+                        actor.Complete();
+                    }
                 }
             }
 
             accTime %= dt;
+        }
+
+        private void LateUpdate()
+        {
+            foreach (var actor in _actors)
+            {
+                actor.Complete();       // last complete per frame
+            }
         }
 
         private void BurstSimulator()
@@ -104,7 +107,7 @@ namespace APEX.Common.Solver
             JobsSimulateConstraint(handle);
 
             // Update
-            SimulateUpdate();
+            ParticleApply();
         }
 
         private NativeArray<ApexConstraintParticleDouble> _cons;
@@ -193,13 +196,13 @@ namespace APEX.Common.Solver
                 SimulateConstraint();
 
                 // Update
-                SimulateUpdate();
+                ParticleApply();
             }
         }
 
         private void SimulateForceExt()
         {
-            for (int i = 0; i < particles.Count; i++)
+            for (var i = 0; i < particles.Count; i++)
             {
                 // simplex pin
                 if (particles[i].isStatic)
@@ -226,9 +229,23 @@ namespace APEX.Common.Solver
             }
         }
 
-        private void SimulateUpdate()
+        /// <summary>
+        /// Send particle to PBD Simulator
+        /// </summary>
+        private void ParticleSender()
         {
-            for (int i = 0; i < particles.Count; i++)
+            for (var i = 0; i < particles.Count; i++)
+            {
+                
+            }
+        }
+
+        /// <summary>
+        /// Apply particle from PBD Simulator
+        /// </summary>
+        private void ParticleApply()
+        {
+            for (var i = 0; i < particles.Count; i++)
             {
                 // if particle is static, not apply
                 if (particles[i].isStatic)

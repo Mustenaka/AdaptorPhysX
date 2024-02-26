@@ -1,12 +1,15 @@
-using System;
 using System.Collections.Generic;
 using APEX.Common.Particle;
+using APEX.Common.RenderType;
 using APEX.Common.Solver;
 using UnityEngine;
 
 namespace APEX.Rope
 {
-    public class ApexRope : MonoBehaviour
+    /// <summary>
+    /// Rope actor
+    /// </summary>
+    public class ApexRope : MonoBehaviour, IApexRender
     {
         public List<GameObject>
             elements = new List<GameObject>(); // TO-DO: Use Material or something else to replace it.
@@ -25,12 +28,9 @@ namespace APEX.Rope
             }
         }
 
-        private void LateUpdate()
+        public ApexRenderType GetRenderType()
         {
-            for (int i = 0; i < ParticlesCount; i++)
-            {
-                particles[i].nowPosition = elements[i].transform.localPosition;
-            }
+            return ApexRenderType.Rope;
         }
     }
 }

@@ -1,10 +1,8 @@
 using System.Collections.Generic;
-using System.Linq;
 using APEX.Common.Constraints;
 using APEX.Common.Particle;
 using APEX.Common.Solver;
 using Unity.Collections;
-using Unity.Mathematics;
 using Unity.VisualScripting;
 using UnityEngine;
 
@@ -29,7 +27,6 @@ namespace APEX.Rope
         [Range(0, 1f)] public float stiffness = 0.5f;
         [Range(0, 1f)] public float damping = 0.005f;
         [Range(1, 20)] public int iterator = 10;
-        public EApexSolverBackend backend = EApexSolverBackend.JobsMultithreading;
 
         private void Start()
         {
@@ -98,7 +95,6 @@ namespace APEX.Rope
             rope.solver.stiffness = stiffness;
             rope.solver.damping = damping;
             rope.solver.iterator = iterator;
-            rope.solver.backend = backend;
             rope.solver.pinIndex = pin;
 
             // TEMP: outlive generate line constructor
