@@ -100,8 +100,8 @@ namespace APEX.Rope
             // TEMP: outlive generate line constructor
             // rope.solver.LineConstructor(true);
 
-            var distanceConstraint = new DistanceConstraint(ref rope.solver.particles);
-            solver.constraintBatch.Add(distanceConstraint);
+            // var distanceConstraint = new DistanceConstraint(ref rope.solver.particles);
+            // solver.constraintBatch.Add(distanceConstraint);
         }
     }
 }

@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using UnityEngine;
 
 namespace APEX.Common.Particle
@@ -11,6 +10,7 @@ namespace APEX.Common.Particle
     public class ApexParticleBase
     {
         /* position, serialize nowPosition */
+        public Vector3 originPosition;
         public Vector3 previousPosition;
         public Vector3 nowPosition;
         public Vector3 nextPosition;
@@ -21,12 +21,8 @@ namespace APEX.Common.Particle
         /* Index of the particle array */
         public int index;
 
-        /* True - this particle nextPosition will not apply nowPosition */
-        public bool isStatic;
-
         /* physic param */
-        public Vector3 forceExt; // calc physic
-        public Vector3 forceApply; // apply physic
+        public Vector3 forceExt;
         public float mass;
     }
 }

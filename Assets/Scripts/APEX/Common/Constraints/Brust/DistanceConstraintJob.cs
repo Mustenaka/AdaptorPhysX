@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-using APEX.Common.Particle;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
@@ -23,15 +21,6 @@ namespace APEX.Common.Constraints
 
         [ReadOnly] public NativeArray<float> masses;
         [ReadOnly] public float d;
-
-        public void ParticleCallback(List<ApexParticleBase> callbackParticle)
-        {
-            // Debug.Log("call back: " + callbackParticle[1].nextPosition + " " + adjustNextPosition[1]);
-            for (int i = 0; i < nextPosition.Length; i++)
-            {
-                callbackParticle[i].nextPosition = nextPosition[i];
-            }
-        }
 
         public void Execute(int index)
         {

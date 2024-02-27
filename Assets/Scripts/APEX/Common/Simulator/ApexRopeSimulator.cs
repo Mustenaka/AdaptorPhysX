@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using APEX.Common.Constraints;
+using APEX.Common.Particle;
 using APEX.Common.Solver;
 using Unity.Collections;
 using Unity.Jobs;
@@ -22,7 +24,7 @@ namespace APEX.Common.Simulator
         public NativeArray<EApexParticleConstraintType>
             constraintTypes = new NativeArray<EApexParticleConstraintType>();
 
-        // constraint connect param
+        // constraint connect param： rope is double connect
         public NativeArray<ApexConstraintParticleDouble>
             doubleConnect = new NativeArray<ApexConstraintParticleDouble>();
 
@@ -154,6 +156,49 @@ namespace APEX.Common.Simulator
         public void Complete()
         {
             _jobHandle.Complete();
+        }
+
+        /// <summary>
+        /// sync position from solve
+        /// </summary>
+        /// <param name="particles">all solver particle</param>
+        /// <param name="down">particle lower bound</param>
+        public void SyncParticleFromSolve(List<ApexParticleBase> particles, int down)
+        {
+            var cnt = down;
+            for (var i = 0; i < nowPosition.Length; i++)
+            {
+                previousPosition[i] = particles[cnt].previousPosition;
+                nowPosition[i] = particles[cnt].nowPosition;
+                nextPosition[i] = particles[cnt].nextPosition;
+                cnt++;
+            }
+        }
+
+        /// <summary>
+        /// sync particle to solve
+        /// </summary>
+        /// <param name="particles">all solver particle</param>
+        /// <param name="down">particle lower bound</param>
+        public void SyncParticleToSolver(List<ApexParticleBase> particles, int down)
+        {
+            var cnt = down;
+            for (var i = 0; i < nowPosition.Length; i++)
+            {
+                particles[cnt].previousPosition = previousPosition[i];
+                particles[cnt].nowPosition = nowPosition[i];
+                particles[cnt].nextPosition = nextPosition[i];
+                cnt++;
+            }
+        }
+
+        /// <summary>
+        /// how many particle this simulator actor have
+        /// </summary>
+        /// <returns></returns>
+        public int GetParticleCount()
+        {
+            return this.nowPosition.Length;
         }
     }
 }

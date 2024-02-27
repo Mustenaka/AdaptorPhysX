@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using APEX.Common.Constraints;
+using APEX.Common.Constraints.Base;
 using APEX.Common.Particle;
 using APEX.Common.Simulator;
 using APEX.Tools;
+using Temp.JobTest;
 using UnityEngine;
 
 namespace APEX.Common.Solver
@@ -14,15 +16,8 @@ namespace APEX.Common.Solver
     public class ApexSolver : MonoBehaviour
     {
         // particle and constraint param
-        [SerializeReference] public List<IApexConstraintBatch> constraintBatch = new List<IApexConstraintBatch>();
+        [SerializeReference] public List<IApexConstraint> constraintBatch = new List<IApexConstraint>();
         public List<ApexParticleBase> particles = new List<ApexParticleBase>(); // particle container
-
-        // physics param
-        public Vector3 gravity = new Vector3(0, -9.81f, 0);
-        public Vector3 globalForce = new Vector3(0, 0, 0);
-        public float airDrag = 0.2f;
-        [Range(0, 1f)] public float stiffness = 0.5f;
-        [Range(0, 1f)] public float damping = 0.5f;
 
         // simulator param
         public float dt = 0.001f;
@@ -43,15 +38,21 @@ namespace APEX.Common.Solver
 
             for (var i = 0; i < cnt; i++)
             {
+                int div = 0;
                 foreach (var actor in actors)
                 {
-                    particleSend?.Invoke();
-                    actor.Step(dt);
+                    particleSend?.Invoke(); // from render change
+                    actor.SyncParticleFromSolve(particles, div); // from solve calc
+                    actor.Step(dt); // PBD step
+
                     if (i < cnt - 1)
                     {
-                        actor.Complete();
-                        ParticleApply();
+                        actor.Complete(); // finish one step calc
+                        actor.SyncParticleToSolver(particles, div); // get particle position change
+                        ParticleApply(); // apply particle calc
                     }
+
+                    div += actor.GetParticleCount(); // maybe there not only one actor
                 }
             }
 
