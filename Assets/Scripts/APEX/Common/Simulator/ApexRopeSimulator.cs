@@ -41,11 +41,11 @@ namespace APEX.Common.Simulator
         public bool useForce = true;
         public bool useDistanceConstraint = true;
         public bool useColliderConstraint = true;
-        
+
         // Distance Constraint Param
         public float restLength = 1.2f;
         public float stiffness = 0.5f;
-        
+
         // Collider Constraint Param
 
         // physics param - force
@@ -98,7 +98,8 @@ namespace APEX.Common.Simulator
                 masses = mass,
                 d = d,
             };
-            return distanceConstraintJob.Schedule(distanceConstraintJob.constraints.Length, depend);
+            return distanceConstraintJob.ScheduleParallel(nextPosition.Length, 64, depend);
+            // return distanceConstraintJob.Schedule(nextPosition.Length, depend);
         }
 
         /// <summary>

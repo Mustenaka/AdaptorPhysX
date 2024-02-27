@@ -1,7 +1,10 @@
 using System.Collections.Generic;
+using APEX.Common.Constraints;
 using APEX.Common.Particle;
+using APEX.Common.Simulator;
 using APEX.Common.Solver;
 using Unity.Collections;
+using Unity.Mathematics;
 using Unity.VisualScripting;
 using UnityEngine;
 
@@ -27,8 +30,14 @@ namespace APEX.Rope
         [Range(0, 1f)] public float damping = 0.005f;
         [Range(1, 20)] public int iterator = 10;
 
+        // Solver
+        public ApexSolver solver;
+
         private void Start()
         {
+            // Get Solver
+            solver = FindObjectOfType<ApexSolver>();
+
             // if the obj is empty, create sphere to fill it
             if (obj == null)
             {
@@ -51,18 +60,32 @@ namespace APEX.Rope
         /// </summary>
         private void InitRope()
         {
+            // rope
             var rope = this.AddComponent<ApexRope>();
-            var solver = this.AddComponent<ApexSolver>();
-            var pin = new NativeArray<int>(1, Allocator.Persistent);
-
             rope.solver = solver;
-
             rope.particles = new List<ApexLineParticle>();
             rope.elements = new List<GameObject>();
 
-            for (int i = 0; i < particleCount; i++)
+            // rope simulator actor
+            var ropeSimulatorActor = new ApexRopeSimulator
             {
-                Vector3 particlePosition = firstParticlePosition + i * (stepSize * stepDirect);
+                originPosition = new NativeArray<float3>(particleCount, Allocator.Persistent),
+                previousPosition = new NativeArray<float3>(particleCount, Allocator.Persistent),
+                nowPosition = new NativeArray<float3>(particleCount, Allocator.Persistent),
+                nextPosition = new NativeArray<float3>(particleCount, Allocator.Persistent),
+
+                mass = new NativeArray<float>(particleCount, Allocator.Persistent),
+                forceExt = new NativeArray<float3>(particleCount, Allocator.Persistent),
+                constraintTypes = new NativeArray<EApexParticleConstraintType>(particleCount, Allocator.Persistent),
+                doubleConnect = new NativeArray<ApexConstraintParticleDouble>(particleCount - 1, Allocator.Persistent),
+
+                pin = new NativeArray<ApexPinConstraint>(1, Allocator.Persistent),
+            };
+
+            // calc detail particle
+            for (var i = 0; i < particleCount; i++)
+            {
+                var particlePosition = firstParticlePosition + i * (stepSize * stepDirect);
 
                 var element = GameObject.Instantiate(obj, transform, true);
                 element.name = i.ToString();
@@ -76,17 +99,35 @@ namespace APEX.Rope
                     nowPosition = particlePosition,
                     forceExt = Vector3.zero,
 
-                    scale = this.transform.localScale
+                    scale = transform.localScale
                 };
 
-                // static the first particle
-                pin[0] = 0;
+                ropeSimulatorActor.originPosition[i] = particlePosition;
+                ropeSimulatorActor.previousPosition[i] = particlePosition;
+                ropeSimulatorActor.nowPosition[i] = particlePosition;
+                ropeSimulatorActor.nextPosition[i] = particlePosition;
+
+                ropeSimulatorActor.mass[i] = 1.0f;
+                ropeSimulatorActor.constraintTypes[i] = EApexParticleConstraintType.Free;
 
                 rope.elements.Add(element);
                 rope.particles.Add(p);
             }
 
+            // generate rope connect relation
+            for (int i = 0; i < particleCount - 1; i++)
+            {
+                ropeSimulatorActor.doubleConnect[i] = new ApexConstraintParticleDouble(i, i + 1);
+                // Debug.Log("connect:(" + i + ", " + (i + 1) + ") + from:" + ropeSimulatorActor.doubleConnect.Length);
+            }
+
+            // mark first particle is pin
+            ropeSimulatorActor.constraintTypes[0] = EApexParticleConstraintType.Pin;
+            ropeSimulatorActor.pin[0] = new ApexPinConstraint(rope.particles[0].nowPosition);
+
+            // send it to solver
             rope.solver.particles = new List<ApexParticleBase>(rope.particles);
+            rope.solver.actors.Add(ropeSimulatorActor);
         }
     }
 }
