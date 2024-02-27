@@ -95,17 +95,13 @@ namespace APEX.Rope
             rope.solver.stiffness = stiffness;
             rope.solver.damping = damping;
             rope.solver.iterator = iterator;
-            rope.solver.pinIndex = pin;
+            // rope.solver.pinIndex = pin;
 
             // TEMP: outlive generate line constructor
-            rope.solver.LineConstructor(true);
+            // rope.solver.LineConstructor(true);
 
             var distanceConstraint = new DistanceConstraint(ref rope.solver.particles);
-            // var angleConstraint = new AngleConstraint(ref rope.solver.particles);
-            // var bendConstraint = new BendConstraint(ref rope.solver.particles);
             solver.constraintBatch.Add(distanceConstraint);
-            // solver.constraintBatch.Add(angleConstraint);
-            // solver.constraintBatch.Add(bendConstraint);
         }
     }
 }

@@ -28,6 +28,14 @@ namespace APEX.Rope
             }
         }
 
+        private void LateUpdate()
+        {
+            for (int i = 0; i < ParticlesCount; i++)
+            {
+                solver.particles[i].nowPosition = elements[i].transform.localPosition;
+            }
+        }
+
         public ApexRenderType GetRenderType()
         {
             return ApexRenderType.Rope;
