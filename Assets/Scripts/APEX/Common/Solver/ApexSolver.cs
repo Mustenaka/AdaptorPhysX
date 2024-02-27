@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using APEX.Common.Constraints;
-using APEX.Common.Constraints.Base;
 using APEX.Common.Particle;
 using APEX.Common.Simulator;
 using APEX.Tools;
@@ -16,16 +14,14 @@ namespace APEX.Common.Solver
     public class ApexSolver : MonoBehaviour
     {
         // particle and constraint param
-        [SerializeReference] public List<IApexConstraint> constraintBatch = new List<IApexConstraint>();
         public List<ApexParticleBase> particles = new List<ApexParticleBase>(); // particle container
 
         // simulator param
         public float dt = 0.001f;
         public float accTime;
-        public int iterator = 10;
 
         // simulator actors
-        public List<IApexSimulatorBase> actors;
+        [SerializeReference] public List<IApexSimulatorBase> actors = new List<IApexSimulatorBase>();
 
         // delegate param
         public Action particleSend;

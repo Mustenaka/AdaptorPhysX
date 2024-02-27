@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using APEX.Common.Constraints;
 using APEX.Common.Particle;
@@ -5,9 +6,14 @@ using APEX.Common.Solver;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
+using UnityEngine;
 
 namespace APEX.Common.Simulator
 {
+    /// <summary>
+    /// Rope Simulator actor
+    /// </summary>
+    [Serializable]
     public class ApexRopeSimulator : IApexSimulatorBase
     {
         // particle param
@@ -35,15 +41,21 @@ namespace APEX.Common.Simulator
         public bool useForce = true;
         public bool useDistanceConstraint = true;
         public bool useColliderConstraint = true;
+        
+        // Distance Constraint Param
+        public float restLength = 1.2f;
+        public float stiffness = 0.5f;
+        
+        // Collider Constraint Param
 
         // physics param - force
-        public float3 gravity = new float3(0, -9.81f, 0);
-        public float3 globalForce = new float3(0, 0, 0);
+        public Vector3 gravity = new Vector3(0, -9.81f, 0);
+        public Vector3 globalForce = new Vector3(0, 0, 0);
         public float airDrag = 0.2f;
-        public float damping = 0.5f;
+        public float damping = 0.005f;
 
         // simulator param
-        public int iterator = 10;
+        public int iterator = 1;
 
         private JobHandle _jobHandle;
 
@@ -80,8 +92,8 @@ namespace APEX.Common.Simulator
                 nextPosition = nextPosition,
                 constraints = doubleConnect,
 
-                restLength = 1.2f,
-                stiffness = 0.5f,
+                restLength = restLength,
+                stiffness = stiffness,
 
                 masses = mass,
                 d = d,

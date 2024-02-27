@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using APEX.Common.Constraints;
 using APEX.Common.Particle;
 using APEX.Common.Solver;
 using Unity.Collections;
@@ -16,7 +15,7 @@ namespace APEX.Rope
         public bool useSelfPosition;
         public Vector3 firstParticlePosition = Vector3.zero;
 
-        public int particleCount = 10;
+        public int particleCount = 20;
         public float stepSize = 1.2f;
         public Vector3 stepDirect = Vector3.left;
 
@@ -82,26 +81,12 @@ namespace APEX.Rope
 
                 // static the first particle
                 pin[0] = 0;
-                if (i == 0)
-                {
-                    p.isStatic = true;
-                }
 
                 rope.elements.Add(element);
                 rope.particles.Add(p);
             }
 
             rope.solver.particles = new List<ApexParticleBase>(rope.particles);
-            rope.solver.stiffness = stiffness;
-            rope.solver.damping = damping;
-            rope.solver.iterator = iterator;
-            // rope.solver.pinIndex = pin;
-
-            // TEMP: outlive generate line constructor
-            // rope.solver.LineConstructor(true);
-
-            // var distanceConstraint = new DistanceConstraint(ref rope.solver.particles);
-            // solver.constraintBatch.Add(distanceConstraint);
         }
     }
 }
