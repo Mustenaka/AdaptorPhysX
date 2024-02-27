@@ -1,4 +1,4 @@
-namespace APEX.Common.RenderType
+namespace APEX.Common.Render
 {
     /// <summary>
     /// Interface IApexRender

@@ -6,7 +6,7 @@ using Unity.Mathematics;
 
 namespace APEX.Common.Simulator
 {
-    public class ApexRopeSimulator : ApexSimulatorBase
+    public class ApexRopeSimulator : IApexSimulatorBase
     {
         // particle param
         public NativeArray<float3> originPosition = new NativeArray<float3>();
@@ -111,7 +111,7 @@ namespace APEX.Common.Simulator
         /// <returns>job handle depend</returns>
         private JobHandle DoForceJobs(float dt)
         {
-            var job = new SimulateForceExtJob
+            var job = new ForceJob
             {
                 previousPosition = previousPosition,
                 nowPosition = nowPosition,
@@ -136,11 +136,11 @@ namespace APEX.Common.Simulator
         /// <summary>
         /// Do Step:
         ///     1. predict next position, by Varlet integral
-        ///     2. Collider
+        ///     2. Collider TODO: finish it
         ///     3. revise next position, by distance &
         /// </summary>
         /// <param name="dt">delta time</param>
-        public override void Step(float dt)
+        public void Step(float dt)
         {
             var handle = DoForceJobs(dt); // 1. predict next position
             // TODO: 2. collider constraint.. 
@@ -151,7 +151,7 @@ namespace APEX.Common.Simulator
         /// <summary>
         /// Complete all jobs
         /// </summary>
-        public override void Complete()
+        public void Complete()
         {
             _jobHandle.Complete();
         }

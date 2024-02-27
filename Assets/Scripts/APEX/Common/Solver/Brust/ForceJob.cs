@@ -8,7 +8,7 @@ using Unity.Mathematics;
 namespace APEX.Common.Solver
 {
     [BurstCompile]
-    public struct SimulateForceExtJob : IJobFor
+    public struct ForceJob : IJobFor
     {
         [ReadOnly] public NativeArray<float3> previousPosition;
         [ReadOnly] public NativeArray<float3> nowPosition;

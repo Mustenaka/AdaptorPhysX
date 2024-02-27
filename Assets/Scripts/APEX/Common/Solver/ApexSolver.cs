@@ -1,15 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using APEX.Common.Constraints;
 using APEX.Common.Particle;
 using APEX.Common.Simulator;
 using APEX.Tools;
-using APEX.Tools.MathematicsTools;
-using Unity.Collections;
-using Unity.Jobs;
-using Unity.Mathematics;
-using Unity.VisualScripting;
 using UnityEngine;
 
 namespace APEX.Common.Solver
@@ -36,7 +30,7 @@ namespace APEX.Common.Solver
         public int iterator = 10;
 
         // simulator actors
-        public List<ApexSimulatorBase> actors;
+        public List<IApexSimulatorBase> actors;
 
         // delegate param
         public Action particleSend;
@@ -56,6 +50,7 @@ namespace APEX.Common.Solver
                     if (i < cnt - 1)
                     {
                         actor.Complete();
+                        ParticleApply();
                     }
                 }
             }
@@ -68,6 +63,7 @@ namespace APEX.Common.Solver
             foreach (var actor in actors)
             {
                 actor.Complete(); // last complete per frame
+                ParticleApply();
             }
         }
 

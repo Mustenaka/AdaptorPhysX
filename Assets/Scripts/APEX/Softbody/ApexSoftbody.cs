@@ -1,4 +1,4 @@
-using APEX.Common.RenderType;
+using APEX.Common.Render;
 using UnityEngine;
 
 namespace APEX.Softbody

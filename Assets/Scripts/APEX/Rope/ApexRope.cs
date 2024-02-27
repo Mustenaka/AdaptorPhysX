@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using APEX.Common.Particle;
-using APEX.Common.RenderType;
+using APEX.Common.Render;
 using APEX.Common.Solver;
 using UnityEngine;
 
@@ -34,9 +34,14 @@ namespace APEX.Rope
             }
         }
 
+        private void OnDestroy()
+        {
+            solver.particleSend -= SendParticle;
+        }
+
         private void SendParticle()
         {
-            for (int i = 0; i < ParticlesCount; i++)
+            for (var i = 0; i < ParticlesCount; i++)
             {
                 solver.particles[i].nowPosition = elements[i].transform.localPosition;
             }
