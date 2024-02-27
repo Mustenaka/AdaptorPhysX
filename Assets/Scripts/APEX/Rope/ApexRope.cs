@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using APEX.Common.Particle;
 using APEX.Common.RenderType;
@@ -20,6 +21,11 @@ namespace APEX.Rope
 
         public ApexSolver solver;
 
+        private void Start()
+        {
+            solver.particleSend += SendParticle;
+        }
+
         private void Update()
         {
             for (int i = 0; i < ParticlesCount; i++)
@@ -28,7 +34,7 @@ namespace APEX.Rope
             }
         }
 
-        private void LateUpdate()
+        private void SendParticle()
         {
             for (int i = 0; i < ParticlesCount; i++)
             {

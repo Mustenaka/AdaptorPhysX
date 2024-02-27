@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using APEX.Common.Constraints;
@@ -8,6 +9,7 @@ using APEX.Tools.MathematicsTools;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
+using Unity.VisualScripting;
 using UnityEngine;
 
 namespace APEX.Common.Solver
@@ -36,6 +38,9 @@ namespace APEX.Common.Solver
         // simulator actors
         public List<ApexSimulatorBase> actors;
 
+        // delegate param
+        public Action particleSend;
+
         private void Update()
         {
             // time consequence control
@@ -46,7 +51,7 @@ namespace APEX.Common.Solver
             {
                 foreach (var actor in actors)
                 {
-                    Invoke();
+                    particleSend?.Invoke();
                     actor.Step(dt);
                     if (i < cnt - 1)
                     {
