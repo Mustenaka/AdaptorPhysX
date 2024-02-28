@@ -35,5 +35,10 @@ namespace APEX.Common.Simulator
         /// </summary>
         /// <returns></returns>
         public int GetParticleCount();
+
+        /// <summary>
+        /// Dispose resource, when solver is OnDestroy()
+        /// </summary>
+        public void Dispose();
     }
 }

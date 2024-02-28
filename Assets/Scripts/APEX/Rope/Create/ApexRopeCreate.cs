@@ -42,6 +42,9 @@ namespace APEX.Rope
             if (obj == null)
             {
                 obj = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+
+                // this object better have no collider
+                Destroy(obj.GetComponent<Collider>());
                 Destroy(obj);
             }
 
@@ -80,7 +83,7 @@ namespace APEX.Rope
                 doubleConnect = new NativeArray<ApexConstraintParticleDouble>(particleCount - 1, Allocator.Persistent),
 
                 pin = new NativeArray<ApexPinConstraint>(1, Allocator.Persistent),
-                
+
                 stiffness = stiffness,
                 damping = damping,
                 iterator = iterator,

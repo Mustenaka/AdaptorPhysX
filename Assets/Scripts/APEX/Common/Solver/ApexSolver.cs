@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using APEX.Common.Particle;
 using APEX.Common.Simulator;
 using APEX.Tools;
-using Temp.JobTest;
 using UnityEngine;
 
 namespace APEX.Common.Solver
@@ -25,6 +24,7 @@ namespace APEX.Common.Solver
 
         // delegate param action
         public Action actorStepBefore;
+        public Action actorStepFinished;
 
         private void Update()
         {
@@ -32,12 +32,15 @@ namespace APEX.Common.Solver
             accTime += Time.deltaTime;
             var cnt = (int)(accTime / dt);
 
+            // make sure time sequence is right
             for (var i = 0; i < cnt; i++)
             {
                 var div = 0;
+
+                actorStepBefore?.Invoke(); // from render change
+
                 foreach (var actor in actors)
                 {
-                    actorStepBefore?.Invoke(); // from render change
                     actor.SyncParticleFromSolve(particles, div); // send solver particle to simulator
                     actor.Step(dt); // PBD step
                     actor.Complete(); // finish one step calc
@@ -46,9 +49,22 @@ namespace APEX.Common.Solver
 
                     div += actor.GetParticleCount(); // maybe there not only one actor
                 }
+
+                actorStepFinished?.Invoke();
             }
 
             accTime %= dt;
+        }
+
+        private void OnDestroy()
+        {
+            for (var i = 0; i < actors.Count; i++)
+            {
+                if (actors[i] != null)
+                {
+                    actors[i].Dispose();
+                }
+            }
         }
 
         /// <summary>

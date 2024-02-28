@@ -211,5 +211,24 @@ namespace APEX.Common.Simulator
         {
             return this.nowPosition.Length;
         }
+
+        /// <summary>
+        /// Dispose resource
+        /// </summary>
+        public void Dispose()
+        {
+            originPosition.Dispose();
+            previousPosition.Dispose();
+            nowPosition.Dispose();
+            nextPosition.Dispose();
+            
+            mass.Dispose();
+            forceExt.Dispose();
+            
+            constraintTypes.Dispose();
+            doubleConnect.Dispose();
+
+            pin.Dispose();
+        }
     }
 }

@@ -23,20 +23,40 @@ namespace APEX.Rope
 
         private void Start()
         {
-            // solver.particleSend += SendParticle;
-        }
-
-        private void Update()
-        {
-            for (int i = 0; i < ParticlesCount; i++)
-            {
-                elements[i].transform.localPosition = particles[i].nowPosition;
-            }
+            // TODO: Bug
+            // solver.actorStepBefore += SendParticle;
+            solver.actorStepFinished += RendParticle;
         }
 
         private void OnDestroy()
         {
-            // solver.particleSend -= SendParticle;
+            // TODO: Bug
+            // solver.actorStepBefore -= SendParticle;
+            solver.actorStepFinished -= RendParticle;
+        }
+        
+        // private void Update()
+        // {
+        //     for (var i = 0; i < ParticlesCount; i++)
+        //     {
+        //         elements[i].transform.localPosition = particles[i].nowPosition;
+        //     }
+        // }
+        //
+        // private void LateUpdate()
+        // {
+        //     for (var i = 0; i < ParticlesCount; i++)
+        //     {
+        //         solver.particles[i].nowPosition = elements[i].transform.localPosition;
+        //     }
+        // }
+
+        private void RendParticle()
+        {
+            for (var i = 0; i < ParticlesCount; i++)
+            {
+                elements[i].transform.localPosition = particles[i].nowPosition;
+            }
         }
 
         private void SendParticle()
