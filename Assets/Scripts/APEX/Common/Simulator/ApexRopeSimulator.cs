@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using APEX.Common.Constraints;
+using APEX.Common.Force;
 using APEX.Common.Particle;
-using APEX.Common.Solver;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
@@ -17,25 +17,23 @@ namespace APEX.Common.Simulator
     public class ApexRopeSimulator : IApexSimulatorBase
     {
         // particle param
-        public NativeArray<float3> originPosition = new NativeArray<float3>();
-        public NativeArray<float3> previousPosition = new NativeArray<float3>();
-        public NativeArray<float3> nowPosition = new NativeArray<float3>();
-        public NativeArray<float3> nextPosition = new NativeArray<float3>();
+        public NativeArray<float3> originPosition;
+        public NativeArray<float3> previousPosition;
+        public NativeArray<float3> nowPosition;
+        public NativeArray<float3> nextPosition;
 
         // particle physics param
-        public NativeArray<float> mass = new NativeArray<float>();
-        public NativeArray<float3> forceExt = new NativeArray<float3>();
+        public NativeArray<float> mass;
+        public NativeArray<float3> forceExt;
 
         // particle constraint type
-        public NativeArray<EApexParticleConstraintType>
-            constraintTypes = new NativeArray<EApexParticleConstraintType>();
+        public NativeArray<EApexParticleConstraintType> constraintTypes;
 
         // constraint connect param： rope is double connect
-        public NativeArray<ApexConstraintParticleDouble>
-            doubleConnect = new NativeArray<ApexConstraintParticleDouble>();
+        public NativeArray<ApexConstraintParticleDouble> doubleConnect;
 
         // particle pin(Attachment)
-        public NativeArray<ApexPinConstraint> pin = new NativeArray<ApexPinConstraint>();
+        public NativeArray<ApexPinConstraint> pin;
 
         // switch constraint
         public bool useForce = true;
@@ -159,7 +157,7 @@ namespace APEX.Common.Simulator
         {
             var handle = DoForceJobs(dt); // 1. predict next position
             // TODO: 2. collider constraint.. 
-            handle = DoConstraintJobs(handle); // 3. revise next position
+            // handle = DoConstraintJobs(handle); // 3. revise next position
             _jobHandle = handle;
         }
 

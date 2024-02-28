@@ -28,7 +28,7 @@ namespace APEX.Rope
         public float mass = 1.0f; // If you want the centroid offset, please change this generation method
         [Range(0, 1f)] public float stiffness = 0.5f;
         [Range(0, 1f)] public float damping = 0.005f;
-        [Range(1, 20)] public int iterator = 10;
+        [Range(1, 32)] public int iterator = 10;
 
         // Solver
         public ApexSolver solver;
@@ -80,6 +80,10 @@ namespace APEX.Rope
                 doubleConnect = new NativeArray<ApexConstraintParticleDouble>(particleCount - 1, Allocator.Persistent),
 
                 pin = new NativeArray<ApexPinConstraint>(1, Allocator.Persistent),
+                
+                stiffness = stiffness,
+                damping = damping,
+                iterator = iterator,
             };
 
             // calc detail particle
@@ -91,7 +95,7 @@ namespace APEX.Rope
                 element.name = i.ToString();
                 element.transform.position = particlePosition;
 
-                ApexLineParticle p = new ApexLineParticle
+                var p = new ApexLineParticle
                 {
                     index = i,
                     mass = mass,
@@ -107,7 +111,7 @@ namespace APEX.Rope
                 ropeSimulatorActor.nowPosition[i] = particlePosition;
                 ropeSimulatorActor.nextPosition[i] = particlePosition;
 
-                ropeSimulatorActor.mass[i] = 1.0f;
+                ropeSimulatorActor.mass[i] = mass;
                 ropeSimulatorActor.constraintTypes[i] = EApexParticleConstraintType.Free;
 
                 rope.elements.Add(element);

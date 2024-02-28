@@ -23,8 +23,8 @@ namespace APEX.Common.Solver
         // simulator actors
         [SerializeReference] public List<IApexSimulatorBase> actors = new List<IApexSimulatorBase>();
 
-        // delegate param
-        public Action particleSend;
+        // delegate param action
+        public Action actorStepBefore;
 
         private void Update()
         {
@@ -34,34 +34,21 @@ namespace APEX.Common.Solver
 
             for (var i = 0; i < cnt; i++)
             {
-                int div = 0;
+                var div = 0;
                 foreach (var actor in actors)
                 {
-                    particleSend?.Invoke(); // from render change
-                    actor.SyncParticleFromSolve(particles, div); // from solve calc
+                    actorStepBefore?.Invoke(); // from render change
+                    actor.SyncParticleFromSolve(particles, div); // send solver particle to simulator
                     actor.Step(dt); // PBD step
-
-                    if (i < cnt - 1)
-                    {
-                        actor.Complete(); // finish one step calc
-                        actor.SyncParticleToSolver(particles, div); // get particle position change
-                        ParticleApply(); // apply particle calc
-                    }
+                    actor.Complete(); // finish one step calc
+                    actor.SyncParticleToSolver(particles, div); // get particle change from simulator
+                    ParticleApply(); // apply particle calc
 
                     div += actor.GetParticleCount(); // maybe there not only one actor
                 }
             }
 
             accTime %= dt;
-        }
-
-        private void LateUpdate()
-        {
-            foreach (var actor in actors)
-            {
-                actor.Complete(); // last complete per frame
-                ParticleApply();
-            }
         }
 
         /// <summary>

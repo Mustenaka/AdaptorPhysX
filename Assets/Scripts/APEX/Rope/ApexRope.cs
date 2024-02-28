@@ -23,7 +23,7 @@ namespace APEX.Rope
 
         private void Start()
         {
-            solver.particleSend += SendParticle;
+            // solver.particleSend += SendParticle;
         }
 
         private void Update()
@@ -36,7 +36,7 @@ namespace APEX.Rope
 
         private void OnDestroy()
         {
-            solver.particleSend -= SendParticle;
+            // solver.particleSend -= SendParticle;
         }
 
         private void SendParticle()
