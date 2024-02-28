@@ -96,8 +96,8 @@ namespace APEX.Common.Simulator
                 masses = mass,
                 d = d,
             };
-            return distanceConstraintJob.ScheduleParallel(nextPosition.Length, 64, depend);
-            // return distanceConstraintJob.Schedule(nextPosition.Length, depend);
+            // return distanceConstraintJob.ScheduleParallel(nextPosition.Length, 64, depend);
+            return distanceConstraintJob.Schedule(nextPosition.Length, depend);
         }
 
         /// <summary>
@@ -157,7 +157,7 @@ namespace APEX.Common.Simulator
         {
             var handle = DoForceJobs(dt); // 1. predict next position
             // TODO: 2. collider constraint.. 
-            // handle = DoConstraintJobs(handle); // 3. revise next position
+            handle = DoConstraintJobs(handle); // 3. revise next position
             _jobHandle = handle;
         }
 

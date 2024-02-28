@@ -406,14 +406,14 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   useSelfPosition: 0
   firstParticlePosition: {x: 0, y: 0, z: 0}
-  particleCount: 12
+  particleCount: 1024
   stepSize: 1.2
   stepDirect: {x: -1, y: 0, z: 0}
   obj: {fileID: 0}
   mass: 1
   stiffness: 0.5
   damping: 0.0005
-  iterator: 10
+  iterator: 1
   solver: {fileID: 0}
 --- !u!1 &1866374842
 GameObject:
