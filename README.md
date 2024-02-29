@@ -2,8 +2,6 @@
 
 [中文](./Docs/README_ZH-CN.md)
 
-This project is not finished, i will push it on next spring.
-
 AdaptorPhysX project try to use CPU mutil threading(Unity Burst & Jobs system) implement PBD (Position Based Dynamics) algorithm to simulate a deformable object(rope, cloth, softbody, fluid) with volume or surface, and implement a calculation framework according to PBD calculation rules.  You can complete your own algorithm expansion based on this project.
 
 What is PBD: https://matthias-research.github.io/pages/publications/posBasedDyn.pdf
@@ -24,27 +22,41 @@ In version 2022.3.13, there is a Bug in the display of schemas in Unity, which c
 
 reference: https://github.com/Mustenaka/AdaptorPhysX/issues/1
 
-## Models
+## Project architecture:
 
-This project contains the following modules:
+This project architecture:
 
-![AdaptorPhysX-moduleDiagram](./Pic/AdaptorPhysX-moduleDiagram.png)
+![AdaptorPhysX architecture](/Users/andrew/Projects/UnityProjects/Project/SeekKnowledge/Docs/Pic/AdaptorPhysX architecture.png)
 
 ## Effect
 
 ##### Rope:
 
-1 rope, with 100 particle, iterator 10, constraint have: distance, no optimize
+1 rope, with **1024 interactive particles**, iterator 1, constraint have, distance, pin, DOTS optimize
 
-![rope-100p-constraint-distance](./Pic/Effect/Rope/rope-100p-constraint-distance.gif)
+![job-rope-1024](./Docs/Pic/Effect/Rope/job-rope-1024.gif)
 
-(waiting for upload)
+### Cloth:
+
+[not finish]
+
+
+
+### Softbody:
+
+[not finish]
 
 
 
 ## Custom, rewrite
 
 (waiting for project finished)
+
+
+
+## TODO
+
+
 
 
 
