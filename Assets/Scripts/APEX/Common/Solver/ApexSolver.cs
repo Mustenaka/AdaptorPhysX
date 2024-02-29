@@ -37,7 +37,7 @@ namespace APEX.Common.Solver
             {
                 var div = 0;
 
-                actorStepBefore?.Invoke(); // from render change
+                actorStepBefore.Invoke(); // from render change
 
                 foreach (var actor in actors)
                 {
@@ -50,7 +50,7 @@ namespace APEX.Common.Solver
                     div += actor.GetParticleCount(); // maybe there not only one actor
                 }
 
-                actorStepFinished?.Invoke();
+                actorStepFinished.Invoke();
             }
 
             accTime %= dt;

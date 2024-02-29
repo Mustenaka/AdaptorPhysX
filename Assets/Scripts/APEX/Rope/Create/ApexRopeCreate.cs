@@ -65,6 +65,7 @@ namespace APEX.Rope
         {
             // rope
             var rope = this.AddComponent<ApexRope>();
+            
             rope.solver = solver;
             rope.particles = new List<ApexLineParticle>();
             rope.elements = new List<GameObject>();
