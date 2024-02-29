@@ -20,37 +20,18 @@ namespace APEX.Rope
         private int ParticlesCount => particles.Count;
 
         public ApexSolver solver;
-        public ApexRopeSimulator ropeActor;
 
         private void Start()
         {
-            // TODO: actor step before apply still Bug at first run app
             solver.actorStepBefore += SendParticle;
             solver.actorStepFinished += RendParticle;
         }
 
         private void OnDestroy()
         {
-            // TODO: actor step before apply still Bug at first run app
             solver.actorStepBefore -= SendParticle;
             solver.actorStepFinished -= RendParticle;
         }
-
-        // private void Update()
-        // {
-        //     for (var i = 0; i < ParticlesCount; i++)
-        //     {
-        //         elements[i].transform.localPosition = particles[i].nowPosition;
-        //     }
-        // }
-        //
-        // private void LateUpdate()
-        // {
-        //     for (var i = 0; i < ParticlesCount; i++)
-        //     {
-        //         solver.particles[i].nowPosition = elements[i].transform.localPosition;
-        //     }
-        // }
 
         private void RendParticle()
         {

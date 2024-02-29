@@ -97,7 +97,7 @@ namespace APEX.Rope
 
                 var element = GameObject.Instantiate(obj, transform, true);
                 element.name = i.ToString();
-                element.transform.position = particlePosition;
+                element.transform.localPosition = particlePosition;
 
                 var p = new ApexLineParticle
                 {
