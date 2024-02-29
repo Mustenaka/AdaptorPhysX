@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using APEX.Common.Particle;
 using APEX.Common.Render;
+using APEX.Common.Simulator;
 using APEX.Common.Solver;
 using UnityEngine;
 
@@ -19,21 +20,22 @@ namespace APEX.Rope
         private int ParticlesCount => particles.Count;
 
         public ApexSolver solver;
+        public ApexRopeSimulator ropeActor;
 
         private void Start()
         {
-            // TODO: Bug
-            // solver.actorStepBefore += SendParticle;
+            // TODO: actor step before apply still Bug at first run app
+            solver.actorStepBefore += SendParticle;
             solver.actorStepFinished += RendParticle;
         }
 
         private void OnDestroy()
         {
-            // TODO: Bug
-            // solver.actorStepBefore -= SendParticle;
+            // TODO: actor step before apply still Bug at first run app
+            solver.actorStepBefore -= SendParticle;
             solver.actorStepFinished -= RendParticle;
         }
-        
+
         // private void Update()
         // {
         //     for (var i = 0; i < ParticlesCount; i++)

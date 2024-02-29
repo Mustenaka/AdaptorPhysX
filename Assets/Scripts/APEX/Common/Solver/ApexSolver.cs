@@ -32,12 +32,12 @@ namespace APEX.Common.Solver
             accTime += Time.deltaTime;
             var cnt = (int)(accTime / dt);
 
+            actorStepBefore.Invoke(); // from render change
+            
             // make sure time sequence is right
             for (var i = 0; i < cnt; i++)
             {
                 var div = 0;
-
-                actorStepBefore.Invoke(); // from render change
 
                 foreach (var actor in actors)
                 {
@@ -49,10 +49,10 @@ namespace APEX.Common.Solver
 
                     div += actor.GetParticleCount(); // maybe there not only one actor
                 }
-
+                
                 actorStepFinished.Invoke();
             }
-
+            
             accTime %= dt;
         }
 
