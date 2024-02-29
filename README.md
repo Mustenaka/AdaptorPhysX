@@ -26,7 +26,7 @@ reference: https://github.com/Mustenaka/AdaptorPhysX/issues/1
 
 This project architecture:
 
-![AdaptorPhysX architecture](/Users/andrew/Projects/UnityProjects/Project/SeekKnowledge/Docs/Pic/AdaptorPhysX architecture.png)
+![AdaptorPhysX architecture](./Docs/Pic/AdaptorPhysX architecture.png)
 
 ## Effect
 
