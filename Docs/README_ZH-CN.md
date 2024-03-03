@@ -2,9 +2,9 @@
 
 
 
-本项目任然未完成，大概会在来年春天完成基本功能并发布
+项目运算架构已经完成，具体的模块业务表现待完成
 
-AdaptorPhysX项目使用CPU多线程(Unity Burst & Jobs系统)实现PBD (Position Based Dynamics)算法来模拟具有体积或表面的可变形物体(绳、布、软体、流体)，并根据PBD计算规则实现计算框架。您可以在此项目的基础上完成自己的算法扩展。
+AdaptorPhysX项目是使用CPU多线程(Unity Burst & Jobs系统)实现PBD (Position Based Dynamics)算法来模拟具有体积或表面的可变形物体(绳、布、软体、流体)，并根据PBD计算规则实现计算框架。您可以在此项目的基础上完成自己的算法扩展。
 
 有关 PBD 算法参考论文: https://matthias-research.github.io/pages/publications/posBasedDyn.pdf
 
@@ -30,25 +30,15 @@ AdaptorPhysX项目使用CPU多线程(Unity Burst & Jobs系统)实现PBD (Positio
 
 本项目包含以下模块:
 
-![AdaptorPhysX-moduleDiagram](../Pic/AdaptorPhysX-moduleDiagram.png)
+![AdaptorPhysX-architecture](../Pic/AdaptorPhysX-architecture.png)
 
 ## 效果
 
 ##### 绳索:
 
-单一绳索, 100粒子, 10轮迭代, 长度约束，无任何优化
+单一绳索, 1024粒子, 1轮迭代, 长度约束，Jobs加速
 
-![rope-100p-constraint-distance](../Pic/Effect/Rope/rope-100p-constraint-distance.gif)
-
-(waiting for upload)
-
-
-
-## Custom, rewrite
-
-(waiting for project finished)
-
-
+![rope-100p-constraint-distance](../Pic/Effect/Rope/job-rope-1024.gif)
 
 ## 我的博客
 
