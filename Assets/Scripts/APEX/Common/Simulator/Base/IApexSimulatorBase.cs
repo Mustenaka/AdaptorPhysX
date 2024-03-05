@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using APEX.Common.Particle;
+using UnityEngine;
 
 namespace APEX.Common.Simulator
 {
@@ -16,6 +17,13 @@ namespace APEX.Common.Simulator
         /// </summary>
         public void Complete();
 
+        /// <summary>
+        /// sync pin information solver to simulator
+        /// </summary>
+        /// <param name="pinIndex">pin index</param>
+        /// <param name="pinPosition">pin position</param>
+        public void SyncPinFromSolve(List<int> pinIndex, List<Vector3> pinPosition);
+        
         /// <summary>
         /// sync particle from solver to simulator
         /// </summary>

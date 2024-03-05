@@ -41,6 +41,7 @@ namespace APEX.Common.Solver
 
                 foreach (var actor in actors)
                 {
+                    // actor.SyncPinFromSolve()
                     actor.SyncParticleFromSolve(particles, div); // send solver particle to simulator
                     actor.Step(dt); // PBD step
                     actor.Complete(); // finish one step calc

@@ -3,6 +3,7 @@ using APEX.Common.Constraints;
 using APEX.Common.Particle;
 using APEX.Common.Simulator;
 using APEX.Common.Solver;
+using APEX.Usage;
 using Unity.Collections;
 using Unity.Mathematics;
 using Unity.VisualScripting;
@@ -31,8 +32,8 @@ namespace APEX.Rope
         [Range(1, 32)] public int iterator = 10;
 
         // Pin GameObject
-        public GameObject[] pins;
-        
+        public ApexPin[] pins;
+
         // Solver
         public ApexSolver solver;
 
@@ -69,7 +70,7 @@ namespace APEX.Rope
         {
             // rope
             var rope = this.AddComponent<ApexRope>();
-            
+
             rope.solver = solver;
             rope.particles = new List<ApexLineParticle>();
             rope.elements = new List<GameObject>();
@@ -137,7 +138,7 @@ namespace APEX.Rope
             ropeSimulatorActor.constraintTypes[0] = EApexParticleConstraintType.Pin;
             foreach (var pin in pins)
             {
-                ropeSimulatorActor.pin[0] = new ApexPinConstraint(rope.particles[0].nowPosition);
+                ropeSimulatorActor.pin[pin.particleIndex] = new ApexPinConstraint(pin.pinPosition);
             }
 
             // send it to solver

@@ -3,6 +3,7 @@ using APEX.Common.Particle;
 using APEX.Common.Render;
 using APEX.Common.Simulator;
 using APEX.Common.Solver;
+using APEX.Usage;
 using UnityEngine;
 
 namespace APEX.Rope
@@ -16,9 +17,10 @@ namespace APEX.Rope
             elements = new List<GameObject>(); // TODO: Use Material or something else to replace it.
 
         public List<ApexLineParticle> particles = new List<ApexLineParticle>();
-
         private int ParticlesCount => particles.Count;
 
+        public List<ApexPin> pins;
+        
         public ApexSolver solver;
 
         private void Start()

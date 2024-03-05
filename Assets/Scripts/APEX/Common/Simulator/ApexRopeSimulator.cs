@@ -170,6 +170,19 @@ namespace APEX.Common.Simulator
         }
 
         /// <summary>
+        /// sync pin information solver to simulator
+        /// </summary>
+        /// <param name="pinIndex"></param>
+        /// <param name="pinPosition"></param>
+        public void SyncPinFromSolve(List<int> pinIndex, List<Vector3> pinPosition)
+        {
+            for (var i = 0; i < pinIndex.Count; i++)
+            {
+                pin[pinIndex[i]] = new ApexPinConstraint(pinPosition[i]);
+            }
+        }
+
+        /// <summary>
         /// sync position from solve
         /// </summary>
         /// <param name="particles">all solver particle</param>
