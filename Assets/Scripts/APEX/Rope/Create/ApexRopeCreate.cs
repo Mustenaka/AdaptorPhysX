@@ -30,6 +30,9 @@ namespace APEX.Rope
         [Range(0, 1f)] public float damping = 0.005f;
         [Range(1, 32)] public int iterator = 10;
 
+        // Pin GameObject
+        public GameObject[] pins;
+        
         // Solver
         public ApexSolver solver;
 
@@ -39,6 +42,7 @@ namespace APEX.Rope
             solver = FindObjectOfType<ApexSolver>();
 
             // if the obj is empty, create sphere to fill it
+            // TODO: use render function to 
             if (obj == null)
             {
                 obj = GameObject.CreatePrimitive(PrimitiveType.Sphere);
@@ -83,7 +87,7 @@ namespace APEX.Rope
                 constraintTypes = new NativeArray<EApexParticleConstraintType>(particleCount, Allocator.Persistent),
                 doubleConnect = new NativeArray<ApexConstraintParticleDouble>(particleCount - 1, Allocator.Persistent),
 
-                pin = new NativeArray<ApexPinConstraint>(1, Allocator.Persistent),
+                pin = new NativeArray<ApexPinConstraint>(pins.Length, Allocator.Persistent),
 
                 stiffness = stiffness,
                 damping = damping,
@@ -123,7 +127,7 @@ namespace APEX.Rope
             }
 
             // generate rope connect relation
-            for (int i = 0; i < particleCount - 1; i++)
+            for (var i = 0; i < particleCount - 1; i++)
             {
                 ropeSimulatorActor.doubleConnect[i] = new ApexConstraintParticleDouble(i, i + 1);
                 // Debug.Log("connect:(" + i + ", " + (i + 1) + ") + from:" + ropeSimulatorActor.doubleConnect.Length);
@@ -131,7 +135,10 @@ namespace APEX.Rope
 
             // mark first particle is pin
             ropeSimulatorActor.constraintTypes[0] = EApexParticleConstraintType.Pin;
-            ropeSimulatorActor.pin[0] = new ApexPinConstraint(rope.particles[0].nowPosition);
+            foreach (var pin in pins)
+            {
+                ropeSimulatorActor.pin[0] = new ApexPinConstraint(rope.particles[0].nowPosition);
+            }
 
             // send it to solver
             rope.solver.particles = new List<ApexParticleBase>(rope.particles);
