@@ -32,7 +32,6 @@ namespace APEX.Common.Solver
             accTime += Time.deltaTime;
             var cnt = (int)(accTime / dt);
 
-
             // make sure time sequence is right
             for (var i = 0; i < cnt; i++)
             {
