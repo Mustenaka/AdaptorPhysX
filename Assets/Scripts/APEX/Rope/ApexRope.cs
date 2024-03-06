@@ -33,9 +33,9 @@ namespace APEX.Rope
 
         private void Update()
         {
-            foreach (var pin in pins)
+            for (var i = 0; i < pins.Count; i++)
             {
-                ropeSimulator.SyncPinFromSolve(pin.particleIndex, pin.pinPosition);
+                ropeSimulator.SyncPinFromSolve(i, pins[i].particleIndex, pins[i].pinPosition);
             }
         }
 

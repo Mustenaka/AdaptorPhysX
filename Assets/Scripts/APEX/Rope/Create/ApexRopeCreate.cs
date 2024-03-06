@@ -135,10 +135,10 @@ namespace APEX.Rope
             }
 
             // mark first particle is pin
-            ropeSimulatorActor.constraintTypes[0] = EApexParticleConstraintType.Pin;
-            foreach (var pin in pins)
+            for (int i = 0; i < pins.Count; i++)
             {
-                ropeSimulatorActor.pin[pin.particleIndex] = new ApexPinConstraint(pin.pinPosition);
+                ropeSimulatorActor.pin[i] = new ApexPinConstraint(pins[i].particleIndex, pins[i].pinPosition);
+                ropeSimulatorActor.constraintTypes[pins[i].particleIndex] = EApexParticleConstraintType.Pin;
             }
 
             // send it to solver

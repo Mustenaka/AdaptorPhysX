@@ -19,10 +19,18 @@ namespace APEX.Common.Constraints
             switch (constraintType)
             {
                 case EApexParticleConstraintType.Pin:
-                    this.position[index] = pin[index].position;
+                    for (var i = 0; i < pin.Length; i++)
+                    {
+                        if (pin[i].index != index) continue;
+                        this.position[index] = pin[i].position;
+                        break;
+                    }
+
                     break;
                 case EApexParticleConstraintType.Collision:
                     break;
+                case EApexParticleConstraintType.Free:
+                case EApexParticleConstraintType.Resist:
                 default: break;
             }
         }
