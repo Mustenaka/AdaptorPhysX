@@ -22,15 +22,15 @@ namespace APEX.Common.Simulator
         /// </summary>
         /// <param name="pinIndex">pin index</param>
         /// <param name="pinPosition">pin position</param>
-        public void SyncPinFromSolve(List<int> pinIndex, List<Vector3> pinPosition);
-        
+        public void SyncPinFromSolve(int pinIndex, Vector3 pinPosition);
+
         /// <summary>
         /// sync particle from solver to simulator
         /// </summary>
         /// <param name="particles">all solver particle</param>
         /// <param name="down">particle lower bound</param>
         public void SyncParticleFromSolve(List<ApexParticleBase> particles, int down);
-        
+
         /// <summary>
         /// sync particle from simulator to solver
         /// </summary>

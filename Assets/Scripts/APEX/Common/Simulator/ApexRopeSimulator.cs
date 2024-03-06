@@ -174,12 +174,9 @@ namespace APEX.Common.Simulator
         /// </summary>
         /// <param name="pinIndex"></param>
         /// <param name="pinPosition"></param>
-        public void SyncPinFromSolve(List<int> pinIndex, List<Vector3> pinPosition)
+        public void SyncPinFromSolve(int pinIndex, Vector3 pinPosition)
         {
-            for (var i = 0; i < pinIndex.Count; i++)
-            {
-                pin[pinIndex[i]] = new ApexPinConstraint(pinPosition[i]);
-            }
+            pin[pinIndex] = new ApexPinConstraint(pinPosition);
         }
 
         /// <summary>
@@ -234,10 +231,10 @@ namespace APEX.Common.Simulator
             previousPosition.Dispose();
             nowPosition.Dispose();
             nextPosition.Dispose();
-            
+
             mass.Dispose();
             forceExt.Dispose();
-            
+
             constraintTypes.Dispose();
             doubleConnect.Dispose();
 

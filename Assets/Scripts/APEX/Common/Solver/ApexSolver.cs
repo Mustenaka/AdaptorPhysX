@@ -23,8 +23,8 @@ namespace APEX.Common.Solver
         [SerializeReference] public List<IApexSimulatorBase> actors = new List<IApexSimulatorBase>();
 
         // delegate param action
-        public Action actorStepBefore;
-        public Action actorStepFinished;
+        public Action<int> actorStepBefore;
+        public Action<int> actorStepFinished;
 
         private void Update()
         {
@@ -32,8 +32,7 @@ namespace APEX.Common.Solver
             accTime += Time.deltaTime;
             var cnt = (int)(accTime / dt);
 
-            actorStepBefore.Invoke(); // from render change
-            
+
             // make sure time sequence is right
             for (var i = 0; i < cnt; i++)
             {
@@ -41,19 +40,19 @@ namespace APEX.Common.Solver
 
                 foreach (var actor in actors)
                 {
-                    // actor.SyncPinFromSolve()
+                    actorStepBefore.Invoke(div); // from render change
+
                     actor.SyncParticleFromSolve(particles, div); // send solver particle to simulator
                     actor.Step(dt); // PBD step
                     actor.Complete(); // finish one step calc
                     actor.SyncParticleToSolver(particles, div); // get particle change from simulator
                     ParticleApply(); // apply particle calc
 
+                    actorStepFinished.Invoke(div);
                     div += actor.GetParticleCount(); // maybe there not only one actor
                 }
-                
-                actorStepFinished.Invoke();
             }
-            
+
             accTime %= dt;
         }
 

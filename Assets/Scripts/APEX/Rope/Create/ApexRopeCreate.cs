@@ -32,7 +32,7 @@ namespace APEX.Rope
         [Range(1, 32)] public int iterator = 10;
 
         // Pin GameObject
-        public ApexPin[] pins;
+        public List<ApexPin> pins;
 
         // Solver
         public ApexSolver solver;
@@ -88,7 +88,7 @@ namespace APEX.Rope
                 constraintTypes = new NativeArray<EApexParticleConstraintType>(particleCount, Allocator.Persistent),
                 doubleConnect = new NativeArray<ApexConstraintParticleDouble>(particleCount - 1, Allocator.Persistent),
 
-                pin = new NativeArray<ApexPinConstraint>(pins.Length, Allocator.Persistent),
+                pin = new NativeArray<ApexPinConstraint>(pins.Count, Allocator.Persistent),
 
                 stiffness = stiffness,
                 damping = damping,
@@ -144,6 +144,10 @@ namespace APEX.Rope
             // send it to solver
             rope.solver.particles = new List<ApexParticleBase>(rope.particles);
             rope.solver.actors.Add(ropeSimulatorActor);
+
+            // add rope compare SimulatorActor
+            rope.ropeSimulator = ropeSimulatorActor;
+            rope.pins = pins;
         }
     }
 }
