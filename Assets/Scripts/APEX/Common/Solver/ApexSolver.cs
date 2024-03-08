@@ -39,6 +39,7 @@ namespace APEX.Common.Solver
 
                 foreach (var actor in actors)
                 {
+                    // Not repeat invoke. change function for interface
                     actorStepBefore.Invoke(div); // from render change
 
                     actor.SyncParticleFromSolve(particles, div); // send solver particle to simulator
