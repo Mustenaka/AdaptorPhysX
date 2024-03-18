@@ -11,6 +11,7 @@ namespace APEX.Common.Constraints
 
         [ReadOnly] public NativeArray<EApexParticleConstraintType> particleConstraintTypes;
 
+        // Change it, Length of Pin same as Particle Count
         [ReadOnly] public NativeArray<ApexPinConstraint> pin;
 
         public void Execute(int index)
@@ -19,13 +20,7 @@ namespace APEX.Common.Constraints
             switch (constraintType)
             {
                 case EApexParticleConstraintType.Pin:
-                    for (var i = 0; i < pin.Length; i++)
-                    {
-                        if (pin[i].index != index) continue;
-                        this.position[index] = pin[i].position;
-                        break;
-                    }
-
+                    position[index] = pin[index].position;
                     break;
                 case EApexParticleConstraintType.Collision:
                     break;

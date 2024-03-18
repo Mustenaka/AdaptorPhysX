@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using APEX.Common.Constraints;
 using APEX.Common.Force;
 using APEX.Common.Particle;
+using APEX.Usage;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
@@ -166,14 +167,15 @@ namespace APEX.Common.Simulator
         }
 
         /// <summary>
-        /// sync pin information solver to simulator
+        /// Sync pin constraint
         /// </summary>
-        /// <param name="i"></param>
-        /// <param name="pinIndex"></param>
-        /// <param name="pinPosition"></param>
-        public void SyncPinFromSolve(int i, int pinIndex, Vector3 pinPosition)
+        /// <param name="pins"></param>
+        public void SyncPinConstraint(List<ApexPin> pins)
         {
-            pin[i] = new ApexPinConstraint(pinIndex, pinPosition);
+            for (var i = 0; i < pins.Count; i++)
+            {
+                pin[pins[i].particleIndex] = new ApexPinConstraint(pins[i].pinPosition);
+            }
         }
 
         /// <summary>

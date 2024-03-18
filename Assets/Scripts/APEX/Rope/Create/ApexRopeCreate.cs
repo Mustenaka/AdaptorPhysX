@@ -88,7 +88,7 @@ namespace APEX.Rope
                 constraintTypes = new NativeArray<EApexParticleConstraintType>(particleCount, Allocator.Persistent),
                 doubleConnect = new NativeArray<ApexConstraintParticleDouble>(particleCount - 1, Allocator.Persistent),
 
-                pin = new NativeArray<ApexPinConstraint>(pins.Count, Allocator.Persistent),
+                pin = new NativeArray<ApexPinConstraint>(particleCount, Allocator.Persistent),
 
                 stiffness = stiffness,
                 damping = damping,
@@ -131,13 +131,12 @@ namespace APEX.Rope
             for (var i = 0; i < particleCount - 1; i++)
             {
                 ropeSimulatorActor.doubleConnect[i] = new ApexConstraintParticleDouble(i, i + 1);
-                // Debug.Log("connect:(" + i + ", " + (i + 1) + ") + from:" + ropeSimulatorActor.doubleConnect.Length);
             }
 
             // mark first particle is pin
-            for (int i = 0; i < pins.Count; i++)
+            for (var i = 0; i < pins.Count; i++)
             {
-                ropeSimulatorActor.pin[i] = new ApexPinConstraint(pins[i].particleIndex, pins[i].pinPosition);
+                ropeSimulatorActor.pin[pins[i].particleIndex] = new ApexPinConstraint(pins[i].pinPosition);
                 ropeSimulatorActor.constraintTypes[pins[i].particleIndex] = EApexParticleConstraintType.Pin;
             }
 

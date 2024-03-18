@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using APEX.Common.Particle;
-using UnityEngine;
+using APEX.Usage;
 
 namespace APEX.Common.Simulator
 {
@@ -17,6 +17,14 @@ namespace APEX.Common.Simulator
         /// </summary>
         public void Complete();
 
+        /// <summary>
+        /// Sync pin constraint
+        /// </summary>
+        /// <param name="pins">Mono ApexPin</param>
+        public void SyncPinConstraint(List<ApexPin> pins);
+
+        // public void SyncCollider();  // calc collider
+        
         /// <summary>
         /// sync particle from solver to simulator
         /// </summary>
