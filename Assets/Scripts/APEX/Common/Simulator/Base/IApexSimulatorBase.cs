@@ -18,13 +18,6 @@ namespace APEX.Common.Simulator
         public void Complete();
 
         /// <summary>
-        /// sync pin information solver to simulator
-        /// </summary>
-        /// <param name="pinIndex">pin index</param>
-        /// <param name="pinPosition">pin position</param>
-        //public void SyncPinFromSolve(int pinIndex, Vector3 pinPosition);
-
-        /// <summary>
         /// sync particle from solver to simulator
         /// </summary>
         /// <param name="particles">all solver particle</param>

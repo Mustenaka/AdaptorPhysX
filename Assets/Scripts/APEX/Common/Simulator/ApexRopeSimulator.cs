@@ -39,12 +39,11 @@ namespace APEX.Common.Simulator
         public bool useForce = true;
         public bool useDistanceConstraint = true;
         public bool useColliderConstraint = true;
+        public bool usePinConstraint = true;
 
         // Distance Constraint Param
         public float restLength = 1.2f;
         public float stiffness = 0.5f;
-
-        // Collider Constraint Param
 
         // physics param - force
         public Vector3 gravity = new Vector3(0, -9.81f, 0);
@@ -64,7 +63,6 @@ namespace APEX.Common.Simulator
         /// <returns>job handle depend</returns>
         private JobHandle DoFinalConstraintJobs(JobHandle depend)
         {
-            // float d = 1.0f / (iterator - iterIndex);
             var finalConstraintJob = new FinalConstraintJob()
             {
                 position = nextPosition,
@@ -73,7 +71,7 @@ namespace APEX.Common.Simulator
 
                 pin = pin,
             };
-            return finalConstraintJob.Schedule(nowPosition.Length, depend);
+            return usePinConstraint ? finalConstraintJob.Schedule(nowPosition.Length, depend) : depend;
         }
 
         /// <summary>
@@ -96,8 +94,7 @@ namespace APEX.Common.Simulator
                 masses = mass,
                 d = d,
             };
-            // return distanceConstraintJob.ScheduleParallel(nextPosition.Length, 64, depend);
-            return distanceConstraintJob.Schedule(nextPosition.Length, depend);
+            return useDistanceConstraint ? distanceConstraintJob.Schedule(nextPosition.Length, depend) : depend;
         }
 
         /// <summary>
@@ -141,9 +138,8 @@ namespace APEX.Common.Simulator
 
                 dt = dt,
             };
-
             var depend = new JobHandle();
-            return job.ScheduleParallel(job.nowPosition.Length, 64, depend);
+            return useForce ? job.ScheduleParallel(job.nowPosition.Length, 64, depend) : depend;
         }
 
         /// <summary>

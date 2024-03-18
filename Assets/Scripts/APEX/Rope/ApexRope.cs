@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using APEX.Common.Particle;
 using APEX.Common.Render;
@@ -14,10 +13,10 @@ namespace APEX.Rope
     /// </summary>
     public class ApexRope : MonoBehaviour, IApexRender
     {
-        public List<GameObject>
-            elements = new List<GameObject>(); // TODO: Use Material or something else to replace it.
-
+        // TODO: Use Material or something else to replace it.
+        public List<GameObject> elements = new List<GameObject>();
         public List<ApexLineParticle> particles = new List<ApexLineParticle>();
+        
         private int ParticlesCount => particles.Count;
 
         public List<ApexPin> pins;
