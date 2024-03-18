@@ -22,8 +22,18 @@ namespace APEX.Common.Simulator
         /// </summary>
         /// <param name="pins">Mono ApexPin</param>
         public void SyncPinConstraint(List<ApexPin> pins);
-
-        // public void SyncCollider();  // calc collider
+        
+        /// <summary>
+        /// Do action before Step()
+        /// </summary>
+        /// <param name="cnt">a count of div</param>
+        public void DoBeforeStepAction(int cnt);
+        
+        /// <summary>
+        /// Do action after then Complete()
+        /// </summary>
+        /// <param name="cnt">a count of div</param>
+        public void DoAfterCompleteAction(int cnt);
         
         /// <summary>
         /// sync particle from solver to simulator

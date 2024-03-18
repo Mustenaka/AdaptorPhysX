@@ -41,6 +41,11 @@ namespace APEX.Rope
         {
             // Get Solver
             solver = FindObjectOfType<ApexSolver>();
+            if (solver == null)
+            {
+                Debug.LogError("Solver not found!");
+                return;
+            }
 
             // if the obj is empty, create sphere to fill it
             // TODO: use render function to 
@@ -141,7 +146,7 @@ namespace APEX.Rope
             }
 
             // send it to solver
-            rope.solver.particles = new List<ApexParticleBase>(rope.particles);
+            rope.solver.particles.AddRange(new List<ApexParticleBase>(rope.particles));
             rope.solver.actors.Add(ropeSimulatorActor);
 
             // add rope compare SimulatorActor

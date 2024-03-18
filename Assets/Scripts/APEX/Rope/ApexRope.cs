@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using APEX.Common.Particle;
 using APEX.Common.Render;
@@ -24,19 +25,25 @@ namespace APEX.Rope
 
         private void Start()
         {
-            // solver.actorStepBefore += SendParticle;
-            // solver.actorStepFinished += RendParticle;
+            ropeSimulator.beforeStep += SendParticle;
+            ropeSimulator.afterComplete += RendParticle;
         }
 
         private void OnDestroy()
         {
-            // solver.actorStepBefore -= SendParticle;
-            // solver.actorStepFinished -= RendParticle;
+            ropeSimulator.beforeStep -= SendParticle;
+            ropeSimulator.afterComplete -= RendParticle;
         }
 
+        private void Update()
+        {
+            // sync pins
+            ropeSimulator.SyncPinConstraint(pins);
+        }
+        
         private void RendParticle(int div)
         {
-            for (var i = 0; i < particles.Count; i++)
+            for (var i = 0; i < elements.Count; i++)
             {
                 elements[i].transform.localPosition = particles[i + div].nowPosition;
             }
@@ -44,7 +51,7 @@ namespace APEX.Rope
 
         private void SendParticle(int div)
         {
-            for (var i = 0; i < particles.Count; i++)
+            for (var i = 0; i < elements.Count; i++)
             {
                 solver.particles[i + div].nowPosition = elements[i].transform.localPosition;
             }

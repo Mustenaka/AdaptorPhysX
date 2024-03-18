@@ -54,6 +54,10 @@ namespace APEX.Common.Simulator
 
         // simulator param
         public int iterator = 1;
+        
+        // action param
+        public Action<int> beforeStep = delegate { };
+        public Action<int> afterComplete = delegate { };
 
         private JobHandle _jobHandle;
 
@@ -176,6 +180,22 @@ namespace APEX.Common.Simulator
             {
                 pin[pins[i].particleIndex] = new ApexPinConstraint(pins[i].pinPosition);
             }
+        }
+
+        /// <summary>
+        /// Do something before Step() | run at ApexSolver
+        /// </summary>
+        public void DoBeforeStepAction(int cnt)
+        {
+            beforeStep?.Invoke(cnt);
+        }
+
+        /// <summary>
+        /// Do something after Complete() | run at ApexSolver
+        /// </summary>
+        public void DoAfterCompleteAction(int cnt)
+        {
+            afterComplete?.Invoke(cnt);
         }
 
         /// <summary>

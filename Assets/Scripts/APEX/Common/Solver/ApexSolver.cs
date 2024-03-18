@@ -16,7 +16,7 @@ namespace APEX.Common.Solver
         // simulator param
         public float dt = 0.001f;
         public float accTime;
-        
+
         // particle container
         public List<ApexParticleBase> particles = new List<ApexParticleBase>();
 
@@ -37,21 +37,24 @@ namespace APEX.Common.Solver
             actorStepBefore?.Invoke();
             for (var i = 0; i < cnt; i++)
             {
-                var div = 0;    // assign particles to difference simulate actor
+                var div = 0; // assign particles to difference simulate actor
 
                 foreach (var actor in actors)
                 {
+                    actor.DoBeforeStepAction(div); // send particles status to solver (Delete it when you package)
                     actor.SyncParticleFromSolve(particles, div); // send solver particle to simulator
                     actor.Step(dt); // PBD step
                     actor.Complete(); // finish one step calc
                     actor.SyncParticleToSolver(particles, div); // get particle change from simulator
                     ParticleApply(); // apply particle calc
-                    
+                    actor.DoAfterCompleteAction(div); // render solver particle to unity
+
                     div += actor.GetParticleCount(); // maybe there not only one actor
                 }
             }
+
             actorStepFinished?.Invoke();
-            
+
             accTime %= dt;
         }
 
@@ -78,7 +81,7 @@ namespace APEX.Common.Solver
                 {
                     continue;
                 }
-                
+
                 particles[i].previousPosition = particles[i].nowPosition;
                 particles[i].nowPosition = particles[i].nextPosition;
             }
