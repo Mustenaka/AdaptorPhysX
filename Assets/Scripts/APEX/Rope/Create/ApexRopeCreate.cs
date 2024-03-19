@@ -145,7 +145,11 @@ namespace APEX.Rope
                 ropeSimulatorActor.constraintTypes[pins[i].particleIndex] = EApexParticleConstraintType.Pin;
             }
 
-            // send it to solver
+            // send it to solver, This have 1 question:
+            // solver.particles is all particles
+            // rope.particles is not all particles, is only own particles
+            // so, this block will create a error
+            // need fix it. than i can create multiple objects
             rope.solver.particles.AddRange(new List<ApexParticleBase>(rope.particles));
             rope.solver.actors.Add(ropeSimulatorActor);
 

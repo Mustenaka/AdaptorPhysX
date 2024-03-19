@@ -205,7 +205,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   useSelfPosition: 0
   firstParticlePosition: {x: 0, y: 0, z: 0}
-  particleCount: 16
+  particleCount: 32
   stepSize: 1.2
   stepDirect: {x: -1, y: 0, z: 0}
   obj: {fileID: 303833500946336319, guid: 221605ac78c1a4e149f0cdda6101ee67, type: 3}

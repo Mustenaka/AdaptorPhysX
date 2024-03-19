@@ -40,12 +40,14 @@ namespace APEX.Rope
             // sync pins
             ropeSimulator.SyncPinConstraint(pins);
         }
-        
+
         private void RendParticle(int div)
         {
             for (var i = 0; i < elements.Count; i++)
             {
-                elements[i].transform.localPosition = particles[i + div].nowPosition;
+                elements[i].transform.localPosition = particles[i].nowPosition;
+                Debug.Log("eleCount:" + elements.Count + " particle:" + particles.Count + " index:" + i + " div:" +
+                          div);
             }
         }
 
@@ -53,7 +55,7 @@ namespace APEX.Rope
         {
             for (var i = 0; i < elements.Count; i++)
             {
-                solver.particles[i + div].nowPosition = elements[i].transform.localPosition;
+                solver.particles[i].nowPosition = elements[i].transform.localPosition;
             }
         }
 
