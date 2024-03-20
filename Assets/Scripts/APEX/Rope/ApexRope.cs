@@ -45,9 +45,9 @@ namespace APEX.Rope
         {
             for (var i = 0; i < elements.Count; i++)
             {
-                elements[i].transform.localPosition = particles[i].nowPosition;
-                Debug.Log("eleCount:" + elements.Count + " particle:" + particles.Count + " index:" + i + " div:" +
-                          div);
+                elements[i].transform.localPosition = solver.particles[i + div].nowPosition;
+                // Debug.Log("eleCount:" + elements.Count + " particle:" + solver.particles.Count + " index:" + i +
+                //           " div:" + div);
             }
         }
 
@@ -55,7 +55,7 @@ namespace APEX.Rope
         {
             for (var i = 0; i < elements.Count; i++)
             {
-                solver.particles[i].nowPosition = elements[i].transform.localPosition;
+                solver.particles[i + div].nowPosition = elements[i].transform.localPosition;
             }
         }
 
