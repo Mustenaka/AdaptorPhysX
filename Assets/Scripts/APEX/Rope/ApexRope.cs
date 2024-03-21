@@ -25,13 +25,13 @@ namespace APEX.Rope
 
         private void Start()
         {
-            // ropeSimulator.beforeStep += SendParticle;
+            ropeSimulator.beforeStep += SendParticle;
             ropeSimulator.afterComplete += RendParticle;
         }
 
         private void OnDestroy()
         {
-            // ropeSimulator.beforeStep -= SendParticle;
+            ropeSimulator.beforeStep -= SendParticle;
             ropeSimulator.afterComplete -= RendParticle;
         }
 
@@ -46,8 +46,6 @@ namespace APEX.Rope
             for (var i = 0; i < elements.Count; i++)
             {
                 elements[i].transform.localPosition = solver.particles[i + div].nowPosition;
-                // Debug.Log("eleCount:" + elements.Count + " particle:" + solver.particles.Count + " index:" + i +
-                //           " div:" + div);
             }
         }
 

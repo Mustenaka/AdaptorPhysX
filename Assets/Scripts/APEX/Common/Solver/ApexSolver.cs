@@ -39,6 +39,7 @@ namespace APEX.Common.Solver
             {
                 var div = 0; // assign particles to difference simulate actor
 
+                // calc the next position
                 foreach (var actor in actors)
                 {
                     actor.DoBeforeStepAction(div); // send particles status to solver (Delete it when you package)
@@ -46,9 +47,18 @@ namespace APEX.Common.Solver
                     actor.Step(dt); // PBD step
                     actor.Complete(); // finish one step calc
                     actor.SyncParticleToSolver(particles, div); // get particle change from simulator
-                    ParticleApply(); // apply particle calc
-                    actor.DoAfterCompleteAction(div); // render solver particle to unity
 
+                    div += actor.GetParticleCount(); // maybe there not only one actor
+                }
+
+                // apply the particle
+                ParticleApply();
+                div = 0;
+
+                // render the solver particle
+                foreach (var actor in actors)
+                {
+                    actor.DoAfterCompleteAction(div); // render solver particle to unity
                     div += actor.GetParticleCount(); // maybe there not only one actor
                 }
             }

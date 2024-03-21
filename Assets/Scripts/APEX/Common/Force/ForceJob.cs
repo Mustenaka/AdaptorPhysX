@@ -2,6 +2,7 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
+using UnityEngine;
 
 namespace APEX.Common.Force
 {
@@ -10,14 +11,14 @@ namespace APEX.Common.Force
     {
         [ReadOnly] public NativeArray<float3> previousPosition;
         [ReadOnly] public NativeArray<float3> nowPosition;
-        [WriteOnly] public NativeArray<float3> nextPosition;
-        
+        public NativeArray<float3> nextPosition;
+
         [ReadOnly] public NativeArray<float> mass;
-        
+
         [ReadOnly] public NativeArray<float3> forceExt;
         [ReadOnly] public float3 gravity;
         [ReadOnly] public float3 globalForce;
-        
+
         [ReadOnly] public float airDrag;
         [ReadOnly] public float damping;
         [ReadOnly] public float dt;
@@ -34,8 +35,16 @@ namespace APEX.Common.Force
             // calc force apply.
             var forceApply = gravity + globalForce + airResistance + forceExt[index];
             nextPosition[index] = nowPosition[index]
-                                    + (1 - damping) * (nowPosition[index] - previousPosition[index])
-                                    + forceApply / mass[index] * (dt * dt);
+                                  + (1 - damping) * (nowPosition[index] - previousPosition[index])
+                                  + forceApply / mass[index] * (dt * dt);
+            // if (index == 4)
+            // {
+            //     Debug.Log("next:" + nextPosition[index] + "  now:" + nowPosition[index] + " pre:" +
+            //               previousPosition[index] +
+            //               " \r\nairResistance:" + airResistance + " forceApply:" + forceApply +
+            //               " \r\ndamping:" + damping +
+            //               " \r\ndt:" + dt + " airDrag:" + airDrag);
+            // }
         }
     }
 }

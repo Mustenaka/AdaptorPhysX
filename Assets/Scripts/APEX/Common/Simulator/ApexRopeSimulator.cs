@@ -54,7 +54,7 @@ namespace APEX.Common.Simulator
 
         // simulator param
         public int iterator = 1;
-        
+
         // action param
         public Action<int> beforeStep = delegate { };
         public Action<int> afterComplete = delegate { };
@@ -206,12 +206,11 @@ namespace APEX.Common.Simulator
         public void SyncParticleFromSolve(List<ApexParticleBase> particles, int down)
         {
             var cnt = down;
-            for (var i = 0; i < nowPosition.Length; i++)
+            for (var i = 0; i < nowPosition.Length; i++, cnt++)
             {
                 previousPosition[i] = particles[cnt].previousPosition;
                 nowPosition[i] = particles[cnt].nowPosition;
                 nextPosition[i] = particles[cnt].nextPosition;
-                cnt++;
             }
         }
 
@@ -223,12 +222,11 @@ namespace APEX.Common.Simulator
         public void SyncParticleToSolver(List<ApexParticleBase> particles, int down)
         {
             var cnt = down;
-            for (var i = 0; i < nowPosition.Length; i++)
+            for (var i = 0; i < nowPosition.Length; i++, cnt++)
             {
                 particles[cnt].previousPosition = previousPosition[i];
                 particles[cnt].nowPosition = nowPosition[i];
                 particles[cnt].nextPosition = nextPosition[i];
-                cnt++;
             }
         }
 
