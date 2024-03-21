@@ -25,13 +25,13 @@ namespace APEX.Rope
 
         private void Start()
         {
-            ropeSimulator.beforeStep += SendParticle;
+            // ropeSimulator.beforeStep += SendParticle;
             ropeSimulator.afterComplete += RendParticle;
         }
 
         private void OnDestroy()
         {
-            ropeSimulator.beforeStep -= SendParticle;
+            // ropeSimulator.beforeStep -= SendParticle;
             ropeSimulator.afterComplete -= RendParticle;
         }
 
