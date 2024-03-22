@@ -103,23 +103,6 @@ namespace APEX.Common.Simulator
         }
 
         /// <summary>
-        /// do all constraint jobs
-        /// </summary>
-        /// <param name="depend">job handle depend</param>
-        /// <returns>job handle depend</returns>
-        private JobHandle DoConstraintJobs(JobHandle depend)
-        {
-            JobHandle jobDepend = depend;
-            for (var i = 0; i < iterator; i++)
-            {
-                jobDepend = DoDistanceConstraintJobs(jobDepend, i);
-                jobDepend = DoFinalConstraintJobs(jobDepend);
-            }
-
-            return jobDepend;
-        }
-
-        /// <summary>
         /// do force effect and predict particle next position.
         /// </summary>
         /// <param name="dt">delta time</param>
@@ -145,6 +128,33 @@ namespace APEX.Common.Simulator
             };
             var depend = new JobHandle();
             return useForce ? job.ScheduleParallel(job.nowPosition.Length, 64, depend) : depend;
+        }
+
+        /// <summary>
+        /// Do all collider jobs
+        /// </summary>
+        /// <param name="depend">job handle depend</param>
+        /// <returns>job handle depend</returns>
+        private JobHandle DoColliderJobs(JobHandle depend)
+        {
+            return depend;
+        }
+
+        /// <summary>
+        /// do all constraint jobs
+        /// </summary>
+        /// <param name="depend">job handle depend</param>
+        /// <returns>job handle depend</returns>
+        private JobHandle DoConstraintJobs(JobHandle depend)
+        {
+            JobHandle jobDepend = depend;
+            for (var i = 0; i < iterator; i++)
+            {
+                jobDepend = DoDistanceConstraintJobs(jobDepend, i);
+                jobDepend = DoFinalConstraintJobs(jobDepend);
+            }
+
+            return jobDepend;
         }
 
         /// <summary>

@@ -51,7 +51,7 @@ namespace APEX.Math.Graphics
         /// </summary>
         public static bool PointInside(float3 p, BoxDesc box)
         {
-            var o = box.min; //min作为原点
+            var o = box.center; //min作为原点
             p = p - o;
             float3 projOnAxis = new float3(
                 math.dot(p, box.ax.xyz),
@@ -68,7 +68,7 @@ namespace APEX.Math.Graphics
         /// </summary>
         public static bool GetClosestSurfacePoint(float3 p, BoxDesc box, out ContactInfo concatInfo)
         {
-            var o = box.min; //min作为原点
+            var o = box.center; //min作为原点
             p = p - o;
             float3 projOnAxis = new float3(
                 math.dot(p, box.ax.xyz),
@@ -120,7 +120,7 @@ namespace APEX.Math.Graphics
         /// </summary>
         public static bool PointInside(float3 p, CapsuleDesc capsule)
         {
-            var o = capsule.c0; //c0作为原点
+            var o = capsule.center; //c0作为原点
             var radius = capsule.radius;
             var axis = capsule.axis;
             p = p - o;
@@ -157,7 +157,7 @@ namespace APEX.Math.Graphics
         public static bool GetClosestSurfacePoint(float3 p, CapsuleDesc capsule, out ContactInfo concatInfo)
         {
             concatInfo = default(ContactInfo);
-            var o = capsule.c0; //c0作为原点
+            var o = capsule.center; //c0作为原点
             var radius = capsule.radius;
             var axis = capsule.axis;
             p = p - o;

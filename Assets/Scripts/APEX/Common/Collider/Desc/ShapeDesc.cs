@@ -11,28 +11,41 @@ namespace APEX.Common.Collider.Desc
         public float radius;
     }
 
-
     /// <summary>
     /// Box information
     /// </summary>
     public struct BoxDesc : IColliderDesc
     {
-        public float3 min;
-        
-        // 3个边轴,xyz为normalzied的朝向，w为长度
+        public float3 center;
+
+        // 3 side axes,xyz is the orientation of normalized
+        // and w is the length
         public float4 ax;
         public float4 ay;
         public float4 az;
     }
-
 
     /// <summary>
     /// Capsule information
     /// </summary>
     public struct CapsuleDesc : IColliderDesc
     {
-        public float3 c0;
-        public float4 axis; // xyz为单位化的方向，w为长度
+        // center point of capsule
+        public float3 center;
+
+        // xyz is the unitized direction and w is the length
+        public float4 axis;
+
+        // The radius of the upper or lower hemispheres of the capsule
         public float radius;
+    }
+
+    /// <summary>
+    /// Mesh information
+    /// </summary>
+    public struct MeshDesc : IColliderDesc
+    {
+        // center point of the mesh (sometime we call it "mass_point")
+        public float3 center;
     }
 }
