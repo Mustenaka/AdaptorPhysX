@@ -2,17 +2,18 @@ Shader "Custom/MapMixShader01"
 {
     Properties
     {
-        //下面三个是要叠加的贴图
-        _MainTex ("Base (RGB), Alpha (A)", 2D) = "white" {}
-        _MiddleTex ("Middle (RGB),Alpha (A)", 2D) = "white" {}
-        _TopTex ("Top (RGB),Alpha (A)", 2D) = "white" {}
+        // 下面三个是要叠加的贴图
+        _MainTex ("Base (RGB), Alpha (A)", 2D) = "white" {} // 主贴图（也是底贴图）
+        _MiddleTex ("Middle (RGB),Alpha (A)", 2D) = "white" {} // 中间贴图
+        _TopTex ("Top (RGB),Alpha (A)", 2D) = "white" {} // 顶贴图
         _WhiteBoardTex ("WhiteBoard (RGB),Alpha (A)", 2D) = "white" {}//需要一个白色的贴图做底色
 
-        _StencilComp ("Stencil Comparison", Float) = 8
-        _Stencil ("Stencil ID", Float) = 0
-        _StencilOp ("Stencil Operation", Float) = 0
-        _StencilWriteMask ("Stencil Write Mask", Float) = 255
-        _StencilReadMask ("Stencil Read Mask", Float) = 255
+        // 模版比较函数
+        _StencilComp ("Stencil Comparison", Float) = 8 //模板测试的比较函数。比较函数决定了当前像素的模板值和参考值之间的比较方式
+        _Stencil ("Stencil ID", Float) = 0//当前对象的模板值。模板值是一个整数，用于标识当前对象的模板掩码。
+        _StencilOp ("Stencil Operation", Float) = 0//模板测试通过或失败后执行的操作
+        _StencilWriteMask ("Stencil Write Mask", Float) = 255//写入模板缓冲时的掩码
+        _StencilReadMask ("Stencil Read Mask", Float) = 255//读取模板缓冲时的掩码
 
         _ColorMask ("Color Mask", Float) = 15
         // 以 1 - _Height 长度为高度
@@ -56,8 +57,6 @@ Shader "Custom/MapMixShader01"
         Blend SrcAlpha OneMinusSrcAlpha
         ColorMask [_ColorMask]
 
-
-
         Pass
         {
             CGPROGRAM
@@ -73,16 +72,16 @@ Shader "Custom/MapMixShader01"
 
             struct appdata_t
             {
-                float4 vertex : POSITION;
-                float2 texcoord : TEXCOORD0;
-                fixed4 color : COLOR;
+                float4 vertex : POSITION; // 顶点位置
+                float2 texcoord : TEXCOORD0; // 纹理坐标（uv）
+                fixed4 color : COLOR; // 顶点颜色
             };
 
             struct v2f
             {
-                float4 vertex : SV_POSITION;
-                half2 texcoord : TEXCOORD0;
-                fixed4 color : COLOR;
+                float4 vertex : SV_POSITION; // 顶点的位置信息
+                half2 texcoord : TEXCOORD0; // 顶点的纹理坐标信息（u,v）
+                fixed4 color : COLOR; // 顶点颜色信息
             };
 
             sampler2D _MainTex;
