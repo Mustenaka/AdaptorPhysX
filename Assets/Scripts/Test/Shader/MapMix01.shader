@@ -45,17 +45,17 @@ Shader "Custom/MapMixShader01"
             WriteMask [_StencilWriteMask]
         }
 
-        Cull Off
-        Lighting Off
-        ZWrite Off
-        ZTest [unity_GUIZTestMode]
-        Offset -1, -1
-        Fog
+        Cull Off    // 关闭背面剔除
+        Lighting Off    // 关闭光照效果
+        ZWrite Off  // 关闭深度缓冲区写入
+        ZTest [unity_GUIZTestMode]  // 设置深度测试，根据[unity_GUIZTestMode]
+        Offset -1, -1   // 设置深度偏移，用于解决深度冲突的问题，即对深度缓冲区的值进行微小的偏移
+        Fog // 雾效
         {
-            Mode Off
+            Mode Off // 关闭雾效
         }
-        Blend SrcAlpha OneMinusSrcAlpha
-        ColorMask [_ColorMask]
+        Blend SrcAlpha OneMinusSrcAlpha // 设置颜色混合模式，使用源颜色的alpha值作为源因子，目标颜色的alpha值补值作为目标因子
+        ColorMask [_ColorMask]  // 颜色掩码
 
         Pass
         {
@@ -90,10 +90,13 @@ Shader "Custom/MapMixShader01"
             sampler2D _WhiteBoardTex;
             float4 _MainTex_ST;
 
+            // 顶点着色器 Vertex Shader
             v2f vert(appdata_t v)
             {
                 v2f o;
+                // 顶点从对象空间（Object Space）转换到裁剪空间（Clip Space）
                 o.vertex = UnityObjectToClipPos(v.vertex);
+                // 
                 o.texcoord = TRANSFORM_TEX(v.texcoord, _MainTex);
                 o.color = v.color;
                 #ifdef UNITY_HALF_TEXEL_OFFSET
@@ -102,6 +105,7 @@ Shader "Custom/MapMixShader01"
                 return o;
             }
 
+            // 片段着色器 Fragment Shader
             fixed4 frag(v2f i) : COLOR
             {
                 fixed4 col2 = tex2D(_MiddleTex, i.texcoord); //获得贴图的rgba,颜色像素信息
