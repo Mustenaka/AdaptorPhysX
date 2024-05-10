@@ -46,6 +46,8 @@ namespace APEX.Common.Collider.Desc
     public struct MeshDesc : IColliderDesc
     {
         // center point of the mesh (sometime we call it "mass_point")
+        public float3[] vertices;
+        public int[] triangles;
         public float3 center;
     }
 }

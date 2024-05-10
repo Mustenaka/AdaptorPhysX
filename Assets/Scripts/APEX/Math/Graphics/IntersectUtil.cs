@@ -5,12 +5,12 @@ using Unity.Mathematics;
 namespace APEX.Math.Graphics
 {
     /// <summary>
-    /// Math Library, calc shape intersect
+    /// Math Library for calculating shape intersections
     /// </summary>
     public class IntersectUtil
     {
         /// <summary>
-        /// 计算三角形面积
+        /// Calculate the area of a triangle
         /// </summary>
         public static float GetArea(float3 p0, float3 p1, float3 p2)
         {
@@ -20,7 +20,7 @@ namespace APEX.Math.Graphics
         }
 
         /// <summary>
-        /// 检查点是否在球内
+        /// Check if a point is inside a sphere
         /// </summary>
         public static bool PointInside(float3 p, SphereDesc sphere)
         {
@@ -28,14 +28,19 @@ namespace APEX.Math.Graphics
             return math.dot(d, d) < sphere.radius * sphere.radius;
         }
 
+        /// <summary>
+        /// Get the closest point on the surface of a sphere to a given point
+        /// </summary>
         public static bool GetClosestSurfacePoint(float3 p, SphereDesc sphere, out ContactInfo concatInfo)
         {
             concatInfo = default(ContactInfo);
+            // Calculate the vector from the sphere's center to the point
             float3 c2p = p - sphere.center;
             float d2 = math.dot(c2p, c2p);
             float r2 = sphere.radius * sphere.radius;
             if (d2 < r2)
             {
+                // Point is inside the sphere, return the point on the sphere's surface
                 concatInfo.normal = math.normalize(c2p);
                 concatInfo.position = sphere.center + concatInfo.normal * sphere.radius;
                 return true;
@@ -47,7 +52,7 @@ namespace APEX.Math.Graphics
         }
 
         /// <summary>
-        /// 检查点是否在Box内
+        /// Check if a point is inside a box
         /// </summary>
         public static bool PointInside(float3 p, BoxDesc box)
         {
@@ -63,8 +68,7 @@ namespace APEX.Math.Graphics
         }
 
         /// <summary>
-        /// 获取box表面离p最近的点。
-        /// 返回值表示p是否在box内部
+        /// Get the closest point on the surface of a box to a given point
         /// </summary>
         public static bool GetClosestSurfacePoint(float3 p, BoxDesc box, out ContactInfo concatInfo)
         {
@@ -114,9 +118,8 @@ namespace APEX.Math.Graphics
             }
         }
 
-
         /// <summary>
-        /// 检查点是否在胶囊体内
+        /// Check if a point is inside a capsule
         /// </summary>
         public static bool PointInside(float3 p, CapsuleDesc capsule)
         {
@@ -154,6 +157,9 @@ namespace APEX.Math.Graphics
             return false;
         }
 
+        /// <summary>
+        /// Get the closest point on the surface of a capsule to a given point
+        /// </summary>
         public static bool GetClosestSurfacePoint(float3 p, CapsuleDesc capsule, out ContactInfo concatInfo)
         {
             concatInfo = default(ContactInfo);
@@ -219,6 +225,100 @@ namespace APEX.Math.Graphics
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Check if a point is inside a mesh
+        /// </summary>
+        public static bool PointInside(float3 p, MeshDesc mesh)
+        {
+            // Iterate over all triangles in the mesh
+            for (int i = 0; i < mesh.triangles.Length; i += 3)
+            {
+                // Get the vertices of the current triangle
+                float3 v0 = mesh.vertices[mesh.triangles[i]];
+                float3 v1 = mesh.vertices[mesh.triangles[i + 1]];
+                float3 v2 = mesh.vertices[mesh.triangles[i + 2]];
+
+                // Calculate the normal of the triangle
+                // float3 normal = Vector3.Cross(v1 - v0, v2 - v0).normalized;
+                float3 normal = math.normalize(math.cross(v1 - v0, v2 - v0));
+
+                // Calculate the distance from the point to the plane of the triangle
+                float distanceToPlane = math.dot(normal, p - v0);
+
+                // If the point is on the opposite side of the plane compared to the normal,
+                // it is outside the mesh
+                if (distanceToPlane > 0)
+                {
+                    return false;
+                }
+            }
+
+            // If the point is on the same side of the plane for all triangles,
+            // it is inside the mesh
+            return true;
+        }
+
+        /// <summary>
+        /// Check if a point is on the surface of a mesh
+        /// </summary>
+        public static bool GetClosestSurfacePoint(float3 p, MeshDesc mesh, out ContactInfo concatInfo)
+        {
+            concatInfo = default(ContactInfo);
+            
+            // Iterate over all triangles in the mesh
+            for (int i = 0; i < mesh.triangles.Length; i += 3)
+            {
+                // Get the vertices of the current triangle
+                float3 v0 = mesh.vertices[mesh.triangles[i]];
+                float3 v1 = mesh.vertices[mesh.triangles[i + 1]];
+                float3 v2 = mesh.vertices[mesh.triangles[i + 2]];
+
+                // Calculate the normal of the triangle
+                float3 normal = math.normalize(math.cross(v1 - v0, v2 - v0));
+
+                // Calculate the distance from the point to the plane of the triangle
+                float distanceToPlane = math.dot(normal, p - v0);
+
+                // If the point is very close to the plane (within epsilon),
+                // it is considered to be on the surface of the mesh
+                if (math.abs(distanceToPlane) < math.EPSILON)
+                {
+                    // Check if the point is inside the triangle
+                    if (PointInsideTriangle(p, v0, v1, v2))
+                    {
+                        concatInfo.position = p;
+                        concatInfo.normal = normal;
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Check if a point is inside a triangle
+        /// </summary>
+        private static bool PointInsideTriangle(float3 p, float3 v0, float3 v1, float3 v2)
+        {
+            // Calculate the barycentric coordinates of the point with respect to the triangle
+            float3 e0 = v1 - v0;
+            float3 e1 = v2 - v0;
+            float3 e2 = p - v0;
+            float d00 = math.dot(e0, e0);
+            float d01 = math.dot(e0, e1);
+            float d11 = math.dot(e1, e1);
+            float d20 = math.dot(e2, e0);
+            float d21 = math.dot(e2, e1);
+            float denom = d00 * d11 - d01 * d01;
+            float alpha = (d11 * d20 - d01 * d21) / denom;
+            float beta = (d00 * d21 - d01 * d20) / denom;
+            float gamma = 1.0f - alpha - beta;
+
+            // Check if the barycentric coordinates are within the range [0, 1]
+            return alpha >= 0 && beta >= 0 && gamma >= 0;
         }
     }
 }
