@@ -1,3 +1,4 @@
+using APEX.Common.Collider.Interface;
 using Unity.Mathematics;
 
 namespace APEX.Common.Collider.Desc

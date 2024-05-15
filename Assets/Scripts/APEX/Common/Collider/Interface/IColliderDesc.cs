@@ -1,4 +1,4 @@
-namespace APEX.Common.Collider
+namespace APEX.Common.Collider.Interface
 {
     public interface IColliderDesc
     {
