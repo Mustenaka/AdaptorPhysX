@@ -90,6 +90,7 @@ namespace APEX.Rope
 
                 mass = new NativeArray<float>(particleCount, Allocator.Persistent),
                 forceExt = new NativeArray<float3>(particleCount, Allocator.Persistent),
+                forceFrameExt = new NativeArray<float3>(particleCount, Allocator.Persistent),
                 constraintTypes = new NativeArray<EApexParticleConstraintType>(particleCount, Allocator.Persistent),
                 doubleConnect = new NativeArray<ApexConstraintParticleDouble>(particleCount - 1, Allocator.Persistent),
 
@@ -142,7 +143,8 @@ namespace APEX.Rope
             for (var i = 0; i < pins.Count; i++)
             {
                 ropeSimulatorActor.pin[pins[i].particleIndex] = new ApexPinConstraint(pins[i].pinPosition);
-                ropeSimulatorActor.constraintTypes[pins[i].particleIndex] = EApexParticleConstraintType.Pin;
+                // ropeSimulatorActor.constraintTypes[pins[i].particleIndex] = EApexParticleConstraintType.Pin;
+                ropeSimulatorActor.constraintTypes[pins[i].particleIndex] = pins[i].type;
             }
 
             // send it to solver, This have 1 question:

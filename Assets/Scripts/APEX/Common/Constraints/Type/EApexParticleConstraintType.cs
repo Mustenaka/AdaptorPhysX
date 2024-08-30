@@ -10,5 +10,6 @@ namespace APEX.Common.Constraints
         Pin,        // static particle, pin a position
         Collision,  // collider status
         Resist,     // Pin and resist the other object
+        Drag,       // Drag the other object
     }
 }

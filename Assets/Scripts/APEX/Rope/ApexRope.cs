@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using APEX.Common.Particle;
 using APEX.Common.Render;
@@ -39,6 +38,7 @@ namespace APEX.Rope
         {
             // sync pins
             ropeSimulator.SyncPinConstraint(pins);
+            ropeSimulator.SyncDragConstraint(pins);
         }
 
         private void RendParticle(int div)

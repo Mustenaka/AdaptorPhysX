@@ -11,7 +11,7 @@ namespace APEX.Common.Force
     {
         [ReadOnly] public NativeArray<float3> previousPosition;
         [ReadOnly] public NativeArray<float3> nowPosition;
-        public NativeArray<float3> nextPosition;
+        [WriteOnly] public NativeArray<float3> nextPosition;
 
         [ReadOnly] public NativeArray<float> mass;
 
@@ -37,14 +37,6 @@ namespace APEX.Common.Force
             nextPosition[index] = nowPosition[index]
                                   + (1 - damping) * (nowPosition[index] - previousPosition[index])
                                   + forceApply / mass[index] * (dt * dt);
-            // if (index == 4)
-            // {
-            //     Debug.Log("next:" + nextPosition[index] + "  now:" + nowPosition[index] + " pre:" +
-            //               previousPosition[index] +
-            //               " \r\nairResistance:" + airResistance + " forceApply:" + forceApply +
-            //               " \r\ndamping:" + damping +
-            //               " \r\ndt:" + dt + " airDrag:" + airDrag);
-            // }
         }
     }
 }

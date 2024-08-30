@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using APEX.Common.Constraints;
 using APEX.Common.Force;
 using APEX.Common.Particle;
+using APEX.Tools.Extend;
 using APEX.Usage;
 using Unity.Collections;
 using Unity.Jobs;
@@ -26,6 +27,7 @@ namespace APEX.Common.Simulator
         // particle physics param
         public NativeArray<float> mass;
         public NativeArray<float3> forceExt;
+        public NativeArray<float3> forceFrameExt;
 
         // particle constraint type
         public NativeArray<EApexParticleConstraintType> constraintTypes;
@@ -54,6 +56,7 @@ namespace APEX.Common.Simulator
 
         // simulator param
         public int iterator = 1;
+        public float dt;
 
         // action param
         public Action<int> beforeStep = delegate { };
@@ -71,10 +74,15 @@ namespace APEX.Common.Simulator
             var finalConstraintJob = new FinalConstraintJob()
             {
                 position = nextPosition,
-
                 particleConstraintTypes = constraintTypes,
 
                 pin = pin,
+                dt = dt,
+                localForce = forceFrameExt,
+                masses = mass,
+                stiffness = stiffness,
+                restLength = restLength,
+                particleForce = forceExt,
             };
             return usePinConstraint ? finalConstraintJob.Schedule(nowPosition.Length, depend) : depend;
         }
@@ -94,7 +102,7 @@ namespace APEX.Common.Simulator
                 constraints = doubleConnect,
 
                 restLength = restLength,
-                stiffness = stiffness,
+                stiffness = 0.98f,
 
                 masses = mass,
                 d = d,
@@ -105,9 +113,8 @@ namespace APEX.Common.Simulator
         /// <summary>
         /// do force effect and predict particle next position.
         /// </summary>
-        /// <param name="dt">delta time</param>
         /// <returns>job handle depend</returns>
-        private JobHandle DoForceJobs(float dt)
+        private JobHandle DoForceJobs()
         {
             var job = new ForceJob
             {
@@ -166,7 +173,9 @@ namespace APEX.Common.Simulator
         /// <param name="dt">delta time</param>
         public void Step(float dt)
         {
-            var handle = DoForceJobs(dt); // 1. predict next position
+            this.dt = dt;
+
+            var handle = DoForceJobs(); // 1. predict next position
             // TODO: 2. collider constraint.. 
             handle = DoConstraintJobs(handle); // 3. revise next position
             _jobHandle = handle;
@@ -190,6 +199,22 @@ namespace APEX.Common.Simulator
             {
                 pin[pins[i].particleIndex] = new ApexPinConstraint(pins[i].pinPosition);
             }
+        }
+
+        /// <summary>
+        /// Sync drag contsraints
+        /// </summary>
+        /// <param name="drags"></param>
+        public void SyncDragConstraint(List<ApexPin> drags)
+        {
+            for (int i = 0; i < drags.Count; i++)
+            {
+                // var point = pin[drags[i].particleIndex];
+                drags[i].executeForce = forceFrameExt[drags[i].particleIndex];
+                drags[i].duration = dt;
+            }
+
+            forceFrameExt.Clean();
         }
 
         /// <summary>
@@ -261,6 +286,7 @@ namespace APEX.Common.Simulator
 
             mass.Dispose();
             forceExt.Dispose();
+            forceFrameExt.Dispose();
 
             constraintTypes.Dispose();
             doubleConnect.Dispose();
