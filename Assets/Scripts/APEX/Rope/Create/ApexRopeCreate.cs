@@ -92,11 +92,16 @@ namespace APEX.Rope
                 forceExt = new NativeArray<float3>(particleCount, Allocator.Persistent),
                 forceFrameExt = new NativeArray<float3>(particleCount, Allocator.Persistent),
                 constraintTypes = new NativeArray<EApexParticleConstraintType>(particleCount, Allocator.Persistent),
+
+                // distance constraint
                 doubleConnect = new NativeArray<ApexConstraintParticleDouble>(particleCount - 1, Allocator.Persistent),
+                distancelambdas = new NativeArray<float>(particleCount - 1, Allocator.Persistent),
+
+                // bend constraint
+                bendConnect = new NativeArray<ApexConstraintParticleThree>(particleCount - 1, Allocator.Persistent),
+                bendLambdas = new NativeArray<float>(particleCount - 1, Allocator.Persistent),
 
                 pin = new NativeArray<ApexPinConstraint>(particleCount, Allocator.Persistent),
-
-                lambdas = new NativeArray<float>(particleCount, Allocator.Persistent),
 
                 stiffness = stiffness,
                 damping = damping,
@@ -139,6 +144,12 @@ namespace APEX.Rope
             for (var i = 0; i < particleCount - 1; i++)
             {
                 ropeSimulatorActor.doubleConnect[i] = new ApexConstraintParticleDouble(i, i + 1);
+            }
+
+            // generate rope bend relation(three relation)
+            for (var i = 1; i < particleCount - 1; i++)
+            {
+                ropeSimulatorActor.bendConnect[i] = new ApexConstraintParticleThree(i - 1, i, i + 1);
             }
 
             // mark first particle is pin

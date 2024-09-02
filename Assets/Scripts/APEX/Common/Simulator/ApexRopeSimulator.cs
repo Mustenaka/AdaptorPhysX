@@ -34,7 +34,11 @@ namespace APEX.Common.Simulator
 
         // constraint connect param： rope is double connect
         public NativeArray<ApexConstraintParticleDouble> doubleConnect;
-        public NativeArray<float> lambdas; // Add this to store the Lagrange multipliers: default is 0
+        public NativeArray<float> distancelambdas; // Add this to store the Lagrange multipliers: default is 0
+
+        // constraint connect param: bend constraint
+        public NativeArray<ApexConstraintParticleThree> bendConnect;
+        public NativeArray<float> bendLambdas;
 
         // particle pin(Attachment)
         public NativeArray<ApexPinConstraint> pin;
@@ -42,6 +46,7 @@ namespace APEX.Common.Simulator
         // switch constraint
         public bool useForce = true;
         public bool useDistanceConstraint = true;
+        public bool useBendConstraint = true;
         public bool useColliderConstraint = true;
         public bool usePinConstraint = true;
 
@@ -110,24 +115,48 @@ namespace APEX.Common.Simulator
             //     masses = mass,
             //     d = d,
             // };
-            
+
             // XPBD
             var distanceConstraintJob = new XDistanceConstraintJob()
             {
                 nextPosition = nextPosition,
                 constraints = doubleConnect,
-            
+
                 restLength = restLength,
                 stiffness = stiffness,
-            
+
                 masses = mass,
                 d = d,
-            
-                lagrangeMultipliers = lambdas,
+
+                lagrangeMultipliers = distancelambdas,
                 compliance = compliance,
                 deltaTime = dt,
             };
             return useDistanceConstraint ? distanceConstraintJob.Schedule(nextPosition.Length, depend) : depend;
+        }
+
+        /// <summary>
+        /// do bend constraint jobs
+        /// </summary>
+        /// <param name="depend">job handle depend</param>
+        /// <param name="iterIndex">the iterator index</param>
+        /// <returns>job handle depend</returns>
+        private JobHandle DoBendConstraintJobs(JobHandle depend, int iterIndex)
+        {
+            var bendConstraintJob = new XBendConstraintJob()
+            {
+                nextPosition = nextPosition,
+                bendConstraints = bendConnect,
+                masses = mass,
+
+                restAngle = math.PI,
+                compliance = compliance,
+                dt = dt,
+
+                lagrangeMultipliers = bendLambdas,
+            };
+            // return depend;
+            return useBendConstraint ? bendConstraintJob.Schedule(nextPosition.Length, depend) : depend;
         }
 
         /// <summary>
@@ -178,6 +207,7 @@ namespace APEX.Common.Simulator
             for (var i = 0; i < iterator; i++)
             {
                 jobDepend = DoDistanceConstraintJobs(jobDepend, i);
+                jobDepend = DoBendConstraintJobs(jobDepend, i);
                 jobDepend = DoFinalConstraintJobs(jobDepend);
             }
 
@@ -233,8 +263,9 @@ namespace APEX.Common.Simulator
                 drags[i].executeForce = forceFrameExt[drags[i].particleIndex];
                 drags[i].duration = dt;
             }
-            
-            lambdas.Clean();
+
+            distancelambdas.Clean();
+            bendLambdas.Clean();
             forceFrameExt.Clean();
         }
 
@@ -309,10 +340,13 @@ namespace APEX.Common.Simulator
             forceExt.Dispose();
             forceFrameExt.Dispose();
 
-            lambdas.Dispose();
-            
             constraintTypes.Dispose();
+
             doubleConnect.Dispose();
+            distancelambdas.Dispose();
+
+            bendConnect.Dispose();
+            bendLambdas.Dispose();
 
             pin.Dispose();
         }
