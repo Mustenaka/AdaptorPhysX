@@ -34,6 +34,7 @@ namespace APEX.Common.Simulator
 
         // constraint connect param： rope is double connect
         public NativeArray<ApexConstraintParticleDouble> doubleConnect;
+        public NativeArray<float> lambdas; // Add this to store the Lagrange multipliers: default is 0
 
         // particle pin(Attachment)
         public NativeArray<ApexPinConstraint> pin;
@@ -47,6 +48,7 @@ namespace APEX.Common.Simulator
         // Distance Constraint Param
         public float restLength = 1.2f;
         public float stiffness = 0.5f;
+        public float compliance = 0.0001f; // a compliance parameter
 
         // physics param - force
         public Vector3 gravity = new Vector3(0, -9.81f, 0);
@@ -96,16 +98,34 @@ namespace APEX.Common.Simulator
         private JobHandle DoDistanceConstraintJobs(JobHandle depend, int iterIndex)
         {
             var d = 1.0f / (iterator - iterIndex);
-            var distanceConstraintJob = new DistanceConstraintJob()
+            // PBD
+            // var distanceConstraintJob = new DistanceConstraintJob()
+            // {
+            //     nextPosition = nextPosition,
+            //     constraints = doubleConnect,
+            //
+            //     restLength = restLength,
+            //     stiffness = 0.98f,
+            //
+            //     masses = mass,
+            //     d = d,
+            // };
+            
+            // XPBD
+            var distanceConstraintJob = new XDistanceConstraintJob()
             {
                 nextPosition = nextPosition,
                 constraints = doubleConnect,
-
+            
                 restLength = restLength,
-                stiffness = 0.98f,
-
+                stiffness = stiffness,
+            
                 masses = mass,
                 d = d,
+            
+                lagrangeMultipliers = lambdas,
+                compliance = compliance,
+                deltaTime = dt,
             };
             return useDistanceConstraint ? distanceConstraintJob.Schedule(nextPosition.Length, depend) : depend;
         }
@@ -170,10 +190,10 @@ namespace APEX.Common.Simulator
         ///     2. Collider TODO: finish it
         ///     3. revise next position, by distance &
         /// </summary>
-        /// <param name="dt">delta time</param>
-        public void Step(float dt)
+        /// <param name="_dt">delta time</param>
+        public void Step(float _dt)
         {
-            this.dt = dt;
+            this.dt = _dt;
 
             var handle = DoForceJobs(); // 1. predict next position
             // TODO: 2. collider constraint.. 
@@ -213,7 +233,8 @@ namespace APEX.Common.Simulator
                 drags[i].executeForce = forceFrameExt[drags[i].particleIndex];
                 drags[i].duration = dt;
             }
-
+            
+            lambdas.Clean();
             forceFrameExt.Clean();
         }
 
@@ -288,6 +309,8 @@ namespace APEX.Common.Simulator
             forceExt.Dispose();
             forceFrameExt.Dispose();
 
+            lambdas.Dispose();
+            
             constraintTypes.Dispose();
             doubleConnect.Dispose();
 

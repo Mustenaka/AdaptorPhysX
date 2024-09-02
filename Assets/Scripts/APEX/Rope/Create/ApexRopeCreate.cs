@@ -96,6 +96,8 @@ namespace APEX.Rope
 
                 pin = new NativeArray<ApexPinConstraint>(particleCount, Allocator.Persistent),
 
+                lambdas = new NativeArray<float>(particleCount, Allocator.Persistent),
+
                 stiffness = stiffness,
                 damping = damping,
                 iterator = iterator,

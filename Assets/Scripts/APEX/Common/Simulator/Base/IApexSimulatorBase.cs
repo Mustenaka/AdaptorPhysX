@@ -9,8 +9,8 @@ namespace APEX.Common.Simulator
         /// <summary>
         /// every job step
         /// </summary>
-        /// <param name="dt">PBD delta time(not unity deltaTime)</param>
-        public void Step(float dt);
+        /// <param name="_dt">PBD delta time(not unity deltaTime)</param>
+        public void Step(float _dt);
 
         /// <summary>
         /// all the step finished
