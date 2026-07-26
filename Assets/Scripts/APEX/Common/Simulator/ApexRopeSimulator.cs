@@ -104,34 +104,34 @@ namespace APEX.Common.Simulator
         {
             var d = 1.0f / (iterator - iterIndex);
             // PBD
-            // var distanceConstraintJob = new DistanceConstraintJob()
+            var distanceConstraintJob = new DistanceConstraintJob()
+            {
+                nextPosition = nextPosition,
+                constraints = doubleConnect,
+            
+                restLength = restLength,
+                stiffness = 0.98f,
+            
+                masses = mass,
+                d = d,
+            };
+
+            // XPBD
+            // var distanceConstraintJob = new XDistanceConstraintJob()
             // {
             //     nextPosition = nextPosition,
             //     constraints = doubleConnect,
             //
             //     restLength = restLength,
-            //     stiffness = 0.98f,
+            //     stiffness = stiffness,
             //
             //     masses = mass,
             //     d = d,
+            //
+            //     lagrangeMultipliers = distancelambdas,
+            //     compliance = compliance,
+            //     deltaTime = dt,
             // };
-
-            // XPBD
-            var distanceConstraintJob = new XDistanceConstraintJob()
-            {
-                nextPosition = nextPosition,
-                constraints = doubleConnect,
-
-                restLength = restLength,
-                stiffness = stiffness,
-
-                masses = mass,
-                d = d,
-
-                lagrangeMultipliers = distancelambdas,
-                compliance = compliance,
-                deltaTime = dt,
-            };
             return useDistanceConstraint ? distanceConstraintJob.Schedule(nextPosition.Length, depend) : depend;
         }
 
