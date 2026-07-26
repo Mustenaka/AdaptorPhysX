@@ -1,0 +1,21 @@
+{
+  "name": "AdaptorPhysX.EditModeTests",
+  "rootNamespace": "APEX.Native.Tests",
+  "references": [
+    "AdaptorPhysX.Runtime"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": false,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false,
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ]
+}
