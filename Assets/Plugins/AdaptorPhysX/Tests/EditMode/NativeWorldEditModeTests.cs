@@ -13,12 +13,12 @@ namespace APEX.Native.Tests
         private const float ParticleRadius = 0.1F;
 
         [Test]
-        public void AbiVersionMatchesLockedVersionZero()
+        public void AbiVersionMatchesAdditiveVersionZeroPointOne()
         {
             NativeWorld.GetAbiVersion(out uint major, out uint minor);
 
             Assert.That(major, Is.EqualTo(0U));
-            Assert.That(minor, Is.EqualTo(0U));
+            Assert.That(minor, Is.EqualTo(1U));
         }
 
         [Test]
@@ -30,6 +30,8 @@ namespace APEX.Native.Tests
             Assert.That(Marshal.SizeOf<ApxWorldDesc>(), Is.EqualTo(48));
             Assert.That(Marshal.SizeOf<ApxParticleDesc>(), Is.EqualTo(28));
             Assert.That(Marshal.SizeOf<ApxDistanceConstraintDesc>(), Is.EqualTo(16));
+            Assert.That(Marshal.SizeOf<ApxClothDistanceConstraintDesc>(), Is.EqualTo(24));
+            Assert.That(Marshal.SizeOf<ApxBendConstraintDesc>(), Is.EqualTo(24));
             Assert.That(Marshal.SizeOf<ApxColliderProxy>(), Is.EqualTo(48));
             Assert.That(Marshal.SizeOf<ApxBufferView>(), Is.EqualTo(24));
 
@@ -58,6 +60,32 @@ namespace APEX.Native.Tests
             AssertOffset<ApxDistanceConstraintDesc>(
                 nameof(ApxDistanceConstraintDesc.Compliance),
                 12);
+            AssertOffset<ApxClothDistanceConstraintDesc>(
+                nameof(ApxClothDistanceConstraintDesc.ParticleA),
+                0);
+            AssertOffset<ApxClothDistanceConstraintDesc>(
+                nameof(ApxClothDistanceConstraintDesc.ParticleB),
+                4);
+            AssertOffset<ApxClothDistanceConstraintDesc>(
+                nameof(ApxClothDistanceConstraintDesc.RestLength),
+                8);
+            AssertOffset<ApxClothDistanceConstraintDesc>(
+                nameof(ApxClothDistanceConstraintDesc.Compliance),
+                12);
+            AssertOffset<ApxClothDistanceConstraintDesc>(
+                nameof(ApxClothDistanceConstraintDesc.BreakThreshold),
+                16);
+            AssertOffset<ApxClothDistanceConstraintDesc>(
+                nameof(ApxClothDistanceConstraintDesc.Direction),
+                20);
+            AssertOffset<ApxBendConstraintDesc>(nameof(ApxBendConstraintDesc.OppositeA), 0);
+            AssertOffset<ApxBendConstraintDesc>(nameof(ApxBendConstraintDesc.OppositeB), 4);
+            AssertOffset<ApxBendConstraintDesc>(nameof(ApxBendConstraintDesc.EdgeA), 8);
+            AssertOffset<ApxBendConstraintDesc>(nameof(ApxBendConstraintDesc.EdgeB), 12);
+            AssertOffset<ApxBendConstraintDesc>(
+                nameof(ApxBendConstraintDesc.SupportingClothConstraint),
+                16);
+            AssertOffset<ApxBendConstraintDesc>(nameof(ApxBendConstraintDesc.Compliance), 20);
             AssertOffset<ApxColliderProxy>(nameof(ApxColliderProxy.Type), 0);
             AssertOffset<ApxColliderProxy>(nameof(ApxColliderProxy.Reserved0), 4);
             AssertOffset<ApxColliderProxy>(nameof(ApxColliderProxy.Reserved1), 8);
@@ -71,7 +99,7 @@ namespace APEX.Native.Tests
         }
 
         [Test]
-        public void NativeMethodsExposeExactlyTheLockedNineCdeclEntrypoints()
+        public void NativeMethodsExposeExactlyTheAdditiveTwelveCdeclEntrypoints()
         {
             Type nativeMethods = typeof(NativeWorld).Assembly.GetType(
                 "APEX.Native.NativeMethods",
@@ -88,6 +116,9 @@ namespace APEX.Native.Tests
                 "apxDestroyWorld",
                 "apxAddParticles",
                 "apxAddDistanceConstraints",
+                "apxAddClothDistanceConstraints",
+                "apxAddBendConstraints",
+                "apxGetBrokenClothDistanceConstraintIds",
                 "apxSetColliderProxies",
                 "apxStep",
                 "apxMapParticleBuffer",
@@ -138,6 +169,85 @@ namespace APEX.Native.Tests
                 // Once creation succeeds, any CUDA pipeline, launch, or
                 // readback BackendError is a real regression and must fail.
                 RunFallingPair(world);
+            }
+        }
+
+        [TestCase(ApxBackendKind.Cpu)]
+        [TestCase(ApxBackendKind.Cuda)]
+        public void ClothAndBendBindingsStepSixtyFramesAndReportNoPrematureBreak(
+            ApxBackendKind backend)
+        {
+            NativeWorld world;
+            try
+            {
+                world = NativeWorld.Create(
+                    ApxWorldDesc.Create(
+                        backend,
+                        FixedTimeStep,
+                        8,
+                        new ApxVec3(0.0F, -1.0F, 0.0F),
+                        0.0F,
+                        4));
+            }
+            catch (ApxException exception)
+                when (backend == ApxBackendKind.Cuda &&
+                      (exception.Result == ApxResult.Unsupported ||
+                       exception.Result == ApxResult.BackendError))
+            {
+                Assert.Ignore($"CUDA backend is unavailable: {exception.Message}");
+                return;
+            }
+
+            using (world)
+            {
+                ApxParticleDesc[] particles =
+                {
+                    new ApxParticleDesc(new ApxVec3(0.0F, 1.0F, 0.0F), default, 0.0F),
+                    new ApxParticleDesc(new ApxVec3(1.0F, 1.0F, 0.0F), default, 0.0F),
+                    new ApxParticleDesc(new ApxVec3(0.0F, 0.0F, 0.0F), default, 1.0F),
+                    new ApxParticleDesc(new ApxVec3(1.0F, 0.0F, 0.0F), default, 1.0F),
+                };
+                ApxClothDistanceConstraintDesc[] cloth =
+                {
+                    new ApxClothDistanceConstraintDesc(
+                        0, 1, 1.0F, 0.0F, 10.0F, ApxClothDirection.Warp),
+                    new ApxClothDistanceConstraintDesc(
+                        0, 2, 1.0F, 1.0e-6F, 10.0F, ApxClothDirection.Weft),
+                    new ApxClothDistanceConstraintDesc(
+                        1, 3, 1.0F, 1.0e-6F, 10.0F, ApxClothDirection.Weft),
+                    new ApxClothDistanceConstraintDesc(
+                        2, 3, 1.0F, 0.0F, 10.0F, ApxClothDirection.Warp),
+                    new ApxClothDistanceConstraintDesc(
+                        0, 3, (float)Math.Sqrt(2.0), 1.0e-6F, 10.0F, ApxClothDirection.Shear),
+                };
+                ApxBendConstraintDesc[] bend =
+                {
+                    new ApxBendConstraintDesc(
+                        0,
+                        3,
+                        1,
+                        2,
+                        ApxBendConstraintDesc.NoSupportingClothConstraint,
+                        1.0e-5F),
+                };
+
+                Assert.That(world.AddParticles(particles), Is.EqualTo(0U));
+                Assert.That(world.AddClothDistanceConstraints(cloth), Is.EqualTo(0U));
+                Assert.That(world.AddBendConstraints(bend), Is.EqualTo(0U));
+
+                for (int frame = 0; frame < 60; ++frame)
+                {
+                    world.Step(1.0F / 60.0F);
+                }
+
+                ApxVec3[] positions = new ApxVec3[particles.Length];
+                Assert.That(world.ReadPositionSnapshot(positions), Is.EqualTo(particles.Length));
+                foreach (ApxVec3 position in positions)
+                {
+                    AssertFinite(position);
+                }
+
+                CollectionAssert.IsEmpty(world.GetBrokenClothDistanceConstraintIds());
             }
         }
 
