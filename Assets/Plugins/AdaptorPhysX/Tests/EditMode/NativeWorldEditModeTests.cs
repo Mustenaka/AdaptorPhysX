@@ -892,9 +892,12 @@ namespace APEX.Native.Tests
                 activeWorld.Step(FixedTimeStep);
                 ApxVec3[] activePositions = new ApxVec3[2];
                 Assert.That(activeWorld.ReadPositionSnapshot(activePositions), Is.EqualTo(2));
-                Assert.That(
-                    SeparationSquared(activePositions[0], activePositions[1]),
-                    Is.EqualTo(InitialSeparationSquared));
+                Assert.That(activePositions[0].X, Is.EqualTo(0.0F));
+                Assert.That(activePositions[0].Y, Is.EqualTo(0.0F));
+                Assert.That(activePositions[0].Z, Is.EqualTo(0.0F));
+                Assert.That(activePositions[1].X, Is.EqualTo(0.1F));
+                Assert.That(activePositions[1].Y, Is.EqualTo(0.0F));
+                Assert.That(activePositions[1].Z, Is.EqualTo(0.0F));
                 CollectionAssert.IsEmpty(activeWorld.GetBrokenClothDistanceConstraintIds());
 
                 brokenWorld.Step(FixedTimeStep);
