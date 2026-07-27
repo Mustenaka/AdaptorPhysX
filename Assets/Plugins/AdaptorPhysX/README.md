@@ -20,15 +20,16 @@ plugin and CUDA runtime into this directory. It fails unless the copied plugin
 exports exactly the nine DL-7 symbols plus the three additive DL-10 v0.1
 symbols, two additive DL-12 v0.2 symbols, and the additive DL-11 v0.3
 `apxCut` symbol, plus the four additive DL-17 v0.4 dual-mesh
-binding/topology/normal symbols. `cudart64_12.dll` remains its only direct
+binding/topology/normal symbols and the two additive DL-11 v0.5 fixed-capacity
+creation/cut-detail symbols. `cudart64_12.dll` remains its only direct
 NVIDIA dependency. The script also verifies that both existing Unity `.meta`
 files are unchanged.
 
 - `x86_64/adaptorphysx.dll`
-  - native source baseline: `81fde7ecef9e588b9a670cf2ce42d71aefb93afc`
+  - native source baseline: `b831cc94f3d5a20a686f3a7a0d74940cb8d39d45`
   - build: CUDA Release, Ninja + MSVC 14.44, `sm_89`
   - current packaged SHA-256:
-    `EBFF37B5EAD3F7BC066B2F84E208F2CA76B6F92BB9571253A54268A126A07EF8`
+    `8C491EFD71920FD7761F8620B963FABE4E806ADA2BA482137EC7FBF6603C907B`
 - `x86_64/cudart64_12.dll`
   - source: CUDA Toolkit 12.6 shared runtime
   - file version: `6.14.11.12060`
