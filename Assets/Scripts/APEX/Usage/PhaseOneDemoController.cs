@@ -89,13 +89,21 @@ namespace APEX.Usage
             ++_fixedTick;
             while (_cursor.TryDequeue(_fixedTick, out PhaseOneReplayCommand command))
             {
-                ApxCutResult cut = _world.Cut(command.Query);
-                PhaseOneReplayHash.Append(ref _stateHash, command);
-                PhaseOneReplayHash.Append(ref _stateHash, cut);
+                ApxCutResult cut;
                 if (precisionCutPreview != null)
                 {
-                    precisionCutPreview.ApplyPreciseWorldCut(command.Query);
+                    CoupledMeshCutResult coupled =
+                        precisionCutPreview.ApplyCoupledWorldCut(
+                            _world,
+                            command.Query);
+                    cut = coupled.Simulation;
                 }
+                else
+                {
+                    cut = _world.Cut(command.Query);
+                }
+                PhaseOneReplayHash.Append(ref _stateHash, command);
+                PhaseOneReplayHash.Append(ref _stateHash, cut);
             }
 
             _world.Step(NativeFrameDeltaTime);

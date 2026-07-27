@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System;
 using System.Linq;
+using APEX.Cutting;
 using APEX.Native;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -19,7 +20,7 @@ public class ObjCut : MonoBehaviour
     //刀片的厚度
     public float tickness = 0.005f;
     [Tooltip("使用 finite-segment 确定性精切；关闭时保留原有实体切割路径。")]
-    public bool usePreciseRenderMeshCut = true;
+    public bool usePreciseRenderMeshCut = false;
 
     [Header("精切结果")]
     public uint lastCutTriangleCount;
@@ -226,20 +227,54 @@ public class ObjCut : MonoBehaviour
         if (target == null)
             return;
 
-        Vector3 scale = target.transform.lossyScale;
-        float maximumScale = Mathf.Max(
-            Mathf.Abs(scale.x),
-            Mathf.Max(Mathf.Abs(scale.y), Mathf.Abs(scale.z)));
-        ApxCutQuery localQuery = new ApxCutQuery(
-            ToApx(target.transform.InverseTransformPoint(ToUnity(worldQuery.Start))),
-            ToApx(target.transform.InverseTransformPoint(ToUnity(worldQuery.End))),
-            ToApx(
-                target.transform
-                    .InverseTransformDirection(ToUnity(worldQuery.SideNormal))
-                    .normalized),
-            worldQuery.Radius /
-                Mathf.Max(maximumScale, 1.0e-6F));
-        ApplyPreciseLocalCut(localQuery);
+        RenderMeshCutResult result =
+            PreciseMeshCutCoordinator.CutRender(target, worldQuery);
+        UpdatePreciseCounters(result);
+    }
+
+    public void ApplyPreciseWorldCutPolyline(ApxCutQuery[] worldQueries)
+    {
+        if (target == null)
+            return;
+
+        RenderMeshCutResult[] results =
+            PreciseMeshCutCoordinator.CutRenderPolyline(target, worldQueries);
+        UpdatePreciseCounters(results);
+    }
+
+    public CoupledMeshCutResult ApplyCoupledWorldCut(
+        NativeWorld world,
+        ApxCutQuery worldQuery)
+    {
+        if (target == null)
+            return null;
+
+        CoupledMeshCutResult result =
+            PreciseMeshCutCoordinator.CutCoupled(target, world, worldQuery);
+        UpdatePreciseCounters(result.Render);
+        return result;
+    }
+
+    public CoupledMeshCutResult[] ApplyCoupledWorldCutPolyline(
+        NativeWorld world,
+        ApxCutQuery[] worldQueries)
+    {
+        if (target == null)
+            return null;
+
+        CoupledMeshCutResult[] results =
+            PreciseMeshCutCoordinator.CutCoupledPolyline(
+                target,
+                world,
+                worldQueries);
+        RenderMeshCutResult[] renderResults =
+            new RenderMeshCutResult[results.Length];
+        for (int segment = 0; segment < results.Length; ++segment)
+        {
+            renderResults[segment] = results[segment].Render;
+        }
+        UpdatePreciseCounters(renderResults);
+        return results;
     }
 
     void ApplyPreciseLocalCut(ApxCutQuery localQuery)
@@ -318,6 +353,27 @@ public class ObjCut : MonoBehaviour
 
         lastCutTriangleCount = result.CutTriangleCount;
         lastCreatedSeamPairCount = result.CreatedSeamPairCount;
+    }
+
+    void UpdatePreciseCounters(RenderMeshCutResult result)
+    {
+        lastCutTriangleCount = result.CutTriangleCount;
+        lastCreatedSeamPairCount = result.CreatedSeamPairCount;
+    }
+
+    void UpdatePreciseCounters(RenderMeshCutResult[] results)
+    {
+        uint cutTriangleCount = 0U;
+        uint seamPairCount = 0U;
+        for (int segment = 0; segment < results.Length; ++segment)
+        {
+            cutTriangleCount =
+                checked(cutTriangleCount + results[segment].CutTriangleCount);
+            seamPairCount =
+                checked(seamPairCount + results[segment].CreatedSeamPairCount);
+        }
+        lastCutTriangleCount = cutTriangleCount;
+        lastCreatedSeamPairCount = seamPairCount;
     }
 
     static ApxVec3 ToApx(Vector3 value)
