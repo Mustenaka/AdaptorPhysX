@@ -524,6 +524,78 @@ namespace APEX.Native.Tests
             }
         }
 
+        [TestCase(ApxBackendKind.Cpu)]
+        [TestCase(ApxBackendKind.Cuda)]
+        public void RuntimeSplitWithSelfCollisionSeparatesSeamForSixtyFrames(
+            ApxBackendKind backend)
+        {
+            NativeWorld world;
+            try
+            {
+                world = NativeWorld.Create(
+                    ApxWorldDesc.Create(
+                        backend,
+                        FixedTimeStep,
+                        4,
+                        default,
+                        0.1F,
+                        3));
+            }
+            catch (ApxException exception)
+                when (backend == ApxBackendKind.Cuda &&
+                      (exception.Result == ApxResult.Unsupported ||
+                       exception.Result == ApxResult.BackendError))
+            {
+                Assert.Ignore($"CUDA backend is unavailable: {exception.Message}");
+                return;
+            }
+
+            using (world)
+            {
+                ApxParticleDesc[] particles =
+                {
+                    new ApxParticleDesc(new ApxVec3(0.0F, 0.0F, 0.0F), default, 1.0F),
+                    new ApxParticleDesc(new ApxVec3(1.0F, 0.0F, 0.0F), default, 0.0F),
+                    new ApxParticleDesc(new ApxVec3(-1.0F, 0.0F, 0.0F), default, 0.0F),
+                };
+                ApxClothDistanceConstraintDesc[] cloth =
+                {
+                    new ApxClothDistanceConstraintDesc(
+                        0, 1, 1.0F, 1.0e-5F, 100.0F, ApxClothDirection.Warp),
+                    new ApxClothDistanceConstraintDesc(
+                        0, 2, 1.0F, 1.0e-5F, 100.0F, ApxClothDirection.Warp),
+                };
+                Assert.That(world.AddParticles(particles), Is.EqualTo(0U));
+                Assert.That(world.AddClothDistanceConstraints(cloth), Is.EqualTo(0U));
+
+                world.Step(FixedTimeStep * 0.5F);
+                ApxCutResult result = world.Cut(
+                    new ApxCutQuery(
+                        new ApxVec3(0.0F, -0.5F, 0.0F),
+                        new ApxVec3(0.0F, 0.5F, 0.0F),
+                        new ApxVec3(1.0F, 0.0F, 0.0F),
+                        0.01F));
+                Assert.That(result.CutConstraintCount, Is.EqualTo(0U));
+                Assert.That(result.SplitParticleCount, Is.EqualTo(1U));
+                Assert.That(result.FirstSplitParticleId, Is.EqualTo(3U));
+                Assert.That(world.ParticleCount, Is.EqualTo(4U));
+
+                world.Step(FixedTimeStep);
+                ApxVec3[] positions = new ApxVec3[4];
+                Assert.That(world.ReadPositionSnapshot(positions), Is.EqualTo(4));
+                Assert.That(SeparationSquared(positions[0], positions[3]), Is.GreaterThan(0.0225F));
+                for (int frame = 1; frame < 60; ++frame)
+                {
+                    world.Step(FixedTimeStep);
+                }
+
+                Assert.That(world.ReadPositionSnapshot(positions), Is.EqualTo(4));
+                AssertFinite(positions[0]);
+                AssertFinite(positions[3]);
+                Assert.That(SeparationSquared(positions[0], positions[3]), Is.GreaterThan(0.0225F));
+            }
+        }
+
         [Test]
         public void RenderMeshCutterCreatesStableInteriorSeamAndInterpolatesAttributes()
         {
@@ -965,6 +1037,14 @@ namespace APEX.Native.Tests
             Assert.That(float.IsNaN(value.X) || float.IsInfinity(value.X), Is.False);
             Assert.That(float.IsNaN(value.Y) || float.IsInfinity(value.Y), Is.False);
             Assert.That(float.IsNaN(value.Z) || float.IsInfinity(value.Z), Is.False);
+        }
+
+        private static float SeparationSquared(ApxVec3 left, ApxVec3 right)
+        {
+            float deltaX = left.X - right.X;
+            float deltaY = left.Y - right.Y;
+            float deltaZ = left.Z - right.Z;
+            return deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
         }
 
         private static void AssertMappedPosition(
