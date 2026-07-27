@@ -115,6 +115,70 @@ namespace APEX.Native
             return firstConstraintId;
         }
 
+        public uint AddClothDistanceConstraints(ApxClothDistanceConstraintDesc[] constraints)
+        {
+            ThrowIfDisposed();
+            if (constraints == null)
+            {
+                throw new ArgumentNullException(nameof(constraints));
+            }
+
+            ApxResult result = NativeMethods.ApxAddClothDistanceConstraints(
+                _handle,
+                constraints.Length == 0 ? null : constraints,
+                checked((uint)constraints.Length),
+                out uint firstConstraintId);
+            ApxException.ThrowIfFailed(result, "apxAddClothDistanceConstraints");
+            return firstConstraintId;
+        }
+
+        public uint AddBendConstraints(ApxBendConstraintDesc[] constraints)
+        {
+            ThrowIfDisposed();
+            if (constraints == null)
+            {
+                throw new ArgumentNullException(nameof(constraints));
+            }
+
+            ApxResult result = NativeMethods.ApxAddBendConstraints(
+                _handle,
+                constraints.Length == 0 ? null : constraints,
+                checked((uint)constraints.Length),
+                out uint firstConstraintId);
+            ApxException.ThrowIfFailed(result, "apxAddBendConstraints");
+            return firstConstraintId;
+        }
+
+        public uint[] GetBrokenClothDistanceConstraintIds()
+        {
+            ThrowIfDisposed();
+            ApxResult result = NativeMethods.ApxGetBrokenClothDistanceConstraintIds(
+                _handle,
+                null,
+                0,
+                out uint count);
+            ApxException.ThrowIfFailed(result, "apxGetBrokenClothDistanceConstraintIds");
+            if (count == 0)
+            {
+                return Array.Empty<uint>();
+            }
+
+            uint[] ids = new uint[checked((int)count)];
+            result = NativeMethods.ApxGetBrokenClothDistanceConstraintIds(
+                _handle,
+                ids,
+                count,
+                out uint written);
+            ApxException.ThrowIfFailed(result, "apxGetBrokenClothDistanceConstraintIds");
+            if (written != count)
+            {
+                throw new InvalidOperationException(
+                    "The native broken-constraint count changed during a synchronous query.");
+            }
+
+            return ids;
+        }
+
         public void SetColliderProxies(ApxColliderProxy[] proxies)
         {
             ThrowIfDisposed();

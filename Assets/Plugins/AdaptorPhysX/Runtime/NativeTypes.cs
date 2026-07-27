@@ -32,6 +32,13 @@ namespace APEX.Native
         Plane = 2,
     }
 
+    public enum ApxClothDirection : uint
+    {
+        Warp = 0,
+        Weft = 1,
+        Shear = 2,
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct ApxVec3
     {
@@ -133,6 +140,62 @@ namespace APEX.Native
             ParticleA = particleA;
             ParticleB = particleB;
             RestLength = restLength;
+            Compliance = compliance;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ApxClothDistanceConstraintDesc
+    {
+        public uint ParticleA;
+        public uint ParticleB;
+        public float RestLength;
+        public float Compliance;
+        public float BreakThreshold;
+        public ApxClothDirection Direction;
+
+        public ApxClothDistanceConstraintDesc(
+            uint particleA,
+            uint particleB,
+            float restLength,
+            float compliance,
+            float breakThreshold,
+            ApxClothDirection direction)
+        {
+            ParticleA = particleA;
+            ParticleB = particleB;
+            RestLength = restLength;
+            Compliance = compliance;
+            BreakThreshold = breakThreshold;
+            Direction = direction;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ApxBendConstraintDesc
+    {
+        public const uint NoSupportingClothConstraint = uint.MaxValue;
+
+        public uint OppositeA;
+        public uint OppositeB;
+        public uint EdgeA;
+        public uint EdgeB;
+        public uint SupportingClothConstraint;
+        public float Compliance;
+
+        public ApxBendConstraintDesc(
+            uint oppositeA,
+            uint oppositeB,
+            uint edgeA,
+            uint edgeB,
+            uint supportingClothConstraint,
+            float compliance)
+        {
+            OppositeA = oppositeA;
+            OppositeB = oppositeB;
+            EdgeA = edgeA;
+            EdgeB = edgeB;
+            SupportingClothConstraint = supportingClothConstraint;
             Compliance = compliance;
         }
     }

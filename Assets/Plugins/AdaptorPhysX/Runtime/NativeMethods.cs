@@ -54,6 +54,39 @@ namespace APEX.Native
 
         [DllImport(
             LibraryName,
+            EntryPoint = "apxAddClothDistanceConstraints",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        internal static extern ApxResult ApxAddClothDistanceConstraints(
+            ApxWorldSafeHandle world,
+            [In] ApxClothDistanceConstraintDesc[] constraints,
+            uint count,
+            out uint outFirstConstraintId);
+
+        [DllImport(
+            LibraryName,
+            EntryPoint = "apxAddBendConstraints",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        internal static extern ApxResult ApxAddBendConstraints(
+            ApxWorldSafeHandle world,
+            [In] ApxBendConstraintDesc[] constraints,
+            uint count,
+            out uint outFirstConstraintId);
+
+        [DllImport(
+            LibraryName,
+            EntryPoint = "apxGetBrokenClothDistanceConstraintIds",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        internal static extern ApxResult ApxGetBrokenClothDistanceConstraintIds(
+            ApxWorldSafeHandle world,
+            [Out] uint[] outConstraintIds,
+            uint capacity,
+            out uint outCount);
+
+        [DllImport(
+            LibraryName,
             EntryPoint = "apxSetColliderProxies",
             CallingConvention = CallingConvention.Cdecl,
             ExactSpelling = true)]
