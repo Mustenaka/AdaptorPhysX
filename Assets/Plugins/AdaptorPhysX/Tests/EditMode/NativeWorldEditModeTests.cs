@@ -1667,7 +1667,7 @@ namespace APEX.Native.Tests
                     BindingFlags.Instance | BindingFlags.NonPublic);
 
                 hitObject.transform.position =
-                    new UnityEngine.Vector3(0.0F, -0.5F, 0.0F);
+                    new UnityEngine.Vector3(0.0F, -0.5F, 0.00005F);
                 UnityEngine.Physics.SyncTransforms();
                 Assert.That(
                     submitRay.Invoke(
@@ -1684,7 +1684,7 @@ namespace APEX.Native.Tests
                 fixedUpdate.Invoke(interactor, null);
 
                 hitObject.transform.position =
-                    new UnityEngine.Vector3(0.0F, 0.5F, 0.0F);
+                    new UnityEngine.Vector3(0.0F, 0.5F, 0.00005F);
                 UnityEngine.Physics.SyncTransforms();
                 Assert.That(
                     submitRay.Invoke(
