@@ -26,7 +26,7 @@ namespace APEX.Usage
         public float breakThreshold = 100.0F;
 
         [Header("回放 / 交互")]
-        public ulong scriptedCutTick = 30U;
+        public ulong scriptedCutTick = 1U;
         public float cutRadius = 0.001F;
         public bool enableMouseCut = true;
         public ApxBladeInteractor liveBlade;

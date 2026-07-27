@@ -236,7 +236,7 @@ namespace APEX.Native.Tests
         }
 
         [UnityTest]
-        public IEnumerator PhaseOneDemoSceneRunsScriptedCutThroughFixedTickThirty()
+        public IEnumerator PhaseOneDemoSceneRunsScriptedCutAndAdvancesPastThirtyTicks()
         {
             EditorSceneManager.OpenScene(
                 "Assets/Scenes/PhaseOneDemo.unity",
