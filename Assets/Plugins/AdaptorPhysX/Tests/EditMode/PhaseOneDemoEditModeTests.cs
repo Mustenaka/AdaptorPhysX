@@ -1,7 +1,11 @@
 using System;
+using System.Collections;
 using System.Diagnostics;
 using System.Globalization;
 using NUnit.Framework;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace APEX.Native.Tests
 {
@@ -228,6 +232,67 @@ namespace APEX.Native.Tests
                 AssertFinite(renderPositions[initialParticleCount / 2]);
                 AssertFinite(renderPositions[initialParticleCount - 1]);
             }
+        }
+
+        [UnityTest]
+        public IEnumerator PhaseOneDemoSceneRunsScriptedCutThroughFixedTickThirty()
+        {
+            EditorSceneManager.OpenScene(
+                "Assets/Scenes/PhaseOneDemo.unity",
+                OpenSceneMode.Single);
+            GameObject editModeCloth = GameObject.Find("PhaseOne_100k_Cloth");
+            Assert.That(editModeCloth, Is.Not.Null);
+            Assert.That(
+                editModeCloth.GetComponent("PhaseOneDemoController"),
+                Is.Not.Null);
+            Assert.That(
+                GameObject.Find("FixedTick_Blade").GetComponent("ApxBladeInteractor"),
+                Is.Not.Null);
+            Assert.That(
+                GameObject.Find("PreciseCut_Preview").GetComponent("ObjCut"),
+                Is.Not.Null);
+
+            yield return new EnterPlayMode();
+            GameObject cloth = GameObject.Find("PhaseOne_100k_Cloth");
+            Component controller = cloth.GetComponent("PhaseOneDemoController");
+            Assert.That(controller, Is.Not.Null);
+            for (int update = 0; update < 120; ++update)
+            {
+                ulong tick = (ulong)controller
+                    .GetType()
+                    .GetProperty("FixedTick")
+                    .GetValue(controller);
+                if (tick >= 31U)
+                {
+                    break;
+                }
+                yield return new WaitForFixedUpdate();
+            }
+
+            ulong finalTick = (ulong)controller
+                .GetType()
+                .GetProperty("FixedTick")
+                .GetValue(controller);
+            uint particleCount = (uint)controller
+                .GetType()
+                .GetProperty("ParticleCount")
+                .GetValue(controller);
+            ulong stateHash = (ulong)controller
+                .GetType()
+                .GetProperty("StateHash")
+                .GetValue(controller);
+            Component previewCut = GameObject
+                .Find("PreciseCut_Preview")
+                .GetComponent("ObjCut");
+            uint cutTriangles = (uint)previewCut
+                .GetType()
+                .GetField("lastCutTriangleCount")
+                .GetValue(previewCut);
+            Assert.That(finalTick, Is.GreaterThanOrEqualTo(31U));
+            Assert.That(particleCount, Is.EqualTo(100250U));
+            Assert.That(stateHash, Is.Not.EqualTo(0U));
+            Assert.That(cutTriangles, Is.GreaterThan(0U));
+            yield return new ExitPlayMode();
         }
 
         private static ReplayOutcome RunReplayScene(ApxBackendKind backend)
