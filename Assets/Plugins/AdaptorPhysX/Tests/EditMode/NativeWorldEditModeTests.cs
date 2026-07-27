@@ -13,12 +13,12 @@ namespace APEX.Native.Tests
         private const float ParticleRadius = 0.1F;
 
         [Test]
-        public void AbiVersionMatchesAdditiveVersionZeroPointOne()
+        public void AbiVersionMatchesAdditiveVersionZeroPointTwo()
         {
             NativeWorld.GetAbiVersion(out uint major, out uint minor);
 
             Assert.That(major, Is.EqualTo(0U));
-            Assert.That(minor, Is.EqualTo(1U));
+            Assert.That(minor, Is.EqualTo(2U));
         }
 
         [Test]
@@ -32,6 +32,7 @@ namespace APEX.Native.Tests
             Assert.That(Marshal.SizeOf<ApxDistanceConstraintDesc>(), Is.EqualTo(16));
             Assert.That(Marshal.SizeOf<ApxClothDistanceConstraintDesc>(), Is.EqualTo(24));
             Assert.That(Marshal.SizeOf<ApxBendConstraintDesc>(), Is.EqualTo(24));
+            Assert.That(Marshal.SizeOf<ApxRenderVertexBindingDesc>(), Is.EqualTo(24));
             Assert.That(Marshal.SizeOf<ApxColliderProxy>(), Is.EqualTo(48));
             Assert.That(Marshal.SizeOf<ApxBufferView>(), Is.EqualTo(24));
 
@@ -86,6 +87,24 @@ namespace APEX.Native.Tests
                 nameof(ApxBendConstraintDesc.SupportingClothConstraint),
                 16);
             AssertOffset<ApxBendConstraintDesc>(nameof(ApxBendConstraintDesc.Compliance), 20);
+            AssertOffset<ApxRenderVertexBindingDesc>(
+                nameof(ApxRenderVertexBindingDesc.ParticleA),
+                0);
+            AssertOffset<ApxRenderVertexBindingDesc>(
+                nameof(ApxRenderVertexBindingDesc.ParticleB),
+                4);
+            AssertOffset<ApxRenderVertexBindingDesc>(
+                nameof(ApxRenderVertexBindingDesc.ParticleC),
+                8);
+            AssertOffset<ApxRenderVertexBindingDesc>(
+                nameof(ApxRenderVertexBindingDesc.WeightA),
+                12);
+            AssertOffset<ApxRenderVertexBindingDesc>(
+                nameof(ApxRenderVertexBindingDesc.WeightB),
+                16);
+            AssertOffset<ApxRenderVertexBindingDesc>(
+                nameof(ApxRenderVertexBindingDesc.WeightC),
+                20);
             AssertOffset<ApxColliderProxy>(nameof(ApxColliderProxy.Type), 0);
             AssertOffset<ApxColliderProxy>(nameof(ApxColliderProxy.Reserved0), 4);
             AssertOffset<ApxColliderProxy>(nameof(ApxColliderProxy.Reserved1), 8);
@@ -99,7 +118,7 @@ namespace APEX.Native.Tests
         }
 
         [Test]
-        public void NativeMethodsExposeExactlyTheAdditiveTwelveCdeclEntrypoints()
+        public void NativeMethodsExposeExactlyTheAdditiveFourteenCdeclEntrypoints()
         {
             Type nativeMethods = typeof(NativeWorld).Assembly.GetType(
                 "APEX.Native.NativeMethods",
@@ -119,6 +138,8 @@ namespace APEX.Native.Tests
                 "apxAddClothDistanceConstraints",
                 "apxAddBendConstraints",
                 "apxGetBrokenClothDistanceConstraintIds",
+                "apxSetRenderVertexBindings",
+                "apxGetRenderVertexPositions",
                 "apxSetColliderProxies",
                 "apxStep",
                 "apxMapParticleBuffer",
@@ -320,6 +341,88 @@ namespace APEX.Native.Tests
             }
         }
 
+        [TestCase(ApxBackendKind.Cpu)]
+        [TestCase(ApxBackendKind.Cuda)]
+        public void DualGridMappingStepsSixtyFramesAndSupportsAllQueryShapes(
+            ApxBackendKind backend)
+        {
+            NativeWorld world;
+            try
+            {
+                world = NativeWorld.Create(
+                    ApxWorldDesc.Create(
+                        backend,
+                        FixedTimeStep,
+                        4,
+                        default,
+                        0.0F,
+                        3));
+            }
+            catch (ApxException exception)
+                when (backend == ApxBackendKind.Cuda &&
+                      (exception.Result == ApxResult.Unsupported ||
+                       exception.Result == ApxResult.BackendError))
+            {
+                Assert.Ignore($"CUDA backend is unavailable: {exception.Message}");
+                return;
+            }
+
+            using (world)
+            {
+                ApxParticleDesc[] particles =
+                {
+                    new ApxParticleDesc(new ApxVec3(0.0F, 0.0F, 0.0F), default, 0.0F),
+                    new ApxParticleDesc(
+                        new ApxVec3(2.0F, 0.0F, 0.0F),
+                        new ApxVec3(1.0F, 0.0F, 0.0F),
+                        1.0F),
+                    new ApxParticleDesc(new ApxVec3(0.0F, 2.0F, 0.0F), default, 0.0F),
+                };
+                ApxRenderVertexBindingDesc[] bindings =
+                {
+                    new ApxRenderVertexBindingDesc(0, 1, 2, 2.0F, 3.0F, 5.0F),
+                    new ApxRenderVertexBindingDesc(0, 1, 2, 1.0F, 1.0F, 0.0F),
+                };
+                Assert.That(world.AddParticles(particles), Is.EqualTo(0U));
+                world.SetRenderVertexBindings(bindings);
+
+                Assert.That(world.GetRenderVertexPositionCount(), Is.EqualTo(2U));
+                ApxVec3[] undersized = { new ApxVec3(77.0F, 88.0F, 99.0F) };
+                ApxException capacity = Assert.Throws<ApxException>(
+                    () => world.GetRenderVertexPositions(undersized));
+                Assert.That(capacity.Result, Is.EqualTo(ApxResult.CapacityExceeded));
+                Assert.That(undersized[0].X, Is.EqualTo(77.0F));
+                Assert.That(undersized[0].Y, Is.EqualTo(88.0F));
+                Assert.That(undersized[0].Z, Is.EqualTo(99.0F));
+
+                ApxVec3[] callerOwned = new ApxVec3[2];
+                Assert.That(world.GetRenderVertexPositions(callerOwned), Is.EqualTo(2));
+                Assert.That(callerOwned[0].X, Is.EqualTo(0.6F).Within(1.0e-6F));
+                Assert.That(callerOwned[0].Y, Is.EqualTo(1.0F).Within(1.0e-6F));
+
+                for (int frame = 0; frame < 60; ++frame)
+                {
+                    world.Step(1.0F / 60.0F);
+                }
+
+                ApxVec3[] particlePositions = new ApxVec3[3];
+                Assert.That(world.ReadPositionSnapshot(particlePositions), Is.EqualTo(3));
+                ApxVec3[] allocated = world.GetRenderVertexPositions();
+                Assert.That(allocated, Has.Length.EqualTo(2));
+                Assert.That(world.GetRenderVertexPositionCount(), Is.EqualTo(2U));
+                AssertMappedPosition(
+                    allocated[0],
+                    particlePositions,
+                    bindings[0],
+                    1.0e-5F);
+                AssertMappedPosition(
+                    allocated[1],
+                    particlePositions,
+                    bindings[1],
+                    1.0e-5F);
+            }
+        }
+
         [Test]
         public void StaleMappedSnapshotCannotReadOrUnmapANewerGeneration()
         {
@@ -447,6 +550,31 @@ namespace APEX.Native.Tests
             Assert.That(float.IsNaN(value.X) || float.IsInfinity(value.X), Is.False);
             Assert.That(float.IsNaN(value.Y) || float.IsInfinity(value.Y), Is.False);
             Assert.That(float.IsNaN(value.Z) || float.IsInfinity(value.Z), Is.False);
+        }
+
+        private static void AssertMappedPosition(
+            ApxVec3 actual,
+            ApxVec3[] particles,
+            ApxRenderVertexBindingDesc binding,
+            float tolerance)
+        {
+            float sum = (binding.WeightA + binding.WeightB) + binding.WeightC;
+            float weightA = binding.WeightA / sum;
+            float weightB = binding.WeightB / sum;
+            float weightC = binding.WeightC / sum;
+            ApxVec3 expected = new ApxVec3(
+                particles[binding.ParticleA].X * weightA +
+                    particles[binding.ParticleB].X * weightB +
+                    particles[binding.ParticleC].X * weightC,
+                particles[binding.ParticleA].Y * weightA +
+                    particles[binding.ParticleB].Y * weightB +
+                    particles[binding.ParticleC].Y * weightC,
+                particles[binding.ParticleA].Z * weightA +
+                    particles[binding.ParticleB].Z * weightB +
+                    particles[binding.ParticleC].Z * weightC);
+            Assert.That(actual.X, Is.EqualTo(expected.X).Within(tolerance));
+            Assert.That(actual.Y, Is.EqualTo(expected.Y).Within(tolerance));
+            Assert.That(actual.Z, Is.EqualTo(expected.Z).Within(tolerance));
         }
     }
 }

@@ -198,6 +198,70 @@ namespace APEX.Native
             return checked((int)written);
         }
 
+        public void SetRenderVertexBindings(ApxRenderVertexBindingDesc[] bindings)
+        {
+            ThrowIfDisposed();
+            if (bindings == null)
+            {
+                throw new ArgumentNullException(nameof(bindings));
+            }
+
+            ApxResult result = NativeMethods.ApxSetRenderVertexBindings(
+                _handle,
+                bindings.Length == 0 ? null : bindings,
+                checked((uint)bindings.Length));
+            ApxException.ThrowIfFailed(result, "apxSetRenderVertexBindings");
+        }
+
+        public ApxVec3[] GetRenderVertexPositions()
+        {
+            ThrowIfDisposed();
+            uint count = GetRenderVertexPositionCount();
+            if (count == 0)
+            {
+                return Array.Empty<ApxVec3>();
+            }
+
+            ApxVec3[] positions = new ApxVec3[checked((int)count)];
+            int written = GetRenderVertexPositions(positions);
+            if ((uint)written != count)
+            {
+                throw new InvalidOperationException(
+                    "The native render-vertex count changed during a synchronous query.");
+            }
+
+            return positions;
+        }
+
+        public uint GetRenderVertexPositionCount()
+        {
+            ThrowIfDisposed();
+            ApxResult result = NativeMethods.ApxGetRenderVertexPositions(
+                _handle,
+                null,
+                0,
+                out uint count);
+            ApxException.ThrowIfFailed(result, "apxGetRenderVertexPositions");
+            return count;
+        }
+
+        public int GetRenderVertexPositions(ApxVec3[] destination)
+        {
+            ThrowIfDisposed();
+            if (destination == null)
+            {
+                throw new ArgumentNullException(nameof(destination));
+            }
+
+            ApxResult result = NativeMethods.ApxGetRenderVertexPositions(
+                _handle,
+                destination.Length == 0 ? null : destination,
+                checked((uint)destination.Length),
+                out uint written);
+            ApxException.ThrowIfFailed(result, "apxGetRenderVertexPositions");
+            return checked((int)written);
+        }
+
         public void SetColliderProxies(ApxColliderProxy[] proxies)
         {
             ThrowIfDisposed();

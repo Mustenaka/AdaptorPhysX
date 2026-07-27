@@ -87,6 +87,27 @@ namespace APEX.Native
 
         [DllImport(
             LibraryName,
+            EntryPoint = "apxSetRenderVertexBindings",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        internal static extern ApxResult ApxSetRenderVertexBindings(
+            ApxWorldSafeHandle world,
+            [In] ApxRenderVertexBindingDesc[] bindings,
+            uint count);
+
+        [DllImport(
+            LibraryName,
+            EntryPoint = "apxGetRenderVertexPositions",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        internal static extern ApxResult ApxGetRenderVertexPositions(
+            ApxWorldSafeHandle world,
+            [Out] ApxVec3[] outPositions,
+            uint capacity,
+            out uint outCount);
+
+        [DllImport(
+            LibraryName,
             EntryPoint = "apxSetColliderProxies",
             CallingConvention = CallingConvention.Cdecl,
             ExactSpelling = true)]
