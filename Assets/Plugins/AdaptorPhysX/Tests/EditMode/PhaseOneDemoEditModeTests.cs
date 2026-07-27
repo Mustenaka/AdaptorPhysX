@@ -328,12 +328,12 @@ namespace APEX.Native.Tests
                             Is.LessThanOrEqualTo(medianGateMilliseconds));
                         Assert.That(p95, Is.LessThanOrEqualTo(p95GateMilliseconds));
                         Assert.That(managedAllocationBytes, Is.EqualTo(0L));
-                        AssertFinite(renderPositions[0]);
-                        AssertFinite(renderPositions[initialParticleCount / 2]);
-                        AssertFinite(renderPositions[initialParticleCount - 1]);
-                        AssertFinite(renderNormals[0]);
-                        AssertFinite(renderNormals[initialParticleCount / 2]);
-                        AssertFinite(renderNormals[initialParticleCount - 1]);
+                        AssertFinite(unityPositions[0]);
+                        AssertFinite(unityPositions[initialParticleCount / 2]);
+                        AssertFinite(unityPositions[initialParticleCount - 1]);
+                        AssertFinite(unityNormals[0]);
+                        AssertFinite(unityNormals[initialParticleCount / 2]);
+                        AssertFinite(unityNormals[initialParticleCount - 1]);
                     }
                     finally
                     {
@@ -546,11 +546,11 @@ namespace APEX.Native.Tests
             }
         }
 
-        private static void AssertFinite(ApxVec3 value)
+        private static void AssertFinite(Vector3 value)
         {
-            Assert.That(float.IsNaN(value.X) || float.IsInfinity(value.X), Is.False);
-            Assert.That(float.IsNaN(value.Y) || float.IsInfinity(value.Y), Is.False);
-            Assert.That(float.IsNaN(value.Z) || float.IsInfinity(value.Z), Is.False);
+            Assert.That(float.IsNaN(value.x) || float.IsInfinity(value.x), Is.False);
+            Assert.That(float.IsNaN(value.y) || float.IsInfinity(value.y), Is.False);
+            Assert.That(float.IsNaN(value.z) || float.IsInfinity(value.z), Is.False);
         }
 
         private sealed class ReplayOutcome
