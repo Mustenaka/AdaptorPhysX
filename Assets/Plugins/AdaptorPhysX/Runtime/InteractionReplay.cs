@@ -59,10 +59,11 @@ namespace APEX.Native
             {
                 RecordedInteractionEvent item = events[index];
                 if (item.SequenceId != (uint)index ||
+                    item.FixedTick == 0 ||
                     (index != 0 && item.FixedTick < previousTick))
                 {
                     throw new ArgumentException(
-                        "Replay events require contiguous IDs and monotonic fixed ticks.",
+                        "Replay events require contiguous IDs and positive monotonic fixed ticks.",
                         nameof(events));
                 }
 

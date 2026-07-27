@@ -1752,6 +1752,17 @@ namespace APEX.Native.Tests
                             Kind = InteractionEventKind.GrabMove,
                         },
                     }));
+            Assert.Throws<ArgumentException>(
+                () => new InteractionReplayTimeline(
+                    new[]
+                    {
+                        new RecordedInteractionEvent
+                        {
+                            SequenceId = 0U,
+                            FixedTick = 0UL,
+                            Kind = InteractionEventKind.GrabMove,
+                        },
+                    }));
         }
 
         [Test]
