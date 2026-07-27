@@ -21,15 +21,16 @@ exports exactly the nine DL-7 symbols plus the three additive DL-10 v0.1
 symbols, two additive DL-12 v0.2 symbols, and the additive DL-11 v0.3
 `apxCut` symbol, plus the four additive DL-17 v0.4 dual-mesh
 binding/topology/normal symbols and the two additive DL-11 v0.5 fixed-capacity
-creation/cut-detail symbols. `cudart64_12.dll` remains its only direct
+creation/cut-detail symbols, plus the additive DL-18 v0.6
+`apxSetKinematicTargets` symbol. `cudart64_12.dll` remains its only direct
 NVIDIA dependency. The script also verifies that both existing Unity `.meta`
 files are unchanged.
 
 - `x86_64/adaptorphysx.dll`
-  - native source baseline: `b831cc94f3d5a20a686f3a7a0d74940cb8d39d45`
+  - native source baseline: `ffa7523aae3fe50e6db6c37d97f46fef49219e0b`
   - build: CUDA Release, Ninja + MSVC 14.44, `sm_89`
   - current packaged SHA-256:
-    `8C491EFD71920FD7761F8620B963FABE4E806ADA2BA482137EC7FBF6603C907B`
+    `8E945EFB477E42B685854775B75B4FEDE80C1D274323A17E269B59873BA1509F`
 - `x86_64/cudart64_12.dll`
   - source: CUDA Toolkit 12.6 shared runtime
   - file version: `6.14.11.12060`
