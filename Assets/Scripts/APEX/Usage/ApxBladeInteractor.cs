@@ -9,6 +9,7 @@ namespace APEX.Usage
     /// Call SetCutHeld/SetGrabHeld from any input frontend; geometry samples
     /// and command commits remain fixed-tick ordered.
     /// </summary>
+    [DefaultExecutionOrder(-100)]
     public sealed class ApxBladeInteractor : MonoBehaviour
     {
         [Header("刀刃")]
