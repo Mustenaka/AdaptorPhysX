@@ -865,8 +865,8 @@ namespace APEX.Native.Tests
             NativeWorld brokenWorld = null;
             try
             {
-                activeWorld = CreateClothNeighborFilterWorld(backend, 2.0F);
-                brokenWorld = CreateClothNeighborFilterWorld(backend, 1.0F);
+                activeWorld = CreateClothNeighborFilterWorld(backend, 0.1F, 2.0F);
+                brokenWorld = CreateClothNeighborFilterWorld(backend, 0.05F, 2.0F);
             }
             catch (ApxException exception)
                 when (backend == ApxBackendKind.Cuda &&
@@ -1983,6 +1983,7 @@ namespace APEX.Native.Tests
 
         private static NativeWorld CreateClothNeighborFilterWorld(
             ApxBackendKind backend,
+            float restLength,
             float breakThreshold)
         {
             NativeWorld world = NativeWorld.Create(
@@ -2010,7 +2011,7 @@ namespace APEX.Native.Tests
                         new ApxClothDistanceConstraintDesc(
                             0,
                             1,
-                            0.1F,
+                            restLength,
                             0.0F,
                             breakThreshold,
                             ApxClothDirection.Warp),
