@@ -689,6 +689,156 @@ namespace APEX.Native.Tests
         }
 
         [Test]
+        public void BladeInteractionBuffersEnforceSamplingCapacityTicksAndGrabLifecycle()
+        {
+            BladeTrajectoryBuffer trajectory = new BladeTrajectoryBuffer(1.0F, 0.25F, 1);
+            ApxVec3 normal = new ApxVec3(2.0F, 0.0F, 0.0F);
+            trajectory.BeginStroke(default, normal, 10);
+            Assert.That(
+                trajectory.AppendSample(
+                    new ApxVec3(0.5F, 0.0F, 0.0F),
+                    normal,
+                    11,
+                    out _),
+                Is.EqualTo(BladeAppendResult.BelowMinimumDistance));
+            Assert.That(
+                trajectory.AppendSample(
+                    new ApxVec3(1.0F, 0.0F, 0.0F),
+                    normal,
+                    12,
+                    out BladeTrajectorySegment accepted),
+                Is.EqualTo(BladeAppendResult.Accepted));
+            Assert.That(accepted.SegmentId, Is.EqualTo(0U));
+            Assert.That(accepted.Query.Start.X, Is.EqualTo(0.0F));
+            Assert.That(accepted.Query.End.X, Is.EqualTo(1.0F));
+            Assert.That(
+                trajectory.AppendSample(
+                    new ApxVec3(2.0F, 0.0F, 0.0F),
+                    normal,
+                    13,
+                    out _),
+                Is.EqualTo(BladeAppendResult.CapacityExceeded));
+            Assert.That(trajectory.NextSegmentId, Is.EqualTo(1U));
+            Assert.That(trajectory.Drain(), Has.Length.EqualTo(1));
+            Assert.That(
+                trajectory.AppendSample(
+                    new ApxVec3(2.0F, 0.0F, 0.0F),
+                    normal,
+                    13,
+                    out accepted),
+                Is.EqualTo(BladeAppendResult.Accepted));
+            Assert.That(accepted.Query.Start.X, Is.EqualTo(1.0F));
+            trajectory.EndStroke(14);
+            Assert.Throws<InvalidOperationException>(() => trajectory.EndStroke(15));
+
+            GrabCommandBuffer grabs = new GrabCommandBuffer(2);
+            Assert.That(grabs.Begin(7U, new ApxVec3(1.0F, 2.0F, 3.0F), 20), Is.True);
+            Assert.That(grabs.Move(new ApxVec3(2.0F, 3.0F, 4.0F), 21), Is.True);
+            Assert.That(grabs.End(new ApxVec3(3.0F, 4.0F, 5.0F), 22), Is.False);
+            Assert.That(grabs.IsGrabActive, Is.True);
+            Assert.That(grabs.Drain(), Has.Length.EqualTo(2));
+            Assert.That(grabs.End(new ApxVec3(3.0F, 4.0F, 5.0F), 22), Is.True);
+            Assert.That(grabs.IsGrabActive, Is.False);
+            Assert.Throws<InvalidOperationException>(
+                () => grabs.Move(new ApxVec3(4.0F, 5.0F, 6.0F), 23));
+        }
+
+        [Test]
+        public void BladeInteractionDeterminismMatchesCompleteSixtyTickCommandHash()
+        {
+            ulong first = RunBladeInteractionHash();
+            ulong second = RunBladeInteractionHash();
+            Assert.That(first, Is.EqualTo(second));
+        }
+
+        [Test]
+        public void BladeInteractionCrosscheckPreservesExactFifoIdsTicksAndFields()
+        {
+            BladeTrajectoryBuffer trajectory = new BladeTrajectoryBuffer(0.5F, 0.125F, 4);
+            ApxVec3 normal = new ApxVec3(2.0F, 0.0F, 0.0F);
+            trajectory.BeginStroke(new ApxVec3(0.0F, 1.0F, 2.0F), normal, 10);
+            Assert.That(
+                trajectory.AppendSample(
+                    new ApxVec3(0.25F, 1.0F, 2.0F),
+                    normal,
+                    11,
+                    out _),
+                Is.EqualTo(BladeAppendResult.BelowMinimumDistance));
+            Assert.That(
+                trajectory.AppendSample(
+                    new ApxVec3(1.0F, 1.0F, 2.0F),
+                    normal,
+                    12,
+                    out _),
+                Is.EqualTo(BladeAppendResult.Accepted));
+            BladeTrajectorySegment[] segments = trajectory.Drain();
+            Assert.That(segments, Has.Length.EqualTo(1));
+            Assert.That(segments[0].SegmentId, Is.EqualTo(0U));
+            Assert.That(segments[0].FixedTick, Is.EqualTo(12UL));
+            Assert.That(segments[0].Query.Start.X, Is.EqualTo(0.0F));
+            Assert.That(segments[0].Query.End.X, Is.EqualTo(1.0F));
+            Assert.That(segments[0].Query.SideNormal.X, Is.EqualTo(2.0F));
+            Assert.That(segments[0].Query.Radius, Is.EqualTo(0.125F));
+
+            GrabCommandBuffer grabs = new GrabCommandBuffer(3);
+            Assert.That(grabs.Begin(7U, new ApxVec3(1.0F, 2.0F, 3.0F), 20), Is.True);
+            Assert.That(grabs.Move(new ApxVec3(2.0F, 3.0F, 4.0F), 21), Is.True);
+            Assert.That(grabs.End(new ApxVec3(3.0F, 4.0F, 5.0F), 22), Is.True);
+            GrabCommand[] commands = grabs.Drain();
+            Assert.That(commands, Has.Length.EqualTo(3));
+            for (int index = 0; index < commands.Length; ++index)
+            {
+                Assert.That(commands[index].SequenceId, Is.EqualTo((uint)index));
+                Assert.That(commands[index].FixedTick, Is.EqualTo((ulong)(20 + index)));
+                Assert.That(commands[index].ParticleId, Is.EqualTo(7U));
+                Assert.That(commands[index].Phase, Is.EqualTo((GrabCommandPhase)index));
+                Assert.That(commands[index].Position.X, Is.EqualTo(1.0F + index));
+            }
+        }
+
+        [Test]
+        public void BladeInteractionPerfMeetsHundredThousandSampleResponseGate()
+        {
+            const int sampleCount = 100000;
+            double[] samples = new double[5];
+            for (int window = 0; window < samples.Length; ++window)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                BladeTrajectoryBuffer trajectory =
+                    new BladeTrajectoryBuffer(0.0F, 0.001F, sampleCount);
+                ApxVec3 normal = new ApxVec3(0.0F, 1.0F, 0.0F);
+                trajectory.BeginStroke(default, normal, 0);
+                for (int sample = 1; sample <= sampleCount; ++sample)
+                {
+                    BladeAppendResult append = trajectory.AppendSample(
+                        new ApxVec3(sample, 0.0F, 0.0F),
+                        normal,
+                        (ulong)sample,
+                        out _);
+                    if (append != BladeAppendResult.Accepted)
+                    {
+                        throw new InvalidOperationException(
+                            $"Unexpected append result at sample {sample}: {append}");
+                    }
+                }
+                BladeTrajectorySegment[] drained = trajectory.Drain();
+                stopwatch.Stop();
+                Assert.That(drained, Has.Length.EqualTo(sampleCount));
+                Assert.That(drained[sampleCount - 1].SegmentId, Is.EqualTo(99999U));
+                samples[window] = stopwatch.Elapsed.TotalMilliseconds;
+            }
+
+            Array.Sort(samples);
+            double medianMilliseconds = samples[samples.Length / 2];
+            TestContext.Out.WriteLine(
+                "APX_BLADE_INPUT_PERF samples=100000 windows=5 median_ms={0:F4} gate_ms=250.0000",
+                medianMilliseconds);
+            Assert.That(medianMilliseconds, Is.LessThanOrEqualTo(250.0));
+        }
+
+        [Test]
         public void StaleMappedSnapshotCannotReadOrUnmapANewerGeneration()
         {
             using (NativeWorld world = CreateFallingPairWorld(ApxBackendKind.Cpu))
@@ -950,6 +1100,57 @@ namespace APEX.Native.Tests
         {
             byte[] bytes = BitConverter.GetBytes(value);
             return BitConverter.ToUInt32(bytes, 0);
+        }
+
+        private static ulong RunBladeInteractionHash()
+        {
+            const ulong offsetBasis = 1469598103934665603UL;
+            const ulong prime = 1099511628211UL;
+            BladeTrajectoryBuffer trajectory = new BladeTrajectoryBuffer(0.0F, 0.01F, 60);
+            GrabCommandBuffer grabs = new GrabCommandBuffer(61);
+            ApxVec3 normal = new ApxVec3(0.0F, 2.0F, 0.0F);
+            trajectory.BeginStroke(default, normal, 0);
+            Assert.That(grabs.Begin(17U, default, 0), Is.True);
+            for (ulong tick = 1; tick <= 60; ++tick)
+            {
+                ApxVec3 position =
+                    new ApxVec3((float)tick * 0.125F, (float)tick * 0.03125F, 0.0F);
+                Assert.That(
+                    trajectory.AppendSample(position, normal, tick, out _),
+                    Is.EqualTo(BladeAppendResult.Accepted));
+                if (tick < 60)
+                {
+                    Assert.That(grabs.Move(position, tick), Is.True);
+                }
+                else
+                {
+                    Assert.That(grabs.End(position, tick), Is.True);
+                }
+            }
+            trajectory.EndStroke(60);
+
+            ulong hash = offsetBasis;
+            foreach (BladeTrajectorySegment segment in trajectory.Drain())
+            {
+                hash = (hash ^ segment.SegmentId) * prime;
+                hash = (hash ^ segment.FixedTick) * prime;
+                hash = (hash ^ FloatBits(segment.Query.Start.X)) * prime;
+                hash = (hash ^ FloatBits(segment.Query.Start.Y)) * prime;
+                hash = (hash ^ FloatBits(segment.Query.End.X)) * prime;
+                hash = (hash ^ FloatBits(segment.Query.End.Y)) * prime;
+                hash = (hash ^ FloatBits(segment.Query.SideNormal.Y)) * prime;
+                hash = (hash ^ FloatBits(segment.Query.Radius)) * prime;
+            }
+            foreach (GrabCommand command in grabs.Drain())
+            {
+                hash = (hash ^ command.SequenceId) * prime;
+                hash = (hash ^ command.FixedTick) * prime;
+                hash = (hash ^ command.ParticleId) * prime;
+                hash = (hash ^ (uint)command.Phase) * prime;
+                hash = (hash ^ FloatBits(command.Position.X)) * prime;
+                hash = (hash ^ FloatBits(command.Position.Y)) * prime;
+            }
+            return hash;
         }
     }
 }
