@@ -880,6 +880,43 @@ namespace APEX.Native.Tests
             Assert.That(result.Mesh.Vertices[4].V, Is.EqualTo(0.0F));
             Assert.That(result.Mesh.Vertices[6].V, Is.EqualTo(0.5F));
             Assert.That(result.Mesh.Vertices[8].V, Is.EqualTo(1.0F));
+
+            bool[] referenced = new bool[result.Mesh.Vertices.Length];
+            float outputArea = 0.0F;
+            int negativeTriangleCount = 0;
+            int positiveTriangleCount = 0;
+            for (int offset = 0; offset < result.Mesh.Indices.Length; offset += 3)
+            {
+                uint id0 = result.Mesh.Indices[offset];
+                uint id1 = result.Mesh.Indices[offset + 1];
+                uint id2 = result.Mesh.Indices[offset + 2];
+                referenced[id0] = true;
+                referenced[id1] = true;
+                referenced[id2] = true;
+                float triangleArea = TriangleArea(
+                    result.Mesh.Vertices[id0].Position,
+                    result.Mesh.Vertices[id1].Position,
+                    result.Mesh.Vertices[id2].Position);
+                Assert.That(triangleArea, Is.GreaterThan(0.0F));
+                outputArea += triangleArea;
+                float centroidX =
+                    (result.Mesh.Vertices[id0].Position.X +
+                     result.Mesh.Vertices[id1].Position.X +
+                     result.Mesh.Vertices[id2].Position.X) / 3.0F;
+                if (centroidX < 0.5F)
+                {
+                    ++negativeTriangleCount;
+                }
+                else
+                {
+                    Assert.That(centroidX, Is.GreaterThan(0.5F));
+                    ++positiveTriangleCount;
+                }
+            }
+            CollectionAssert.DoesNotContain(referenced, false);
+            Assert.That(negativeTriangleCount, Is.EqualTo(3));
+            Assert.That(positiveTriangleCount, Is.EqualTo(3));
+            Assert.That(outputArea, Is.EqualTo(1.0F).Within(1.0e-6F));
         }
 
         [Test]
@@ -909,6 +946,33 @@ namespace APEX.Native.Tests
                 () => RenderMeshCutter.Cut(
                     new RenderMeshData(input.Vertices, new uint[] { 0U, 1U, 99U }),
                     CreateSquareCutQuery()));
+            Assert.Throws<ArgumentException>(
+                () => RenderMeshCutter.Cut(
+                    new RenderMeshData(
+                        new[]
+                        {
+                            input.Vertices[0],
+                            input.Vertices[1],
+                            new RenderMeshVertex(
+                                new ApxVec3(2.0F, 0.0F, 0.0F),
+                                new ApxVec3(0.0F, 0.0F, 1.0F),
+                                2.0F,
+                                0.0F),
+                        },
+                        new uint[] { 0U, 1U, 2U }),
+                    CreateSquareCutQuery()));
+            Assert.Throws<ArgumentException>(
+                () => RenderMeshCutter.Cut(
+                    new RenderMeshData(
+                        new[]
+                        {
+                            input.Vertices[0],
+                            input.Vertices[1],
+                            input.Vertices[2],
+                            input.Vertices[3],
+                        },
+                        new uint[] { 0U, 1U, 2U }),
+                    CreateSquareCutQuery()));
             CollectionAssert.AreEqual(indicesBefore, input.Indices);
             for (int index = 0; index < verticesBefore.Length; ++index)
             {
@@ -926,6 +990,83 @@ namespace APEX.Native.Tests
                 Is.True);
             Assert.That(parameter, Is.EqualTo(0.5F));
             Assert.That(point.X, Is.EqualTo(0.0F));
+        }
+
+        [Test]
+        public void RenderMeshCutterHandlesVertexAndEdgeDegeneraciesWithoutInvalidTopology()
+        {
+            RenderMeshData input = CreateSquareRenderMesh();
+            ApxCutQuery throughOppositeVertices = new ApxCutQuery(
+                new ApxVec3(-1.0F, 1.0F, 0.0F),
+                new ApxVec3(2.0F, -2.0F, 0.0F),
+                new ApxVec3(1.0F, 1.0F, 0.0F),
+                0.05F);
+            ApxCutQuery alongSharedEdge = new ApxCutQuery(
+                new ApxVec3(-1.0F, -1.0F, 0.0F),
+                new ApxVec3(2.0F, 2.0F, 0.0F),
+                new ApxVec3(1.0F, -1.0F, 0.0F),
+                0.05F);
+
+            RenderMeshCutResult vertexResult =
+                RenderMeshCutter.Cut(input, throughOppositeVertices);
+            RenderMeshCutResult edgeResult =
+                RenderMeshCutter.Cut(input, alongSharedEdge);
+            Assert.That(vertexResult.CutTriangleCount, Is.EqualTo(0U));
+            Assert.That(vertexResult.CreatedSeamPairCount, Is.EqualTo(0U));
+            Assert.That(edgeResult.CutTriangleCount, Is.EqualTo(0U));
+            Assert.That(edgeResult.CreatedSeamPairCount, Is.EqualTo(0U));
+            CollectionAssert.AreEqual(input.Indices, vertexResult.Mesh.Indices);
+            CollectionAssert.AreEqual(input.Indices, edgeResult.Mesh.Indices);
+        }
+
+        [Test]
+        public void RenderMeshCutterRebuildsFiniteSurfaceNormalsAfterCut()
+        {
+            RenderMeshData input = CreateSquareRenderMesh();
+            for (int vertexId = 0; vertexId < input.Vertices.Length; ++vertexId)
+            {
+                RenderMeshVertex vertex = input.Vertices[vertexId];
+                vertex.Normal = new ApxVec3(1.0F, 0.0F, 0.0F);
+                input.Vertices[vertexId] = vertex;
+            }
+
+            RenderMeshCutResult result =
+                RenderMeshCutter.Cut(input, CreateSquareCutQuery());
+            foreach (RenderMeshVertex vertex in result.Mesh.Vertices)
+            {
+                AssertFinite(vertex.Normal);
+                Assert.That(vertex.Normal.X, Is.EqualTo(0.0F));
+                Assert.That(vertex.Normal.Y, Is.EqualTo(0.0F));
+                Assert.That(vertex.Normal.Z, Is.EqualTo(1.0F));
+            }
+        }
+
+        [Test]
+        public void RenderMeshCutterProcessesMultiSegmentPolylineInCallerOrder()
+        {
+            ApxCutQuery[] trajectory =
+            {
+                new ApxCutQuery(
+                    new ApxVec3(0.25F, -1.0F, 0.0F),
+                    new ApxVec3(0.25F, 2.0F, 0.0F),
+                    new ApxVec3(1.0F, 0.0F, 0.0F),
+                    0.05F),
+                new ApxCutQuery(
+                    new ApxVec3(-1.0F, 0.75F, 0.0F),
+                    new ApxVec3(2.0F, 0.75F, 0.0F),
+                    new ApxVec3(0.0F, 1.0F, 0.0F),
+                    0.05F),
+            };
+
+            RenderMeshCutResult first =
+                RenderMeshCutter.CutPolyline(CreateSquareRenderMesh(), trajectory);
+            RenderMeshCutResult second =
+                RenderMeshCutter.CutPolyline(CreateSquareRenderMesh(), trajectory);
+            Assert.That(first.CutTriangleCount, Is.GreaterThan(2U));
+            Assert.That(first.CreatedSeamPairCount, Is.GreaterThan(3U));
+            Assert.That(HashRenderMeshCutResult(first), Is.EqualTo(HashRenderMeshCutResult(second)));
+            Assert.That(RenderMeshArea(first.Mesh), Is.EqualTo(1.0F).Within(1.0e-5F));
+            AssertValidRenderTopology(first.Mesh);
         }
 
         [Test]
@@ -981,6 +1122,257 @@ namespace APEX.Native.Tests
         }
 
         [Test]
+        public void CoupledMeshCutterCommitsOneLiteralQueryToSimulationAndRenderMeshes()
+        {
+            using (NativeWorld world = NativeWorld.Create(
+                ApxWorldDesc.Create(
+                    ApxBackendKind.Cpu,
+                    FixedTimeStep,
+                    4,
+                    default,
+                    0.0F,
+                    5),
+                6U))
+            {
+                world.AddParticles(
+                    new[]
+                    {
+                        new ApxParticleDesc(default, default, 1.0F),
+                        new ApxParticleDesc(
+                            new ApxVec3(1.0F, 0.0F, 0.0F),
+                            default,
+                            0.0F),
+                        new ApxParticleDesc(
+                            new ApxVec3(-1.0F, 0.0F, 0.0F),
+                            default,
+                            0.0F),
+                        new ApxParticleDesc(
+                            new ApxVec3(0.0F, 1.0F, 0.0F),
+                            default,
+                            0.0F),
+                        new ApxParticleDesc(
+                            new ApxVec3(0.0F, -1.0F, 0.0F),
+                            default,
+                            0.0F),
+                    });
+                world.AddClothDistanceConstraints(
+                    new[]
+                    {
+                        new ApxClothDistanceConstraintDesc(
+                            0, 1, 1.0F, 0.0F, 100.0F, ApxClothDirection.Warp),
+                        new ApxClothDistanceConstraintDesc(
+                            0, 2, 1.0F, 0.0F, 100.0F, ApxClothDirection.Warp),
+                        new ApxClothDistanceConstraintDesc(
+                            0, 3, 1.0F, 0.0F, 100.0F, ApxClothDirection.Weft),
+                        new ApxClothDistanceConstraintDesc(
+                            0, 4, 1.0F, 0.0F, 100.0F, ApxClothDirection.Weft),
+                    });
+                world.Step(FixedTimeStep * 0.5F);
+                ApxCutQuery query = new ApxCutQuery(
+                    new ApxVec3(0.0F, -2.0F, 0.0F),
+                    new ApxVec3(0.0F, 2.0F, 0.0F),
+                    new ApxVec3(1.0F, 0.0F, 0.0F),
+                    0.1F);
+
+                CoupledMeshCutResult result =
+                    CoupledMeshCutter.Cut(world, CreateCenteredSquareRenderMesh(), query);
+                Assert.That(result.Render.CutTriangleCount, Is.EqualTo(2U));
+                Assert.That(result.Render.CreatedSeamPairCount, Is.EqualTo(3U));
+                Assert.That(result.Simulation.CutId, Is.EqualTo(0U));
+                Assert.That(result.Simulation.CutConstraintCount, Is.EqualTo(2U));
+                Assert.That(result.Simulation.SplitParticleCount, Is.EqualTo(1U));
+                Assert.That(result.Simulation.FirstSplitParticleId, Is.EqualTo(5U));
+                CollectionAssert.AreEqual(
+                    new uint[] { 2U, 3U },
+                    result.SimulationDetails.DeactivatedConstraintIds);
+                CollectionAssert.AreEqual(
+                    new uint[] { 0U, 3U, 4U },
+                    result.SimulationDetails.AffectedParticleIds);
+                CollectionAssert.AreEqual(
+                    new uint[] { 5U },
+                    result.SimulationDetails.ActivatedParticleIds);
+            }
+        }
+
+        [Test]
+        public void ObjCutLegacyPlanePathRemainsDefaultAndNumericallyStable()
+        {
+            Type objCutType = Type.GetType("ObjCut, Assembly-CSharp", true);
+            UnityEngine.GameObject gameObject =
+                new UnityEngine.GameObject("P1-5 Legacy ObjCut Regression");
+            try
+            {
+                UnityEngine.Component component = gameObject.AddComponent(objCutType);
+                FieldInfo preciseField = objCutType.GetField("usePreciseRenderMeshCut");
+                Assert.That(preciseField, Is.Not.Null);
+                Assert.That((bool)preciseField.GetValue(component), Is.False);
+
+                objCutType.GetField("planeNormal").SetValue(
+                    component,
+                    new UnityEngine.Vector3(1.0F, 0.0F, 0.0F));
+                objCutType.GetField("planePoint").SetValue(
+                    component,
+                    UnityEngine.Vector3.zero);
+                MethodInfo trianglePlane = objCutType.GetMethod(
+                    "DoesTriIntersectPlane",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                bool[] classifications = (bool[])trianglePlane.Invoke(
+                    component,
+                    new object[]
+                    {
+                        new UnityEngine.Vector3(-1.0F, 0.0F, 0.0F),
+                        new UnityEngine.Vector3(1.0F, 0.0F, 0.0F),
+                        new UnityEngine.Vector3(1.0F, 1.0F, 0.0F),
+                    });
+                CollectionAssert.AreEqual(new[] { true, false, true }, classifications);
+
+                MethodInfo intersect = objCutType.GetMethod(
+                    "GetIntersectPoint",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                UnityEngine.Vector3 point = (UnityEngine.Vector3)intersect.Invoke(
+                    component,
+                    new object[]
+                    {
+                        new UnityEngine.Vector3(1.0F, 0.0F, 0.0F),
+                        UnityEngine.Vector3.zero,
+                        new UnityEngine.Vector3(-1.0F, 0.0F, 0.0F),
+                        new UnityEngine.Vector3(1.0F, 0.0F, 0.0F),
+                    });
+                Assert.That(point, Is.EqualTo(UnityEngine.Vector3.zero));
+                Assert.That(
+                    UnityEditor.AssetDatabase.AssetPathToGUID(
+                        "Assets/Scripts/APEX/Usage/ObjCut.cs"),
+                    Is.EqualTo("14ff20beb35d4474883ef8a2d59846e0"));
+                Assert.That(
+                    UnityEditor.AssetDatabase.AssetPathToGUID(
+                        "Assets/Scenes/CutTest.unity"),
+                    Is.EqualTo("cde88b09b7379fa4dad0251dd7c34824"));
+
+                Type intersectUtilType = Type.GetType(
+                    "APEX.Math.Graphics.IntersectUtil, Assembly-CSharp",
+                    true);
+                MethodInfo sharedPrimitive = intersectUtilType.GetMethod(
+                    "TryIntersectSegmentPlane",
+                    BindingFlags.Static | BindingFlags.Public);
+                Type float3Type = Type.GetType(
+                    "Unity.Mathematics.float3, Unity.Mathematics",
+                    true);
+                object zero = Activator.CreateInstance(
+                    float3Type,
+                    new object[] { 0.0F, 0.0F, 0.0F });
+                object[] primitiveArguments =
+                {
+                    Activator.CreateInstance(
+                        float3Type,
+                        new object[] { -1.0F, 0.0F, 0.0F }),
+                    Activator.CreateInstance(
+                        float3Type,
+                        new object[] { 1.0F, 0.0F, 0.0F }),
+                    zero,
+                    Activator.CreateInstance(
+                        float3Type,
+                        new object[] { 1.0F, 0.0F, 0.0F }),
+                    0.0F,
+                    zero,
+                };
+                Assert.That(
+                    (bool)sharedPrimitive.Invoke(null, primitiveArguments),
+                    Is.True);
+                Assert.That((float)primitiveArguments[4], Is.EqualTo(0.5F));
+                Assert.That(
+                    (float)float3Type.GetField("x").GetValue(primitiveArguments[5]),
+                    Is.EqualTo(0.0F));
+                Assert.That(
+                    (float)float3Type.GetField("y").GetValue(primitiveArguments[5]),
+                    Is.EqualTo(0.0F));
+                Assert.That(
+                    (float)float3Type.GetField("z").GetValue(primitiveArguments[5]),
+                    Is.EqualTo(0.0F));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(gameObject);
+            }
+        }
+
+        [Test]
+        public void ObjCutPreciseEntryPublishesFiniteMeshUvNormalsAndCollider()
+        {
+            Type objCutType = Type.GetType("ObjCut, Assembly-CSharp", true);
+            UnityEngine.GameObject cutterObject =
+                new UnityEngine.GameObject("P1-5 Precise Cutter");
+            UnityEngine.GameObject targetObject =
+                new UnityEngine.GameObject("P1-5 Precise Target");
+            UnityEngine.Mesh source = new UnityEngine.Mesh { name = "P1-5 Square" };
+            UnityEngine.Mesh published = null;
+            try
+            {
+                source.vertices = new[]
+                {
+                    new UnityEngine.Vector3(0.0F, 0.0F, 0.0F),
+                    new UnityEngine.Vector3(1.0F, 0.0F, 0.0F),
+                    new UnityEngine.Vector3(1.0F, 1.0F, 0.0F),
+                    new UnityEngine.Vector3(0.0F, 1.0F, 0.0F),
+                };
+                source.normals = new[]
+                {
+                    UnityEngine.Vector3.forward,
+                    UnityEngine.Vector3.forward,
+                    UnityEngine.Vector3.forward,
+                    UnityEngine.Vector3.forward,
+                };
+                source.uv = new[]
+                {
+                    new UnityEngine.Vector2(0.0F, 0.0F),
+                    new UnityEngine.Vector2(1.0F, 0.0F),
+                    new UnityEngine.Vector2(1.0F, 1.0F),
+                    new UnityEngine.Vector2(0.0F, 1.0F),
+                };
+                source.triangles = new[] { 0, 1, 2, 0, 2, 3 };
+                UnityEngine.MeshFilter meshFilter =
+                    targetObject.AddComponent<UnityEngine.MeshFilter>();
+                UnityEngine.MeshCollider meshCollider =
+                    targetObject.AddComponent<UnityEngine.MeshCollider>();
+                meshFilter.sharedMesh = source;
+                meshCollider.sharedMesh = source;
+
+                UnityEngine.Component cutter = cutterObject.AddComponent(objCutType);
+                objCutType.GetField("target").SetValue(cutter, targetObject);
+                MethodInfo preciseCut = objCutType.GetMethod(
+                    "ApplyPreciseWorldCut",
+                    BindingFlags.Instance | BindingFlags.Public);
+                preciseCut.Invoke(
+                    cutter,
+                    new object[] { CreateSquareCutQuery() });
+
+                published = meshFilter.sharedMesh;
+                Assert.That(published, Is.Not.SameAs(source));
+                Assert.That(published.vertexCount, Is.EqualTo(10));
+                Assert.That(published.triangles, Has.Length.EqualTo(18));
+                Assert.That(published.uv, Has.Length.EqualTo(10));
+                Assert.That(published.normals, Has.Length.EqualTo(10));
+                foreach (UnityEngine.Vector3 normal in published.normals)
+                {
+                    Assert.That(float.IsNaN(normal.x), Is.False);
+                    Assert.That(float.IsNaN(normal.y), Is.False);
+                    Assert.That(float.IsNaN(normal.z), Is.False);
+                    Assert.That(normal.z, Is.EqualTo(1.0F));
+                }
+                Assert.That(meshCollider.sharedMesh, Is.SameAs(published));
+            }
+            finally
+            {
+                if (published != null && published != source)
+                {
+                    UnityEngine.Object.DestroyImmediate(published);
+                }
+                UnityEngine.Object.DestroyImmediate(source);
+                UnityEngine.Object.DestroyImmediate(cutterObject);
+                UnityEngine.Object.DestroyImmediate(targetObject);
+            }
+        }
+
+        [Test]
         public void RenderMeshCutterPerfMeetsFixedHundredThousandTriangleGate()
         {
             RenderMeshData input = CreateRenderGrid(251, 201);
@@ -995,24 +1387,42 @@ namespace APEX.Native.Tests
             Assert.That(warmup.CutTriangleCount, Is.EqualTo(400U));
 
             double[] samples = new double[5];
+            long[] allocatedBytes = new long[5];
             for (int sample = 0; sample < samples.Length; ++sample)
             {
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
+                long allocationStart = GC.GetAllocatedBytesForCurrentThread();
+                long managedHeapStart = GC.GetTotalMemory(false);
                 System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
                 RenderMeshCutResult result = RenderMeshCutter.Cut(input, query);
                 stopwatch.Stop();
+                long threadAllocation =
+                    GC.GetAllocatedBytesForCurrentThread() - allocationStart;
+                long managedHeapDelta =
+                    GC.GetTotalMemory(false) - managedHeapStart;
+                // Unity's Mono profile can report zero for the per-thread API.
+                // Keep the retained managed-heap delta as the deterministic
+                // fallback while the result is still strongly reachable.
+                allocatedBytes[sample] =
+                    Math.Max(threadAllocation, Math.Max(0L, managedHeapDelta));
                 Assert.That(result.CutTriangleCount, Is.EqualTo(400U));
                 Assert.That(result.CreatedSeamPairCount, Is.EqualTo(401U));
                 samples[sample] = stopwatch.Elapsed.TotalMilliseconds;
             }
 
             Array.Sort(samples);
+            Array.Sort(allocatedBytes);
             double medianMilliseconds = samples[samples.Length / 2];
+            long medianAllocatedBytes = allocatedBytes[allocatedBytes.Length / 2];
             TestContext.Out.WriteLine(
-                "APX_RENDER_CUT_PERF triangles=100000 samples=5 median_ms={0:F4} gate_ms=1500.0000",
-                medianMilliseconds);
+                "APX_RENDER_CUT_PERF triangles=100000 samples=5 median_ms={0:F4} " +
+                "median_gc_heap_delta_bytes={1} gate_ms=1500.0000 " +
+                "gate_gc_heap_delta_bytes=8388608",
+                medianMilliseconds,
+                medianAllocatedBytes);
             Assert.That(medianMilliseconds, Is.LessThanOrEqualTo(1500.0));
+            Assert.That(medianAllocatedBytes, Is.LessThanOrEqualTo(8L * 1024L * 1024L));
         }
 
         [Test]
@@ -1341,6 +1751,36 @@ namespace APEX.Native.Tests
                 new uint[] { 0U, 1U, 2U, 0U, 2U, 3U });
         }
 
+        private static RenderMeshData CreateCenteredSquareRenderMesh()
+        {
+            ApxVec3 normal = new ApxVec3(0.0F, 0.0F, 1.0F);
+            return new RenderMeshData(
+                new[]
+                {
+                    new RenderMeshVertex(
+                        new ApxVec3(-1.0F, -1.0F, 0.0F),
+                        normal,
+                        0.0F,
+                        0.0F),
+                    new RenderMeshVertex(
+                        new ApxVec3(1.0F, -1.0F, 0.0F),
+                        normal,
+                        1.0F,
+                        0.0F),
+                    new RenderMeshVertex(
+                        new ApxVec3(1.0F, 1.0F, 0.0F),
+                        normal,
+                        1.0F,
+                        1.0F),
+                    new RenderMeshVertex(
+                        new ApxVec3(-1.0F, 1.0F, 0.0F),
+                        normal,
+                        0.0F,
+                        1.0F),
+                },
+                new uint[] { 0U, 1U, 2U, 0U, 2U, 3U });
+        }
+
         private static ApxCutQuery CreateSquareCutQuery()
         {
             return new ApxCutQuery(
@@ -1400,6 +1840,64 @@ namespace APEX.Native.Tests
             Assert.That(FloatBits(actual.Normal.Z), Is.EqualTo(FloatBits(expected.Normal.Z)));
             Assert.That(FloatBits(actual.U), Is.EqualTo(FloatBits(expected.U)));
             Assert.That(FloatBits(actual.V), Is.EqualTo(FloatBits(expected.V)));
+        }
+
+        private static float RenderMeshArea(RenderMeshData mesh)
+        {
+            float area = 0.0F;
+            for (int offset = 0; offset < mesh.Indices.Length; offset += 3)
+            {
+                area += TriangleArea(
+                    mesh.Vertices[mesh.Indices[offset]].Position,
+                    mesh.Vertices[mesh.Indices[offset + 1]].Position,
+                    mesh.Vertices[mesh.Indices[offset + 2]].Position);
+            }
+            return area;
+        }
+
+        private static float TriangleArea(ApxVec3 first, ApxVec3 second, ApxVec3 third)
+        {
+            float firstX = second.X - first.X;
+            float firstY = second.Y - first.Y;
+            float firstZ = second.Z - first.Z;
+            float secondX = third.X - first.X;
+            float secondY = third.Y - first.Y;
+            float secondZ = third.Z - first.Z;
+            float crossX = firstY * secondZ - firstZ * secondY;
+            float crossY = firstZ * secondX - firstX * secondZ;
+            float crossZ = firstX * secondY - firstY * secondX;
+            return 0.5F * (float)Math.Sqrt(
+                crossX * crossX + crossY * crossY + crossZ * crossZ);
+        }
+
+        private static void AssertValidRenderTopology(RenderMeshData mesh)
+        {
+            Assert.That(mesh.Indices.Length % 3, Is.EqualTo(0));
+            bool[] referenced = new bool[mesh.Vertices.Length];
+            for (int offset = 0; offset < mesh.Indices.Length; offset += 3)
+            {
+                uint id0 = mesh.Indices[offset];
+                uint id1 = mesh.Indices[offset + 1];
+                uint id2 = mesh.Indices[offset + 2];
+                Assert.That(id0, Is.LessThan((uint)mesh.Vertices.Length));
+                Assert.That(id1, Is.LessThan((uint)mesh.Vertices.Length));
+                Assert.That(id2, Is.LessThan((uint)mesh.Vertices.Length));
+                Assert.That(
+                    TriangleArea(
+                        mesh.Vertices[id0].Position,
+                        mesh.Vertices[id1].Position,
+                        mesh.Vertices[id2].Position),
+                    Is.GreaterThan(0.0F));
+                referenced[id0] = true;
+                referenced[id1] = true;
+                referenced[id2] = true;
+            }
+            CollectionAssert.DoesNotContain(referenced, false);
+            foreach (RenderMeshVertex vertex in mesh.Vertices)
+            {
+                AssertFinite(vertex.Position);
+                AssertFinite(vertex.Normal);
+            }
         }
 
         private static ulong HashRenderMeshCutResult(RenderMeshCutResult result)
