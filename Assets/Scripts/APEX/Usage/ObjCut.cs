@@ -211,6 +211,39 @@ public class ObjCut : MonoBehaviour
 
     void CutPreciseRenderMesh()
     {
+        Transform blade = planeLocation != null ? planeLocation : transform;
+        float halfLength = Mathf.Max(0.0F, size) * 0.5F;
+        ApplyPreciseWorldCut(
+            new ApxCutQuery(
+                ToApx(blade.position - blade.right * halfLength),
+                ToApx(blade.position + blade.right * halfLength),
+                ToApx(blade.forward),
+                Mathf.Max(0.0F, tickness)));
+    }
+
+    public void ApplyPreciseWorldCut(ApxCutQuery worldQuery)
+    {
+        if (target == null)
+            return;
+
+        Vector3 scale = target.transform.lossyScale;
+        float maximumScale = Mathf.Max(
+            Mathf.Abs(scale.x),
+            Mathf.Max(Mathf.Abs(scale.y), Mathf.Abs(scale.z)));
+        ApxCutQuery localQuery = new ApxCutQuery(
+            ToApx(target.transform.InverseTransformPoint(ToUnity(worldQuery.Start))),
+            ToApx(target.transform.InverseTransformPoint(ToUnity(worldQuery.End))),
+            ToApx(
+                target.transform
+                    .InverseTransformDirection(ToUnity(worldQuery.SideNormal))
+                    .normalized),
+            worldQuery.Radius /
+                Mathf.Max(maximumScale, 1.0e-6F));
+        ApplyPreciseLocalCut(localQuery);
+    }
+
+    void ApplyPreciseLocalCut(ApxCutQuery localQuery)
+    {
         MeshFilter meshFilter = target.GetComponent<MeshFilter>();
         if (meshFilter == null || meshFilter.sharedMesh == null)
             return;
@@ -242,28 +275,9 @@ public class ObjCut : MonoBehaviour
             indices[index] = checked((uint)sourceIndices[index]);
         }
 
-        Transform blade = planeLocation != null ? planeLocation : transform;
-        float halfLength = Mathf.Max(0.0F, size) * 0.5F;
-        Vector3 localStart = target.transform.InverseTransformPoint(
-            blade.position - blade.right * halfLength);
-        Vector3 localEnd = target.transform.InverseTransformPoint(
-            blade.position + blade.right * halfLength);
-        Vector3 localSideNormal =
-            target.transform.InverseTransformDirection(blade.forward).normalized;
-        Vector3 scale = target.transform.lossyScale;
-        float maximumScale = Mathf.Max(
-            Mathf.Abs(scale.x),
-            Mathf.Max(Mathf.Abs(scale.y), Mathf.Abs(scale.z)));
-        float localRadius = Mathf.Max(0.0F, tickness) /
-            Mathf.Max(maximumScale, 1.0e-6F);
-
         RenderMeshCutResult result = RenderMeshCutter.Cut(
             new RenderMeshData(vertices, indices),
-            new ApxCutQuery(
-                ToApx(localStart),
-                ToApx(localEnd),
-                ToApx(localSideNormal),
-                localRadius));
+            localQuery);
 
         RenderMeshVertex[] resultVertices = result.Mesh.Vertices;
         Vector3[] positions = new Vector3[resultVertices.Length];
