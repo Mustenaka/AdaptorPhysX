@@ -856,6 +856,61 @@ namespace APEX.Native.Tests
             }
         }
 
+        [TestCase(ApxBackendKind.Cpu)]
+        [TestCase(ApxBackendKind.Cuda)]
+        public void ActiveClothNeighborIsExcludedAndBrokenEdgeRestoresSelfCollision(
+            ApxBackendKind backend)
+        {
+            NativeWorld activeWorld = null;
+            NativeWorld brokenWorld = null;
+            try
+            {
+                activeWorld = CreateClothNeighborFilterWorld(backend, 2.0F);
+                brokenWorld = CreateClothNeighborFilterWorld(backend, 1.0F);
+            }
+            catch (ApxException exception)
+                when (backend == ApxBackendKind.Cuda &&
+                      (exception.Result == ApxResult.Unsupported ||
+                       exception.Result == ApxResult.BackendError))
+            {
+                activeWorld?.Dispose();
+                brokenWorld?.Dispose();
+                Assert.Ignore($"CUDA backend is unavailable: {exception.Message}");
+                return;
+            }
+
+            using (activeWorld)
+            using (brokenWorld)
+            {
+                const float InitialSeparationSquared = 0.01F;
+                const float CollisionDiameterSquared = 0.04F;
+                Assert.That(
+                    CollisionDiameterSquared - InitialSeparationSquared,
+                    Is.GreaterThan(0.02F),
+                    "Fixture must remain well inside the collision threshold.");
+
+                activeWorld.Step(FixedTimeStep);
+                ApxVec3[] activePositions = new ApxVec3[2];
+                Assert.That(activeWorld.ReadPositionSnapshot(activePositions), Is.EqualTo(2));
+                Assert.That(
+                    SeparationSquared(activePositions[0], activePositions[1]),
+                    Is.EqualTo(InitialSeparationSquared));
+                CollectionAssert.IsEmpty(activeWorld.GetBrokenClothDistanceConstraintIds());
+
+                brokenWorld.Step(FixedTimeStep);
+                ApxVec3[] brokenPositions = new ApxVec3[2];
+                Assert.That(brokenWorld.ReadPositionSnapshot(brokenPositions), Is.EqualTo(2));
+                AssertFinite(brokenPositions[0]);
+                AssertFinite(brokenPositions[1]);
+                CollectionAssert.AreEqual(
+                    new uint[] { 0U },
+                    brokenWorld.GetBrokenClothDistanceConstraintIds());
+                Assert.That(
+                    SeparationSquared(brokenPositions[0], brokenPositions[1]),
+                    Is.GreaterThan(InitialSeparationSquared + 0.02F));
+            }
+        }
+
         [Test]
         public void RenderMeshCutterCreatesStableInteriorSeamAndInterpolatesAttributes()
         {
@@ -1924,6 +1979,49 @@ namespace APEX.Native.Tests
                 2);
 
             return NativeWorld.Create(description);
+        }
+
+        private static NativeWorld CreateClothNeighborFilterWorld(
+            ApxBackendKind backend,
+            float breakThreshold)
+        {
+            NativeWorld world = NativeWorld.Create(
+                ApxWorldDesc.Create(
+                    backend,
+                    FixedTimeStep,
+                    1,
+                    default,
+                    ParticleRadius,
+                    2));
+            try
+            {
+                world.AddParticles(
+                    new[]
+                    {
+                        new ApxParticleDesc(default, default, 1.0F),
+                        new ApxParticleDesc(
+                            new ApxVec3(0.1F, 0.0F, 0.0F),
+                            default,
+                            1.0F),
+                    });
+                world.AddClothDistanceConstraints(
+                    new[]
+                    {
+                        new ApxClothDistanceConstraintDesc(
+                            0,
+                            1,
+                            0.1F,
+                            0.0F,
+                            breakThreshold,
+                            ApxClothDirection.Warp),
+                    });
+                return world;
+            }
+            catch
+            {
+                world.Dispose();
+                throw;
+            }
         }
 
         private static void RunFallingPair(NativeWorld world)
