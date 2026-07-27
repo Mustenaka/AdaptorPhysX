@@ -181,16 +181,15 @@ namespace APEX.Native.Tests
 
                 ApxVec3[] renderPositions = new ApxVec3[initialParticleCount];
                 ApxVec3[] renderNormals = new ApxVec3[initialParticleCount];
-                using (NativeArray<Vector3> unityPositions =
-                       new NativeArray<Vector3>(
-                           initialParticleCount,
-                           Allocator.Persistent,
-                           NativeArrayOptions.UninitializedMemory))
-                using (NativeArray<Vector3> unityNormals =
-                       new NativeArray<Vector3>(
-                           initialParticleCount,
-                           Allocator.Persistent,
-                           NativeArrayOptions.UninitializedMemory))
+                NativeArray<Vector3> unityPositions = new NativeArray<Vector3>(
+                    initialParticleCount,
+                    Allocator.Persistent,
+                    NativeArrayOptions.UninitializedMemory);
+                NativeArray<Vector3> unityNormals = new NativeArray<Vector3>(
+                    initialParticleCount,
+                    Allocator.Persistent,
+                    NativeArrayOptions.UninitializedMemory);
+                try
                 {
                     Mesh mesh = new Mesh
                     {
@@ -322,6 +321,11 @@ namespace APEX.Native.Tests
                     {
                         UnityEngine.Object.DestroyImmediate(mesh);
                     }
+                }
+                finally
+                {
+                    unityPositions.Dispose();
+                    unityNormals.Dispose();
                 }
             }
         }
