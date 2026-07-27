@@ -13,12 +13,12 @@ namespace APEX.Native.Tests
         private const float ParticleRadius = 0.1F;
 
         [Test]
-        public void AbiVersionMatchesAdditiveVersionZeroPointFive()
+        public void AbiVersionMatchesAdditiveVersionZeroPointSix()
         {
             NativeWorld.GetAbiVersion(out uint major, out uint minor);
 
             Assert.That(major, Is.EqualTo(0U));
-            Assert.That(minor, Is.EqualTo(5U));
+            Assert.That(minor, Is.EqualTo(6U));
         }
 
         [Test]
@@ -29,6 +29,7 @@ namespace APEX.Native.Tests
             Assert.That(Marshal.SizeOf<ApxVec4>(), Is.EqualTo(16));
             Assert.That(Marshal.SizeOf<ApxWorldDesc>(), Is.EqualTo(48));
             Assert.That(Marshal.SizeOf<ApxParticleDesc>(), Is.EqualTo(28));
+            Assert.That(Marshal.SizeOf<ApxKinematicTarget>(), Is.EqualTo(20));
             Assert.That(Marshal.SizeOf<ApxDistanceConstraintDesc>(), Is.EqualTo(16));
             Assert.That(Marshal.SizeOf<ApxClothDistanceConstraintDesc>(), Is.EqualTo(24));
             Assert.That(Marshal.SizeOf<ApxBendConstraintDesc>(), Is.EqualTo(24));
@@ -51,6 +52,9 @@ namespace APEX.Native.Tests
             AssertOffset<ApxParticleDesc>(nameof(ApxParticleDesc.Position), 0);
             AssertOffset<ApxParticleDesc>(nameof(ApxParticleDesc.Velocity), 12);
             AssertOffset<ApxParticleDesc>(nameof(ApxParticleDesc.InverseMass), 24);
+            AssertOffset<ApxKinematicTarget>(nameof(ApxKinematicTarget.ParticleId), 0);
+            AssertOffset<ApxKinematicTarget>(nameof(ApxKinematicTarget.Active), 4);
+            AssertOffset<ApxKinematicTarget>(nameof(ApxKinematicTarget.Position), 8);
             AssertOffset<ApxDistanceConstraintDesc>(
                 nameof(ApxDistanceConstraintDesc.ParticleA),
                 0);
@@ -128,7 +132,7 @@ namespace APEX.Native.Tests
         }
 
         [Test]
-        public void NativeMethodsExposeExactlyTheAdditiveTwentyOneCdeclEntrypoints()
+        public void NativeMethodsExposeExactlyTheAdditiveTwentyTwoCdeclEntrypoints()
         {
             Type nativeMethods = typeof(NativeWorld).Assembly.GetType(
                 "APEX.Native.NativeMethods",
@@ -157,6 +161,7 @@ namespace APEX.Native.Tests
                 "apxGetRenderVertexNormals",
                 "apxCut",
                 "apxGetLastCutDetails",
+                "apxSetKinematicTargets",
                 "apxSetColliderProxies",
                 "apxStep",
                 "apxMapParticleBuffer",
@@ -1501,10 +1506,257 @@ namespace APEX.Native.Tests
         }
 
         [Test]
+        public void KinematicGrabMovesPinsAndReleasesNativeParticle()
+        {
+            using (NativeWorld world = NativeWorld.Create(
+                ApxWorldDesc.Create(
+                    ApxBackendKind.Cpu,
+                    FixedTimeStep,
+                    4,
+                    new ApxVec3(0.0F, -9.81F, 0.0F))))
+            {
+                world.AddParticles(
+                    new[]
+                    {
+                        new ApxParticleDesc(default, default, 1.0F),
+                    });
+                ApxKinematicTarget[] batch =
+                {
+                    new ApxKinematicTarget(
+                        0U,
+                        true,
+                        new ApxVec3(2.0F, 3.0F, 4.0F)),
+                };
+
+                world.SetKinematicTargets(batch);
+                world.Step(FixedTimeStep);
+                AssertPosition(world, 2.0F, 3.0F, 4.0F);
+
+                batch[0] = new ApxKinematicTarget(
+                    0U,
+                    true,
+                    new ApxVec3(-1.0F, 5.0F, 0.5F));
+                world.SetKinematicTargets(batch);
+                world.Step(FixedTimeStep);
+                AssertPosition(world, -1.0F, 5.0F, 0.5F);
+
+                batch[0] = new ApxKinematicTarget(
+                    0U,
+                    false,
+                    new ApxVec3(-1.0F, 5.0F, 0.5F));
+                world.SetKinematicTargets(batch);
+                world.Step(FixedTimeStep);
+                using (MappedPositionSnapshot mapped = world.MapPositions())
+                {
+                    Assert.That(mapped[0].X, Is.EqualTo(-1.0F));
+                    Assert.That(mapped[0].Y, Is.LessThan(5.0F));
+                    Assert.That(mapped[0].Z, Is.EqualTo(0.5F));
+                    AssertFinite(mapped[0]);
+                }
+
+                Assert.Throws<ArgumentNullException>(
+                    () => world.SetKinematicTargets(null));
+                ApxException badId = Assert.Throws<ApxException>(
+                    () => world.SetKinematicTargets(
+                        new[]
+                        {
+                            new ApxKinematicTarget(1U, true, default),
+                        }));
+                Assert.That(badId.Result, Is.EqualTo(ApxResult.InvalidArgument));
+                ApxException badFlag = Assert.Throws<ApxException>(
+                    () => world.SetKinematicTargets(
+                        new[]
+                        {
+                            new ApxKinematicTarget
+                            {
+                                ParticleId = 0U,
+                                Active = 2U,
+                                Position = default,
+                            },
+                        }));
+                Assert.That(badFlag.Result, Is.EqualTo(ApxResult.InvalidArgument));
+                ApxException badPosition = Assert.Throws<ApxException>(
+                    () => world.SetKinematicTargets(
+                        new[]
+                        {
+                            new ApxKinematicTarget(
+                                0U,
+                                true,
+                                new ApxVec3(float.NaN, 0.0F, 0.0F)),
+                        }));
+                Assert.That(badPosition.Result, Is.EqualTo(ApxResult.InvalidArgument));
+            }
+        }
+
+        [Test]
+        public void PointerRayFeedsFixedTickTrajectoryIntoNativeCut()
+        {
+            Type interactorType = Type.GetType(
+                "APEX.Usage.ApxBladeInteractor, Assembly-CSharp",
+                true);
+            Type pickTargetType = Type.GetType(
+                "APEX.Usage.ApxParticlePickTarget, Assembly-CSharp",
+                true);
+            UnityEngine.GameObject interactorObject =
+                new UnityEngine.GameObject("P1-6 ray interactor");
+            UnityEngine.GameObject hitObject =
+                UnityEngine.GameObject.CreatePrimitive(UnityEngine.PrimitiveType.Cube);
+            NativeWorld world = null;
+            try
+            {
+                world = NativeWorld.Create(
+                    ApxWorldDesc.Create(
+                        ApxBackendKind.Cpu,
+                        FixedTimeStep,
+                        4,
+                        default,
+                        0.1F,
+                        3),
+                    4U);
+                world.AddParticles(
+                    new[]
+                    {
+                        new ApxParticleDesc(default, default, 1.0F),
+                        new ApxParticleDesc(
+                            new ApxVec3(1.0F, 0.0F, 0.0F),
+                            default,
+                            0.0F),
+                        new ApxParticleDesc(
+                            new ApxVec3(-1.0F, 0.0F, 0.0F),
+                            default,
+                            0.0F),
+                    });
+                world.AddClothDistanceConstraints(
+                    new[]
+                    {
+                        new ApxClothDistanceConstraintDesc(
+                            0U, 1U, 1.0F, 0.0F, 100.0F, ApxClothDirection.Warp),
+                        new ApxClothDistanceConstraintDesc(
+                            0U, 2U, 1.0F, 0.0F, 100.0F, ApxClothDirection.Weft),
+                    });
+                world.Step(FixedTimeStep * 0.5F);
+
+                UnityEngine.Component interactor =
+                    interactorObject.AddComponent(interactorType);
+                interactorObject.transform.rotation = UnityEngine.Quaternion.LookRotation(
+                    UnityEngine.Vector3.right,
+                    UnityEngine.Vector3.up);
+                interactorType.GetMethod("BindNativeWorld").Invoke(
+                    interactor,
+                    new object[] { world });
+
+                UnityEngine.Component pickTarget = hitObject.AddComponent(pickTargetType);
+                pickTargetType.GetField("particleId").SetValue(pickTarget, 0U);
+                hitObject.transform.localScale =
+                    new UnityEngine.Vector3(0.1F, 0.1F, 0.001F);
+                MethodInfo submitRay = interactorType.GetMethod("TrySubmitPointerRay");
+                MethodInfo fixedUpdate = interactorType.GetMethod(
+                    "FixedUpdate",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+
+                hitObject.transform.position =
+                    new UnityEngine.Vector3(0.0F, -0.5F, 0.0F);
+                UnityEngine.Physics.SyncTransforms();
+                Assert.That(
+                    submitRay.Invoke(
+                        interactor,
+                        new object[]
+                        {
+                            new UnityEngine.Ray(
+                                new UnityEngine.Vector3(0.0F, -0.5F, -2.0F),
+                                UnityEngine.Vector3.forward),
+                            true,
+                            false,
+                        }),
+                    Is.True);
+                fixedUpdate.Invoke(interactor, null);
+
+                hitObject.transform.position =
+                    new UnityEngine.Vector3(0.0F, 0.5F, 0.0F);
+                UnityEngine.Physics.SyncTransforms();
+                Assert.That(
+                    submitRay.Invoke(
+                        interactor,
+                        new object[]
+                        {
+                            new UnityEngine.Ray(
+                                new UnityEngine.Vector3(0.0F, 0.5F, -2.0F),
+                                UnityEngine.Vector3.forward),
+                            true,
+                            false,
+                        }),
+                    Is.True);
+                fixedUpdate.Invoke(interactor, null);
+
+                Assert.That(
+                    interactorType.GetField("nativeGrabParticleId").GetValue(interactor),
+                    Is.EqualTo(0U));
+                Assert.That(world.ParticleCount, Is.EqualTo(4U));
+                CollectionAssert.AreEqual(
+                    new uint[] { 3U },
+                    world.GetLastCutDetails().ActivatedParticleIds);
+            }
+            finally
+            {
+                world?.Dispose();
+                UnityEngine.Object.DestroyImmediate(interactorObject);
+                UnityEngine.Object.DestroyImmediate(hitObject);
+            }
+        }
+
+        [Test]
+        public void InteractionRecordingRoundTripsImmutableFixedTickEvents()
+        {
+            InteractionReplayTimeline timeline = CreateRecordedGrabTimeline();
+            Assert.That(timeline.Count, Is.EqualTo(60));
+            RecordedInteractionEvent[] serialized = timeline.ToArray();
+            Assert.That(serialized[0].SequenceId, Is.EqualTo(0U));
+            Assert.That(serialized[0].FixedTick, Is.EqualTo(1UL));
+            Assert.That(serialized[0].Kind, Is.EqualTo(InteractionEventKind.GrabBegin));
+            Assert.That(serialized[59].Kind, Is.EqualTo(InteractionEventKind.GrabEnd));
+            ulong hash = timeline.ContentHash;
+            serialized[0].Position.X = 999.0F;
+            Assert.That(timeline[0].Position.X, Is.EqualTo(0.125F));
+            Assert.That(timeline.ContentHash, Is.EqualTo(hash));
+
+            InteractionReplayCursor cursor = new InteractionReplayCursor(timeline);
+            for (ulong tick = 1; tick <= 60; ++tick)
+            {
+                Assert.That(cursor.TryDequeue(tick, out RecordedInteractionEvent item), Is.True);
+                Assert.That(item.FixedTick, Is.EqualTo(tick));
+                Assert.That(cursor.TryDequeue(tick, out _), Is.False);
+            }
+            Assert.That(cursor.IsComplete, Is.True);
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => cursor.TryDequeue(59UL, out _));
+            Assert.Throws<ArgumentException>(
+                () => new InteractionReplayTimeline(
+                    new[]
+                    {
+                        new RecordedInteractionEvent
+                        {
+                            SequenceId = 1U,
+                            FixedTick = 1UL,
+                            Kind = InteractionEventKind.GrabMove,
+                        },
+                    }));
+        }
+
+        [Test]
         public void BladeInteractionDeterminismMatchesCompleteSixtyTickCommandHash()
         {
             ulong first = RunBladeInteractionHash();
             ulong second = RunBladeInteractionHash();
+            Assert.That(first, Is.EqualTo(second));
+        }
+
+        [Test]
+        public void RecordedGrabReplayProducesBitExactNativeStateForSixtyTicks()
+        {
+            InteractionReplayTimeline timeline = CreateRecordedGrabTimeline();
+            ulong first = RunNativeInteractionReplayHash(timeline);
+            ulong second = RunNativeInteractionReplayHash(
+                new InteractionReplayTimeline(timeline.ToArray()));
             Assert.That(first, Is.EqualTo(second));
         }
 
@@ -1953,6 +2205,89 @@ namespace APEX.Native.Tests
         {
             byte[] bytes = BitConverter.GetBytes(value);
             return BitConverter.ToUInt32(bytes, 0);
+        }
+
+        private static void AssertPosition(
+            NativeWorld world,
+            float expectedX,
+            float expectedY,
+            float expectedZ)
+        {
+            using (MappedPositionSnapshot mapped = world.MapPositions())
+            {
+                Assert.That(mapped.Count, Is.EqualTo(1));
+                Assert.That(mapped[0].X, Is.EqualTo(expectedX));
+                Assert.That(mapped[0].Y, Is.EqualTo(expectedY));
+                Assert.That(mapped[0].Z, Is.EqualTo(expectedZ));
+            }
+        }
+
+        private static InteractionReplayTimeline CreateRecordedGrabTimeline()
+        {
+            InteractionRecorder recorder = new InteractionRecorder(60);
+            for (uint tick = 1; tick <= 60; ++tick)
+            {
+                GrabCommandPhase phase = tick == 1
+                    ? GrabCommandPhase.Begin
+                    : tick == 60
+                        ? GrabCommandPhase.End
+                        : GrabCommandPhase.Move;
+                recorder.Record(
+                    new GrabCommand(
+                        tick - 1U,
+                        tick,
+                        0U,
+                        phase,
+                        new ApxVec3(
+                            tick * 0.125F,
+                            tick * 0.03125F,
+                            -((float)tick * 0.015625F))));
+            }
+            return recorder.BuildTimeline();
+        }
+
+        private static ulong RunNativeInteractionReplayHash(
+            InteractionReplayTimeline timeline)
+        {
+            const ulong offsetBasis = 1469598103934665603UL;
+            const ulong prime = 1099511628211UL;
+            InteractionReplayCursor cursor = new InteractionReplayCursor(timeline);
+            ApxKinematicTarget[] target = new ApxKinematicTarget[1];
+            ulong hash = offsetBasis;
+            using (NativeWorld world = NativeWorld.Create(
+                ApxWorldDesc.Create(
+                    ApxBackendKind.Cpu,
+                    FixedTimeStep,
+                    4,
+                    new ApxVec3(0.0F, -9.81F, 0.0F))))
+            {
+                world.AddParticles(
+                    new[]
+                    {
+                        new ApxParticleDesc(default, default, 1.0F),
+                    });
+                for (ulong tick = 1; tick <= 60; ++tick)
+                {
+                    Assert.That(
+                        cursor.TryDequeue(tick, out RecordedInteractionEvent item),
+                        Is.True);
+                    target[0] = new ApxKinematicTarget(
+                        item.ParticleId,
+                        item.Kind != InteractionEventKind.GrabEnd,
+                        item.Position);
+                    world.SetKinematicTargets(target);
+                    world.Step(FixedTimeStep);
+                    using (MappedPositionSnapshot mapped = world.MapPositions())
+                    {
+                        hash = (hash ^ tick) * prime;
+                        hash = (hash ^ FloatBits(mapped[0].X)) * prime;
+                        hash = (hash ^ FloatBits(mapped[0].Y)) * prime;
+                        hash = (hash ^ FloatBits(mapped[0].Z)) * prime;
+                    }
+                }
+            }
+            Assert.That(cursor.IsComplete, Is.True);
+            return hash;
         }
 
         private static ulong RunBladeInteractionHash()
