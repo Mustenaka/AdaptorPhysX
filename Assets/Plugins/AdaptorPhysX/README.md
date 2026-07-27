@@ -27,10 +27,10 @@ NVIDIA dependency. The script also verifies that both existing Unity `.meta`
 files are unchanged.
 
 - `x86_64/adaptorphysx.dll`
-  - native source baseline: `ffa7523aae3fe50e6db6c37d97f46fef49219e0b`
+  - native source baseline: `9a896344c88e72a5b842d511e934268cf92e8831`
   - build: CUDA Release, Ninja + MSVC 14.44, `sm_89`
   - current packaged SHA-256:
-    `8E945EFB477E42B685854775B75B4FEDE80C1D274323A17E269B59873BA1509F`
+    `C51DF66B92F3AFD5B2DC38402FE16F311767FF135D6501232DF1EFE4307E0F4D`
 - `x86_64/cudart64_12.dll`
   - source: CUDA Toolkit 12.6 shared runtime
   - file version: `6.14.11.12060`
