@@ -319,7 +319,7 @@ namespace APEX.Native
             ThrowIfDisposed();
             ApxResult result = NativeMethods.ApxGetRenderVertexPositions(
                 _handle,
-                null,
+                IntPtr.Zero,
                 0,
                 out uint count);
             ApxException.ThrowIfFailed(result, "apxGetRenderVertexPositions");
@@ -334,20 +334,31 @@ namespace APEX.Native
                 throw new ArgumentNullException(nameof(destination));
             }
 
-            ApxResult result = NativeMethods.ApxGetRenderVertexPositions(
-                _handle,
-                destination.Length == 0 ? null : destination,
-                checked((uint)destination.Length),
-                out uint written);
-            ApxException.ThrowIfFailed(result, "apxGetRenderVertexPositions");
-            return checked((int)written);
+            GCHandle pinned = default;
+            try
+            {
+                IntPtr pointer = IntPtr.Zero;
+                if (destination.Length != 0)
+                {
+                    pinned = GCHandle.Alloc(destination, GCHandleType.Pinned);
+                    pointer = pinned.AddrOfPinnedObject();
+                }
+                return GetRenderVertexPositions(pointer, destination.Length);
+            }
+            finally
+            {
+                if (pinned.IsAllocated)
+                {
+                    pinned.Free();
+                }
+            }
         }
 
         public int GetRenderVertexPositions(IntPtr destination, int capacity)
         {
             ThrowIfDisposed();
             ValidateNativeBuffer(destination, capacity, nameof(destination));
-            ApxResult result = NativeMethods.ApxGetRenderVertexPositionsIntoBuffer(
+            ApxResult result = NativeMethods.ApxGetRenderVertexPositions(
                 _handle,
                 destination,
                 checked((uint)capacity),
@@ -361,7 +372,7 @@ namespace APEX.Native
             ThrowIfDisposed();
             ApxResult result = NativeMethods.ApxGetRenderVertexNormals(
                 _handle,
-                null,
+                IntPtr.Zero,
                 0,
                 out uint count);
             ApxException.ThrowIfFailed(result, "apxGetRenderVertexNormals");
@@ -376,20 +387,31 @@ namespace APEX.Native
                 throw new ArgumentNullException(nameof(destination));
             }
 
-            ApxResult result = NativeMethods.ApxGetRenderVertexNormals(
-                _handle,
-                destination.Length == 0 ? null : destination,
-                checked((uint)destination.Length),
-                out uint written);
-            ApxException.ThrowIfFailed(result, "apxGetRenderVertexNormals");
-            return checked((int)written);
+            GCHandle pinned = default;
+            try
+            {
+                IntPtr pointer = IntPtr.Zero;
+                if (destination.Length != 0)
+                {
+                    pinned = GCHandle.Alloc(destination, GCHandleType.Pinned);
+                    pointer = pinned.AddrOfPinnedObject();
+                }
+                return GetRenderVertexNormals(pointer, destination.Length);
+            }
+            finally
+            {
+                if (pinned.IsAllocated)
+                {
+                    pinned.Free();
+                }
+            }
         }
 
         public int GetRenderVertexNormals(IntPtr destination, int capacity)
         {
             ThrowIfDisposed();
             ValidateNativeBuffer(destination, capacity, nameof(destination));
-            ApxResult result = NativeMethods.ApxGetRenderVertexNormalsIntoBuffer(
+            ApxResult result = NativeMethods.ApxGetRenderVertexNormals(
                 _handle,
                 destination,
                 checked((uint)capacity),
