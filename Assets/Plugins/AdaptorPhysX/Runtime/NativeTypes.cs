@@ -228,6 +228,32 @@ namespace APEX.Native
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct ApxCutQuery
+    {
+        public ApxVec3 Start;
+        public ApxVec3 End;
+        public ApxVec3 SideNormal;
+        public float Radius;
+
+        public ApxCutQuery(ApxVec3 start, ApxVec3 end, ApxVec3 sideNormal, float radius)
+        {
+            Start = start;
+            End = end;
+            SideNormal = sideNormal;
+            Radius = radius;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ApxCutResult
+    {
+        public uint CutId;
+        public uint CutConstraintCount;
+        public uint SplitParticleCount;
+        public uint FirstSplitParticleId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct ApxColliderProxy
     {
         public ApxColliderProxyType Type;

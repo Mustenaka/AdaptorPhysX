@@ -108,6 +108,16 @@ namespace APEX.Native
 
         [DllImport(
             LibraryName,
+            EntryPoint = "apxCut",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        internal static extern ApxResult ApxCut(
+            ApxWorldSafeHandle world,
+            in ApxCutQuery query,
+            out ApxCutResult outResult);
+
+        [DllImport(
+            LibraryName,
             EntryPoint = "apxSetColliderProxies",
             CallingConvention = CallingConvention.Cdecl,
             ExactSpelling = true)]
