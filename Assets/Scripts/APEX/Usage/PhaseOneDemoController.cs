@@ -115,8 +115,13 @@ namespace APEX.Usage
                 _unityPositions[index] = new Vector3(position.X, position.Y, position.Z);
                 _unityNormals[index] = new Vector3(normal.X, normal.Y, normal.Z);
             }
-            _mesh.SetVertices(_unityPositions);
-            _mesh.SetNormals(_unityNormals);
+            const MeshUpdateFlags uploadFlags =
+                MeshUpdateFlags.DontRecalculateBounds |
+                MeshUpdateFlags.DontValidateIndices |
+                MeshUpdateFlags.DontNotifyMeshUsers |
+                MeshUpdateFlags.DontResetBoneBounds;
+            _mesh.SetVertices(_unityPositions, 0, written, uploadFlags);
+            _mesh.SetNormals(_unityNormals, 0, written, uploadFlags);
             PhaseOneReplayHash.Append(ref _stateHash, _renderPositions, written);
         }
 

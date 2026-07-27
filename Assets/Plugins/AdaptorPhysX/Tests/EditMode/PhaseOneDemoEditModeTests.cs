@@ -214,6 +214,11 @@ namespace APEX.Native.Tests
                         mesh.SetNormals(unityNormals);
                         mesh.triangles = triangleIndices;
                         mesh.MarkDynamic();
+                        const UnityEngine.Rendering.MeshUpdateFlags uploadFlags =
+                            UnityEngine.Rendering.MeshUpdateFlags.DontRecalculateBounds |
+                            UnityEngine.Rendering.MeshUpdateFlags.DontValidateIndices |
+                            UnityEngine.Rendering.MeshUpdateFlags.DontNotifyMeshUsers |
+                            UnityEngine.Rendering.MeshUpdateFlags.DontResetBoneBounds;
 
                         for (int frame = 0; frame < warmupFrames; ++frame)
                         {
@@ -228,8 +233,16 @@ namespace APEX.Native.Tests
                                 unityPositions,
                                 unityNormals,
                                 written);
-                            mesh.SetVertices(unityPositions);
-                            mesh.SetNormals(unityNormals);
+                            mesh.SetVertices(
+                                unityPositions,
+                                0,
+                                written,
+                                uploadFlags);
+                            mesh.SetNormals(
+                                unityNormals,
+                                0,
+                                written,
+                                uploadFlags);
                         }
 
                         double[] samples = new double[sampleFrames];
@@ -253,8 +266,16 @@ namespace APEX.Native.Tests
                                 unityPositions,
                                 unityNormals,
                                 written);
-                            mesh.SetVertices(unityPositions);
-                            mesh.SetNormals(unityNormals);
+                            mesh.SetVertices(
+                                unityPositions,
+                                0,
+                                written,
+                                uploadFlags);
+                            mesh.SetNormals(
+                                unityNormals,
+                                0,
+                                written,
+                                uploadFlags);
                             timer.Stop();
                             samples[frame] = timer.Elapsed.TotalMilliseconds;
                         }
