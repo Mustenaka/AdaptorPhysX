@@ -117,7 +117,6 @@ namespace APEX.Usage
             }
             _mesh.SetVertices(_unityPositions);
             _mesh.SetNormals(_unityNormals);
-            _mesh.RecalculateBounds();
             PhaseOneReplayHash.Append(ref _stateHash, _renderPositions, written);
         }
 
@@ -284,6 +283,9 @@ namespace APEX.Usage
             _mesh.SetNormals(_unityNormals);
             _mesh.uv = uvs;
             _mesh.triangles = triangles;
+            _mesh.bounds = new Bounds(
+                Vector3.zero,
+                new Vector3(columns * spacing * 2.0F, rows * spacing * 4.0F, spacing * 16.0F));
             _mesh.MarkDynamic();
             GetComponent<MeshFilter>().sharedMesh = _mesh;
         }

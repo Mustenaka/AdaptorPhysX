@@ -230,7 +230,6 @@ namespace APEX.Native.Tests
                                 written);
                             mesh.SetVertices(unityPositions);
                             mesh.SetNormals(unityNormals);
-                            mesh.RecalculateBounds();
                         }
 
                         double[] samples = new double[sampleFrames];
@@ -256,7 +255,6 @@ namespace APEX.Native.Tests
                                 written);
                             mesh.SetVertices(unityPositions);
                             mesh.SetNormals(unityNormals);
-                            mesh.RecalculateBounds();
                             timer.Stop();
                             samples[frame] = timer.Elapsed.TotalMilliseconds;
                         }
