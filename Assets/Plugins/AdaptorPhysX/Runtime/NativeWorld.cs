@@ -13,6 +13,7 @@ namespace APEX.Native
         private readonly ApxWorldSafeHandle _handle;
         private bool _disposed;
         private bool _isMapped;
+        private bool _cutCapacityPrepared;
         private ulong _mapGeneration;
         private uint _particleCount;
         private float[] _positionReadback = Array.Empty<float>();
@@ -260,6 +261,21 @@ namespace APEX.Native
                 out uint written);
             ApxException.ThrowIfFailed(result, "apxGetRenderVertexPositions");
             return checked((int)written);
+        }
+
+        public ApxCutResult Cut(ApxCutQuery query)
+        {
+            ThrowIfDisposed();
+            if (!_cutCapacityPrepared)
+            {
+                EnsureReadbackCapacity(checked(_particleCount * 2U));
+            }
+
+            ApxResult result = NativeMethods.ApxCut(_handle, in query, out ApxCutResult cutResult);
+            ApxException.ThrowIfFailed(result, "apxCut");
+            _particleCount = checked(_particleCount + cutResult.SplitParticleCount);
+            _cutCapacityPrepared = true;
+            return cutResult;
         }
 
         public void SetColliderProxies(ApxColliderProxy[] proxies)

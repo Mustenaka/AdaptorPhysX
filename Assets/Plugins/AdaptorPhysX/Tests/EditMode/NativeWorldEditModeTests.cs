@@ -13,12 +13,12 @@ namespace APEX.Native.Tests
         private const float ParticleRadius = 0.1F;
 
         [Test]
-        public void AbiVersionMatchesAdditiveVersionZeroPointTwo()
+        public void AbiVersionMatchesAdditiveVersionZeroPointThree()
         {
             NativeWorld.GetAbiVersion(out uint major, out uint minor);
 
             Assert.That(major, Is.EqualTo(0U));
-            Assert.That(minor, Is.EqualTo(2U));
+            Assert.That(minor, Is.EqualTo(3U));
         }
 
         [Test]
@@ -33,6 +33,8 @@ namespace APEX.Native.Tests
             Assert.That(Marshal.SizeOf<ApxClothDistanceConstraintDesc>(), Is.EqualTo(24));
             Assert.That(Marshal.SizeOf<ApxBendConstraintDesc>(), Is.EqualTo(24));
             Assert.That(Marshal.SizeOf<ApxRenderVertexBindingDesc>(), Is.EqualTo(24));
+            Assert.That(Marshal.SizeOf<ApxCutQuery>(), Is.EqualTo(40));
+            Assert.That(Marshal.SizeOf<ApxCutResult>(), Is.EqualTo(16));
             Assert.That(Marshal.SizeOf<ApxColliderProxy>(), Is.EqualTo(48));
             Assert.That(Marshal.SizeOf<ApxBufferView>(), Is.EqualTo(24));
 
@@ -105,6 +107,14 @@ namespace APEX.Native.Tests
             AssertOffset<ApxRenderVertexBindingDesc>(
                 nameof(ApxRenderVertexBindingDesc.WeightC),
                 20);
+            AssertOffset<ApxCutQuery>(nameof(ApxCutQuery.Start), 0);
+            AssertOffset<ApxCutQuery>(nameof(ApxCutQuery.End), 12);
+            AssertOffset<ApxCutQuery>(nameof(ApxCutQuery.SideNormal), 24);
+            AssertOffset<ApxCutQuery>(nameof(ApxCutQuery.Radius), 36);
+            AssertOffset<ApxCutResult>(nameof(ApxCutResult.CutId), 0);
+            AssertOffset<ApxCutResult>(nameof(ApxCutResult.CutConstraintCount), 4);
+            AssertOffset<ApxCutResult>(nameof(ApxCutResult.SplitParticleCount), 8);
+            AssertOffset<ApxCutResult>(nameof(ApxCutResult.FirstSplitParticleId), 12);
             AssertOffset<ApxColliderProxy>(nameof(ApxColliderProxy.Type), 0);
             AssertOffset<ApxColliderProxy>(nameof(ApxColliderProxy.Reserved0), 4);
             AssertOffset<ApxColliderProxy>(nameof(ApxColliderProxy.Reserved1), 8);
@@ -118,7 +128,7 @@ namespace APEX.Native.Tests
         }
 
         [Test]
-        public void NativeMethodsExposeExactlyTheAdditiveFourteenCdeclEntrypoints()
+        public void NativeMethodsExposeExactlyTheAdditiveFifteenCdeclEntrypoints()
         {
             Type nativeMethods = typeof(NativeWorld).Assembly.GetType(
                 "APEX.Native.NativeMethods",
@@ -140,6 +150,7 @@ namespace APEX.Native.Tests
                 "apxGetBrokenClothDistanceConstraintIds",
                 "apxSetRenderVertexBindings",
                 "apxGetRenderVertexPositions",
+                "apxCut",
                 "apxSetColliderProxies",
                 "apxStep",
                 "apxMapParticleBuffer",
@@ -420,6 +431,96 @@ namespace APEX.Native.Tests
                     particlePositions,
                     bindings[1],
                     1.0e-5F);
+            }
+        }
+
+        [TestCase(ApxBackendKind.Cpu)]
+        [TestCase(ApxBackendKind.Cuda)]
+        public void CutQuerySplitsStableParticleAndBothSidesEvolveIndependently(
+            ApxBackendKind backend)
+        {
+            NativeWorld world;
+            try
+            {
+                world = NativeWorld.Create(
+                    ApxWorldDesc.Create(
+                        backend,
+                        FixedTimeStep,
+                        4,
+                        default,
+                        0.0F,
+                        5));
+            }
+            catch (ApxException exception)
+                when (backend == ApxBackendKind.Cuda &&
+                      (exception.Result == ApxResult.Unsupported ||
+                       exception.Result == ApxResult.BackendError))
+            {
+                Assert.Ignore($"CUDA backend is unavailable: {exception.Message}");
+                return;
+            }
+
+            using (world)
+            {
+                ApxParticleDesc[] particles =
+                {
+                    new ApxParticleDesc(
+                        new ApxVec3(0.0F, 0.0F, 0.0F),
+                        new ApxVec3(0.125F, 0.0F, 0.0F),
+                        1.0F),
+                    new ApxParticleDesc(
+                        new ApxVec3(1.0F, 0.0F, 0.0F),
+                        new ApxVec3(0.25F, 0.0F, 0.0F),
+                        1.0F),
+                    new ApxParticleDesc(new ApxVec3(-1.0F, 0.0F, 0.0F), default, 0.0F),
+                    new ApxParticleDesc(new ApxVec3(0.0F, 1.0F, 0.0F), default, 0.0F),
+                    new ApxParticleDesc(new ApxVec3(0.0F, -1.0F, 0.0F), default, 0.0F),
+                };
+                ApxClothDistanceConstraintDesc[] cloth =
+                {
+                    new ApxClothDistanceConstraintDesc(
+                        0, 1, 1.0F, 0.0F, 100.0F, ApxClothDirection.Warp),
+                    new ApxClothDistanceConstraintDesc(
+                        0, 2, 1.0F, 0.0F, 100.0F, ApxClothDirection.Warp),
+                    new ApxClothDistanceConstraintDesc(
+                        0, 3, 1.0F, 0.0F, 100.0F, ApxClothDirection.Weft),
+                    new ApxClothDistanceConstraintDesc(
+                        0, 4, 1.0F, 0.0F, 100.0F, ApxClothDirection.Weft),
+                };
+                Assert.That(world.AddParticles(particles), Is.EqualTo(0U));
+                Assert.That(world.AddClothDistanceConstraints(cloth), Is.EqualTo(0U));
+
+                world.Step(FixedTimeStep * 0.5F);
+                ApxCutResult result = world.Cut(
+                    new ApxCutQuery(
+                        new ApxVec3(0.0F, -2.0F, 0.0F),
+                        new ApxVec3(0.0F, 2.0F, 0.0F),
+                        new ApxVec3(2.0F, 0.0F, 0.0F),
+                        0.1F));
+                Assert.That(result.CutId, Is.EqualTo(0U));
+                Assert.That(result.CutConstraintCount, Is.EqualTo(2U));
+                Assert.That(result.SplitParticleCount, Is.EqualTo(1U));
+                Assert.That(result.FirstSplitParticleId, Is.EqualTo(5U));
+                Assert.That(world.ParticleCount, Is.EqualTo(6U));
+                CollectionAssert.AreEqual(
+                    new uint[] { 2U, 3U },
+                    world.GetBrokenClothDistanceConstraintIds());
+
+                for (int frame = 0; frame < 60; ++frame)
+                {
+                    world.Step(1.0F / 60.0F);
+                }
+
+                ApxVec3[] positions = new ApxVec3[6];
+                Assert.That(world.ReadPositionSnapshot(positions), Is.EqualTo(6));
+                AssertFinite(positions[0]);
+                AssertFinite(positions[5]);
+                float deltaX = positions[0].X - positions[5].X;
+                float deltaY = positions[0].Y - positions[5].Y;
+                float deltaZ = positions[0].Z - positions[5].Z;
+                Assert.That(
+                    deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ,
+                    Is.GreaterThan(1.0e-8F));
             }
         }
 
