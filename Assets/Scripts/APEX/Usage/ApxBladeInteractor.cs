@@ -4,11 +4,6 @@ using UnityEngine;
 
 namespace APEX.Usage
 {
-    public sealed class ApxParticlePickTarget : MonoBehaviour
-    {
-        public uint particleId;
-    }
-
     /// <summary>
     /// FixedUpdate-only adapter for mouse/XR/replay cut and grab intent.
     /// Call SetCutHeld/SetGrabHeld from any input frontend; geometry samples
