@@ -1638,6 +1638,13 @@ namespace APEX.Native.Tests
 
                 UnityEngine.Component interactor =
                     interactorObject.AddComponent(interactorType);
+                int interactionLayer = 30;
+                hitObject.layer = interactionLayer;
+                interactorType.GetField("minimumSampleDistance").SetValue(interactor, 0.0F);
+                interactorType.GetField("cutRadius").SetValue(interactor, 0.01F);
+                interactorType.GetField("interactionMask").SetValue(
+                    interactor,
+                    (UnityEngine.LayerMask)(1 << interactionLayer));
                 interactorType.GetMethod(
                     "Awake",
                     BindingFlags.Instance | BindingFlags.NonPublic).Invoke(
@@ -1653,7 +1660,7 @@ namespace APEX.Native.Tests
                 UnityEngine.Component pickTarget = hitObject.AddComponent(pickTargetType);
                 pickTargetType.GetField("particleId").SetValue(pickTarget, 0U);
                 hitObject.transform.localScale =
-                    new UnityEngine.Vector3(0.1F, 0.1F, 0.001F);
+                    new UnityEngine.Vector3(0.1F, 0.1F, 0.0001F);
                 MethodInfo submitRay = interactorType.GetMethod("TrySubmitPointerRay");
                 MethodInfo fixedUpdate = interactorType.GetMethod(
                     "FixedUpdate",
