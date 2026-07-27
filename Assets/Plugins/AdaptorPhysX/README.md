@@ -17,15 +17,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\AdaptorPhysX_Native\to
 The script loads VS2022 MSVC 14.44 through `vcvarsall.bat`, uses Ninja and CUDA
 12.6 for a Release `sm_89` build, builds only `apx_c_api`, and then copies the
 plugin and CUDA runtime into this directory. It fails unless the copied plugin
-exports exactly the nine DL-7 symbols and `cudart64_12.dll` is its only direct
-NVIDIA dependency. It also verifies that both existing Unity `.meta` files are
-unchanged.
+exports exactly the nine DL-7 symbols plus the three additive DL-10 v0.1
+symbols, and `cudart64_12.dll` is its only direct NVIDIA dependency. It also
+verifies that both existing Unity `.meta` files are unchanged.
 
 - `x86_64/adaptorphysx.dll`
-  - native source baseline: `ec1ec951f8f723e316e10ab7f936329d444e1373`
+  - native source baseline: `6d00c2aafc8cfeac6b377cad3113a4cc5d586960`
   - build: CUDA Release, Ninja + MSVC 14.44, `sm_89`
   - current packaged SHA-256:
-    `AEC2787A523932C959F6386D1C49E0186D3F9C53BB947D2E94ED68654DAFF7A4`
+    `2FABC81F4467BAA52B3D2F027AC672B10A22C78D8E90B19B3AFA8E0E4E7D3BA0`
 - `x86_64/cudart64_12.dll`
   - source: CUDA Toolkit 12.6 shared runtime
   - file version: `6.14.11.12060`
@@ -35,9 +35,9 @@ unchanged.
 MSVC PE output is not promised to be bit-reproducible across independent
 rebuilds, so a newly built DLL must not be compared with a historical packaged
 DLL by hash. Functional equivalence is the gate: the script verifies the
-current build source and copied target have matching hashes, the exact DL-7
-export/dependency contracts hold, and the script-produced DLL passes all six
-Unity EditMode tests.
+current build source and copied target have matching hashes, the exact
+DL-7/DL-10 export/dependency contracts hold, and the script-produced DLL passes
+all Unity EditMode tests.
 
 `adaptorphysx.dll` imports only `cudart64_12.dll` from NVIDIA. It also uses the
 Microsoft Visual C++ 14.x runtime; deployed Windows machines must have a
