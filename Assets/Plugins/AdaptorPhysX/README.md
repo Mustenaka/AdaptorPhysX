@@ -23,10 +23,10 @@ symbols, two additive DL-12 v0.2 symbols, and the additive DL-11 v0.3
 The script also verifies that both existing Unity `.meta` files are unchanged.
 
 - `x86_64/adaptorphysx.dll`
-  - native source baseline: `8590246de74ed5bc72541c5c93c71cb56b51bbcd`
+  - native source baseline: `d56bc7e1f9ae18aa1c09fc2d0f3babaad0e190e6`
   - build: CUDA Release, Ninja + MSVC 14.44, `sm_89`
   - current packaged SHA-256:
-    `71BD561F0B8A4A4A88EF0551044BC0A8844355816FEE3949208D535ADDE87559`
+    `B03B73DADF50EA9E565141946EEDC1E0355C55F035C0A48A1FAD601CB0A1404B`
 - `x86_64/cudart64_12.dll`
   - source: CUDA Toolkit 12.6 shared runtime
   - file version: `6.14.11.12060`
