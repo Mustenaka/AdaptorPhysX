@@ -285,6 +285,72 @@ namespace APEX.Native.Tests
 
         [TestCase(ApxBackendKind.Cpu)]
         [TestCase(ApxBackendKind.Cuda)]
+        public void CurrentDegenerateBendStencilRemainsFiniteAndAppliesProjection(
+            ApxBackendKind backend)
+        {
+            NativeWorld world;
+            try
+            {
+                world = NativeWorld.Create(
+                    ApxWorldDesc.Create(
+                        backend,
+                        1.0F,
+                        1,
+                        default,
+                        0.0F,
+                        4));
+            }
+            catch (ApxException exception)
+                when (backend == ApxBackendKind.Cuda &&
+                      (exception.Result == ApxResult.Unsupported ||
+                       exception.Result == ApxResult.BackendError))
+            {
+                Assert.Ignore($"CUDA backend is unavailable: {exception.Message}");
+                return;
+            }
+
+            using (world)
+            {
+                ApxParticleDesc[] particles =
+                {
+                    new ApxParticleDesc(new ApxVec3(0.0F, 0.0F, 0.0F), default, 1.0F),
+                    new ApxParticleDesc(new ApxVec3(1.0F, 0.0F, 0.0F), default, 1.0F),
+                    new ApxParticleDesc(
+                        new ApxVec3(0.0F, 1.0F, 0.0F),
+                        new ApxVec3(0.5F, -1.0F, 0.0F),
+                        1.0F),
+                    new ApxParticleDesc(
+                        new ApxVec3(1.0F, -1.0F, 0.0F),
+                        new ApxVec3(0.0F, 0.0F, 1.0F),
+                        1.0F),
+                };
+                ApxBendConstraintDesc[] bend =
+                {
+                    new ApxBendConstraintDesc(
+                        2,
+                        3,
+                        0,
+                        1,
+                        ApxBendConstraintDesc.NoSupportingClothConstraint,
+                        0.0F),
+                };
+
+                Assert.That(world.AddParticles(particles), Is.EqualTo(0U));
+                Assert.That(world.AddBendConstraints(bend), Is.EqualTo(0U));
+                world.Step(1.0F);
+
+                ApxVec3[] positions = new ApxVec3[4];
+                Assert.That(world.ReadPositionSnapshot(positions), Is.EqualTo(positions.Length));
+                foreach (ApxVec3 position in positions)
+                {
+                    AssertFinite(position);
+                }
+                Assert.That(positions[2].Y, Is.Not.EqualTo(0.0F));
+            }
+        }
+
+        [TestCase(ApxBackendKind.Cpu)]
+        [TestCase(ApxBackendKind.Cuda)]
         public void TearQueryReportsLiteralPropagationAndCallerCapacity(ApxBackendKind backend)
         {
             NativeWorld world;
