@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using NUnit.Framework;
+using Unity.Collections;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -125,6 +126,8 @@ namespace APEX.Native.Tests
             const int initialParticleCount = columns * rows;
             const int expectedConstraintCount =
                 rows * (columns - 1) + (rows - 1) * columns;
+            const int expectedRenderTriangleCount =
+                (rows - 1) * (columns - 1) * 2;
             const int warmupFrames = 120;
             const int sampleFrames = 600;
             const double medianGateMilliseconds = 16.667;
@@ -144,6 +147,9 @@ namespace APEX.Native.Tests
             Assert.That(
                 workload.RenderBindings,
                 Has.Length.EqualTo(initialParticleCount));
+            Assert.That(
+                workload.TriangleIndices,
+                Has.Length.EqualTo(expectedRenderTriangleCount * 3));
 
             using (NativeWorld world = NativeWorld.Create(
                 ApxWorldDesc.Create(
@@ -159,6 +165,7 @@ namespace APEX.Native.Tests
                     world.AddClothDistanceConstraints(workload.ClothConstraints),
                     Is.EqualTo(0U));
                 world.SetRenderVertexBindings(workload.RenderBindings);
+                world.SetRenderTriangles(workload.TriangleIndices);
                 world.Step(FixedTimeStep * 0.5F);
 
                 Stopwatch cutTimer = Stopwatch.StartNew();
@@ -173,65 +180,149 @@ namespace APEX.Native.Tests
                     Is.EqualTo((uint)(initialParticleCount + rows)));
 
                 ApxVec3[] renderPositions = new ApxVec3[initialParticleCount];
-                for (int frame = 0; frame < warmupFrames; ++frame)
+                ApxVec3[] renderNormals = new ApxVec3[initialParticleCount];
+                using (NativeArray<Vector3> unityPositions =
+                       new NativeArray<Vector3>(
+                           initialParticleCount,
+                           Allocator.Persistent,
+                           NativeArrayOptions.UninitializedMemory))
+                using (NativeArray<Vector3> unityNormals =
+                       new NativeArray<Vector3>(
+                           initialParticleCount,
+                           Allocator.Persistent,
+                           NativeArrayOptions.UninitializedMemory))
                 {
-                    world.Step(FrameDeltaTime);
-                    Assert.That(
-                        world.GetRenderVertexPositions(renderPositions),
-                        Is.EqualTo(initialParticleCount));
-                }
+                    Mesh mesh = new Mesh
+                    {
+                        indexFormat = UnityEngine.Rendering.IndexFormat.UInt32,
+                    };
+                    try
+                    {
+                        int[] triangleIndices = new int[workload.TriangleIndices.Length];
+                        for (int index = 0; index < triangleIndices.Length; ++index)
+                        {
+                            triangleIndices[index] =
+                                checked((int)workload.TriangleIndices[index]);
+                        }
+                        for (int index = 0; index < initialParticleCount; ++index)
+                        {
+                            ApxVec3 position = workload.Particles[index].Position;
+                            unityPositions[index] =
+                                new Vector3(position.X, position.Y, position.Z);
+                            unityNormals[index] = Vector3.forward;
+                        }
+                        mesh.SetVertices(unityPositions);
+                        mesh.SetNormals(unityNormals);
+                        mesh.triangles = triangleIndices;
+                        mesh.MarkDynamic();
 
-                double[] samples = new double[sampleFrames];
-                Stopwatch timer = new Stopwatch();
-                for (int frame = 0; frame < sampleFrames; ++frame)
-                {
-                    timer.Restart();
-                    world.Step(FrameDeltaTime);
-                    int written = world.GetRenderVertexPositions(renderPositions);
-                    timer.Stop();
-                    Assert.That(written, Is.EqualTo(initialParticleCount));
-                    samples[frame] = timer.Elapsed.TotalMilliseconds;
-                }
+                        for (int frame = 0; frame < warmupFrames; ++frame)
+                        {
+                            world.Step(FrameDeltaTime);
+                            int written = world.GetRenderVertexPositions(renderPositions);
+                            int normalWritten = world.GetRenderVertexNormals(renderNormals);
+                            Assert.That(written, Is.EqualTo(initialParticleCount));
+                            Assert.That(normalWritten, Is.EqualTo(initialParticleCount));
+                            CopyRenderData(
+                                renderPositions,
+                                renderNormals,
+                                unityPositions,
+                                unityNormals,
+                                written);
+                            mesh.SetVertices(unityPositions);
+                            mesh.SetNormals(unityNormals);
+                            mesh.RecalculateBounds();
+                        }
 
-                Array.Sort(samples);
-                double median =
-                    (samples[sampleFrames / 2 - 1] + samples[sampleFrames / 2]) * 0.5;
-                double p95 = samples[(sampleFrames * 95 + 99) / 100 - 1];
-                bool gatePassed =
-                    median <= medianGateMilliseconds && p95 <= p95GateMilliseconds;
-                string performanceJson = string.Format(
-                    CultureInfo.InvariantCulture,
-                    "APX_UNITY_PERF_JSON {{\"schema_version\":1," +
-                    "\"benchmark\":\"phase1_unity_demo_100k\"," +
-                    "\"initial_particles\":{0},\"split_particles\":{1}," +
-                    "\"active_particles\":{2},\"cloth_constraints\":{3}," +
-                    "\"render_bindings\":{4},\"cut_event_ms\":{5:F4}," +
-                    "\"substeps_per_frame\":2,\"solver_iterations\":2," +
-                    "\"collision\":true,\"warmup_frames\":{6}," +
-                    "\"sample_frames\":{7},\"timing_scope\":\"step+render_readback\"," +
-                    "\"median_ms\":{8:F4},\"p95_ms\":{9:F4}," +
-                    "\"median_gate_ms\":{10:F4},\"p95_gate_ms\":{11:F4}," +
-                    "\"gate_pass\":{12}}}",
-                    initialParticleCount,
-                    rows,
-                    initialParticleCount + rows,
-                    expectedConstraintCount,
-                    initialParticleCount,
-                    cutTimer.Elapsed.TotalMilliseconds,
-                    warmupFrames,
-                    sampleFrames,
-                    median,
-                    p95,
-                    medianGateMilliseconds,
-                    p95GateMilliseconds,
-                    gatePassed ? "true" : "false");
-                TestContext.Progress.WriteLine(performanceJson);
-                UnityEngine.Debug.Log(performanceJson);
-                Assert.That(median, Is.LessThanOrEqualTo(medianGateMilliseconds));
-                Assert.That(p95, Is.LessThanOrEqualTo(p95GateMilliseconds));
-                AssertFinite(renderPositions[0]);
-                AssertFinite(renderPositions[initialParticleCount / 2]);
-                AssertFinite(renderPositions[initialParticleCount - 1]);
+                        double[] samples = new double[sampleFrames];
+                        Stopwatch timer = new Stopwatch();
+                        long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+                        for (int frame = 0; frame < sampleFrames; ++frame)
+                        {
+                            timer.Restart();
+                            world.Step(FrameDeltaTime);
+                            int written = world.GetRenderVertexPositions(renderPositions);
+                            int normalWritten = world.GetRenderVertexNormals(renderNormals);
+                            if (written != initialParticleCount ||
+                                normalWritten != initialParticleCount)
+                            {
+                                throw new InvalidOperationException(
+                                    "Render output count changed in the fixed workload.");
+                            }
+                            CopyRenderData(
+                                renderPositions,
+                                renderNormals,
+                                unityPositions,
+                                unityNormals,
+                                written);
+                            mesh.SetVertices(unityPositions);
+                            mesh.SetNormals(unityNormals);
+                            mesh.RecalculateBounds();
+                            timer.Stop();
+                            samples[frame] = timer.Elapsed.TotalMilliseconds;
+                        }
+                        long managedAllocationBytes =
+                            GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+
+                        Array.Sort(samples);
+                        double median =
+                            (samples[sampleFrames / 2 - 1] + samples[sampleFrames / 2]) *
+                            0.5;
+                        double p95 = samples[(sampleFrames * 95 + 99) / 100 - 1];
+                        bool gatePassed =
+                            median <= medianGateMilliseconds &&
+                            p95 <= p95GateMilliseconds &&
+                            managedAllocationBytes == 0;
+                        string performanceJson = string.Format(
+                            CultureInfo.InvariantCulture,
+                            "APX_UNITY_PERF_JSON {{\"schema_version\":1," +
+                            "\"benchmark\":\"phase1_dual_mesh_100k\"," +
+                            "\"initial_particles\":{0},\"split_particles\":{1}," +
+                            "\"active_particles\":{2},\"cloth_constraints\":{3}," +
+                            "\"render_bindings\":{4},\"render_triangles\":{5}," +
+                            "\"cut_event_ms\":{6:F4}," +
+                            "\"substeps_per_frame\":2,\"solver_iterations\":2," +
+                            "\"collision\":true,\"warmup_frames\":{7}," +
+                            "\"sample_frames\":{8}," +
+                            "\"timing_scope\":\"step+position_normal_readback+nativearray_mesh_upload\"," +
+                            "\"median_ms\":{9:F4},\"p95_ms\":{10:F4}," +
+                            "\"managed_alloc_bytes\":{11}," +
+                            "\"median_gate_ms\":{12:F4},\"p95_gate_ms\":{13:F4}," +
+                            "\"gate_pass\":{14}}}",
+                            initialParticleCount,
+                            rows,
+                            initialParticleCount + rows,
+                            expectedConstraintCount,
+                            initialParticleCount,
+                            expectedRenderTriangleCount,
+                            cutTimer.Elapsed.TotalMilliseconds,
+                            warmupFrames,
+                            sampleFrames,
+                            median,
+                            p95,
+                            managedAllocationBytes,
+                            medianGateMilliseconds,
+                            p95GateMilliseconds,
+                            gatePassed ? "true" : "false");
+                        TestContext.Progress.WriteLine(performanceJson);
+                        UnityEngine.Debug.Log(performanceJson);
+                        Assert.That(
+                            median,
+                            Is.LessThanOrEqualTo(medianGateMilliseconds));
+                        Assert.That(p95, Is.LessThanOrEqualTo(p95GateMilliseconds));
+                        Assert.That(managedAllocationBytes, Is.EqualTo(0L));
+                        AssertFinite(renderPositions[0]);
+                        AssertFinite(renderPositions[initialParticleCount / 2]);
+                        AssertFinite(renderPositions[initialParticleCount - 1]);
+                        AssertFinite(renderNormals[0]);
+                        AssertFinite(renderNormals[initialParticleCount / 2]);
+                        AssertFinite(renderNormals[initialParticleCount - 1]);
+                    }
+                    finally
+                    {
+                        UnityEngine.Object.DestroyImmediate(mesh);
+                    }
+                }
             }
         }
 
@@ -326,6 +417,7 @@ namespace APEX.Native.Tests
                 world.AddParticles(workload.Particles);
                 world.AddClothDistanceConstraints(workload.ClothConstraints);
                 world.SetRenderVertexBindings(workload.RenderBindings);
+                world.SetRenderTriangles(workload.TriangleIndices);
                 world.Step(FixedTimeStep * 0.5F);
 
                 ApxCutResult cut = default;
@@ -377,6 +469,22 @@ namespace APEX.Native.Tests
             ApxVec3[] copy = new ApxVec3[count];
             Array.Copy(source, copy, count);
             return copy;
+        }
+
+        private static void CopyRenderData(
+            ApxVec3[] positions,
+            ApxVec3[] normals,
+            NativeArray<Vector3> unityPositions,
+            NativeArray<Vector3> unityNormals,
+            int count)
+        {
+            for (int index = 0; index < count; ++index)
+            {
+                ApxVec3 position = positions[index];
+                ApxVec3 normal = normals[index];
+                unityPositions[index] = new Vector3(position.X, position.Y, position.Z);
+                unityNormals[index] = new Vector3(normal.X, normal.Y, normal.Z);
+            }
         }
 
         private static void AssertCutResultsEqual(ApxCutResult left, ApxCutResult right)
