@@ -105,11 +105,15 @@ namespace APEX.Usage
             for (int index = 0; index < pending.Length; ++index)
             {
                 ApxCutQuery query = pending[index].Query;
-                if (_nativeWorld != null)
+                if (_nativeWorld != null && renderMeshTarget != null)
+                {
+                    renderMeshTarget.ApplyCoupledWorldCut(_nativeWorld, query);
+                }
+                else if (_nativeWorld != null)
                 {
                     _nativeWorld.Cut(query);
                 }
-                if (renderMeshTarget != null)
+                else if (renderMeshTarget != null)
                 {
                     renderMeshTarget.ApplyPreciseWorldCut(query);
                 }

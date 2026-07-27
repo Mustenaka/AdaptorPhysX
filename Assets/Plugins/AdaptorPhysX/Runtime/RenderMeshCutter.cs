@@ -97,10 +97,14 @@ namespace APEX.Native
             ValidateMesh(input);
             CanonicalQuery canonical = Canonicalize(query);
 
+            int vertexHeadroom = Math.Max(16, input.Vertices.Length / 32);
+            int indexHeadroom = Math.Max(24, input.Indices.Length / 32);
             List<RenderMeshVertex> vertices =
-                new List<RenderMeshVertex>(checked(input.Vertices.Length + 16));
+                new List<RenderMeshVertex>(
+                    checked(input.Vertices.Length + vertexHeadroom));
             vertices.AddRange(input.Vertices);
-            List<uint> indices = new List<uint>(checked(input.Indices.Length + 24));
+            List<uint> indices =
+                new List<uint>(checked(input.Indices.Length + indexHeadroom));
             Dictionary<ulong, RenderMeshSeamPair> seamByEdge =
                 new Dictionary<ulong, RenderMeshSeamPair>();
             List<RenderMeshSeamPair> seamPairs = new List<RenderMeshSeamPair>();
@@ -158,8 +162,15 @@ namespace APEX.Native
                 ++cutTriangleCount;
             }
 
+            RenderMeshVertex[] outputVertices = vertices.ToArray();
+            uint[] outputIndices = indices.ToArray();
+            if (cutTriangleCount != 0U)
+            {
+                RebuildNormals(outputVertices, outputIndices);
+            }
+
             return new RenderMeshCutResult(
-                new RenderMeshData(vertices.ToArray(), indices.ToArray()),
+                new RenderMeshData(outputVertices, outputIndices),
                 seamPairs.ToArray(),
                 cutTriangleCount);
         }
@@ -254,11 +265,40 @@ namespace APEX.Native
                     throw new ArgumentException("Render mesh vertices must be finite.", nameof(input));
                 }
             }
+            bool[] referenced = new bool[input.Vertices.Length];
             for (int index = 0; index < input.Indices.Length; ++index)
             {
                 if (input.Indices[index] >= input.Vertices.Length)
                 {
                     throw new ArgumentException("Render mesh index is out of bounds.", nameof(input));
+                }
+                referenced[input.Indices[index]] = true;
+            }
+
+            for (int triangleOffset = 0;
+                 triangleOffset < input.Indices.Length;
+                 triangleOffset += 3)
+            {
+                ApxVec3 first = input.Vertices[input.Indices[triangleOffset]].Position;
+                ApxVec3 second = input.Vertices[input.Indices[triangleOffset + 1]].Position;
+                ApxVec3 third = input.Vertices[input.Indices[triangleOffset + 2]].Position;
+                ApxVec3 twiceArea = Cross(Subtract(second, first), Subtract(third, first));
+                float areaSquared = Dot(twiceArea, twiceArea);
+                if (!IsFinite(areaSquared) || areaSquared <= 0.0F)
+                {
+                    throw new ArgumentException(
+                        "Render mesh triangles must have finite non-zero area.",
+                        nameof(input));
+                }
+            }
+
+            for (int vertexId = 0; vertexId < referenced.Length; ++vertexId)
+            {
+                if (!referenced[vertexId])
+                {
+                    throw new ArgumentException(
+                        "Render mesh must not contain isolated vertices.",
+                        nameof(input));
                 }
             }
         }
@@ -443,6 +483,49 @@ namespace APEX.Native
                 start.V + (end.V - start.V) * parameter);
         }
 
+        private static void RebuildNormals(
+            RenderMeshVertex[] vertices,
+            uint[] indices)
+        {
+            ApxVec3[] accumulated = new ApxVec3[vertices.Length];
+            for (int triangleOffset = 0; triangleOffset < indices.Length; triangleOffset += 3)
+            {
+                uint id0 = indices[triangleOffset];
+                uint id1 = indices[triangleOffset + 1];
+                uint id2 = indices[triangleOffset + 2];
+                ApxVec3 first = vertices[id0].Position;
+                ApxVec3 second = vertices[id1].Position;
+                ApxVec3 third = vertices[id2].Position;
+                ApxVec3 faceNormal =
+                    Cross(Subtract(second, first), Subtract(third, first));
+
+                // Fixed triangle/index order makes this area-weighted reduction
+                // reproducible. Seam copies accumulate independently by vertex ID.
+                accumulated[id0] = Add(accumulated[id0], faceNormal);
+                accumulated[id1] = Add(accumulated[id1], faceNormal);
+                accumulated[id2] = Add(accumulated[id2], faceNormal);
+            }
+
+            for (int vertexId = 0; vertexId < vertices.Length; ++vertexId)
+            {
+                ApxVec3 normal = accumulated[vertexId];
+                float lengthSquared = Dot(normal, normal);
+                if (lengthSquared > 0.0F && IsFinite(lengthSquared))
+                {
+                    normal = Scale(normal, 1.0F / (float)Math.Sqrt(lengthSquared));
+                }
+                else
+                {
+                    // A zero-area accumulation is a deterministic finite fallback.
+                    normal = default;
+                }
+
+                RenderMeshVertex vertex = vertices[vertexId];
+                vertex.Normal = normal;
+                vertices[vertexId] = vertex;
+            }
+        }
+
         private static bool StrictlyCrosses(float first, float second)
         {
             return (first < 0.0F && second > 0.0F) ||
@@ -521,9 +604,25 @@ namespace APEX.Native
                 value.Z + direction.Z * scale);
         }
 
+        private static ApxVec3 Add(ApxVec3 first, ApxVec3 second)
+        {
+            return new ApxVec3(
+                first.X + second.X,
+                first.Y + second.Y,
+                first.Z + second.Z);
+        }
+
         private static ApxVec3 Scale(ApxVec3 value, float scale)
         {
             return new ApxVec3(value.X * scale, value.Y * scale, value.Z * scale);
+        }
+
+        private static ApxVec3 Cross(ApxVec3 first, ApxVec3 second)
+        {
+            return new ApxVec3(
+                first.Y * second.Z - first.Z * second.Y,
+                first.Z * second.X - first.X * second.Z,
+                first.X * second.Y - first.Y * second.X);
         }
 
         private static float Dot(ApxVec3 first, ApxVec3 second)
