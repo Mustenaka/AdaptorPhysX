@@ -31,6 +31,7 @@ namespace APEX.Usage
         public bool enableMouseCut = true;
         public ApxBladeInteractor liveBlade;
         public ObjCut precisionCutPreview;
+        public float scriptedCutVerticalPadding = 5.0F;
 
         private const float NativeFixedTimeStep = 1.0F / 120.0F;
         private const float NativeFrameDeltaTime = 1.0F / 60.0F;
@@ -145,6 +146,12 @@ namespace APEX.Usage
             {
                 throw new ArgumentOutOfRangeException(nameof(scriptedCutTick));
             }
+            if (float.IsNaN(scriptedCutVerticalPadding) ||
+                float.IsInfinity(scriptedCutVerticalPadding) ||
+                scriptedCutVerticalPadding < 0.0F)
+            {
+                throw new ArgumentOutOfRangeException(nameof(scriptedCutVerticalPadding));
+            }
 
             PhaseOneClothWorkload workload = PhaseOneClothWorkload.Create(
                 columns,
@@ -162,6 +169,8 @@ namespace APEX.Usage
                 _world.Step(NativeFixedTimeStep * 0.5F);
 
                 ApxCutQuery query = workload.CreateVerticalCut(columns / 2, cutRadius);
+                query.Start.Y += scriptedCutVerticalPadding;
+                query.End.Y -= scriptedCutVerticalPadding;
                 _timeline = new PhaseOneReplayTimeline(
                     new[]
                     {
