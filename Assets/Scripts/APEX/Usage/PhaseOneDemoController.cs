@@ -253,9 +253,10 @@ namespace APEX.Usage
                 new ApxVec3(0.0F, -9.81F, 0.0F),
                 particleRadius,
                 checked((uint)particleCount));
+            uint maximumParticleCapacity = checked((uint)(particleCount + rows));
             try
             {
-                return NativeWorld.Create(description);
+                return NativeWorld.Create(description, maximumParticleCapacity);
             }
             catch (ApxException exception)
                 when (allowCpuFallback &&
@@ -265,7 +266,7 @@ namespace APEX.Usage
             {
                 description.Backend = ApxBackendKind.Cpu;
                 Debug.LogWarning($"CUDA unavailable; Phase 1 demo uses CPU fallback: {exception.Message}");
-                return NativeWorld.Create(description);
+                return NativeWorld.Create(description, maximumParticleCapacity);
             }
         }
 

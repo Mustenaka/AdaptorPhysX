@@ -13,14 +13,17 @@ namespace APEX.Native
         private readonly ApxWorldSafeHandle _handle;
         private bool _disposed;
         private bool _isMapped;
-        private bool _cutCapacityPrepared;
         private ulong _mapGeneration;
         private uint _particleCount;
         private float[] _positionReadback = Array.Empty<float>();
 
-        private NativeWorld(ApxWorldSafeHandle handle)
+        private NativeWorld(ApxWorldSafeHandle handle, uint maximumParticleCapacity)
         {
             _handle = handle;
+            if (maximumParticleCapacity != 0)
+            {
+                EnsureReadbackCapacity(maximumParticleCapacity);
+            }
         }
 
         public uint ParticleCount => _particleCount;
@@ -32,23 +35,54 @@ namespace APEX.Native
 
         public static NativeWorld Create(ApxWorldDesc description)
         {
+            return CreateCore(description, 0, false);
+        }
+
+        public static NativeWorld Create(
+            ApxWorldDesc description,
+            uint maximumParticleCapacity)
+        {
+            if (maximumParticleCapacity == 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(maximumParticleCapacity));
+            }
+
+            return CreateCore(description, maximumParticleCapacity, true);
+        }
+
+        private static NativeWorld CreateCore(
+            ApxWorldDesc description,
+            uint maximumParticleCapacity,
+            bool useFixedCapacity)
+        {
             if (description.StructSize == 0)
             {
                 description.StructSize = ApxWorldDesc.SizeInBytes;
             }
 
-            ApxResult result = NativeMethods.ApxCreateWorld(in description, out IntPtr world);
-            ApxException.ThrowIfFailed(result, "apxCreateWorld");
+            string operation = useFixedCapacity
+                ? "apxCreateWorldWithParticleCapacity"
+                : "apxCreateWorld";
+            IntPtr world;
+            ApxResult result = useFixedCapacity
+                ? NativeMethods.ApxCreateWorldWithParticleCapacity(
+                    in description,
+                    maximumParticleCapacity,
+                    out world)
+                : NativeMethods.ApxCreateWorld(in description, out world);
+            ApxException.ThrowIfFailed(result, operation);
             if (world == IntPtr.Zero)
             {
-                throw new ApxException(ApxResult.InternalError, "apxCreateWorld");
+                throw new ApxException(ApxResult.InternalError, operation);
             }
 
             ApxWorldSafeHandle safeHandle = null;
             try
             {
                 safeHandle = new ApxWorldSafeHandle(world);
-                return new NativeWorld(safeHandle);
+                return new NativeWorld(
+                    safeHandle,
+                    useFixedCapacity ? maximumParticleCapacity : 0);
             }
             catch
             {
@@ -423,16 +457,86 @@ namespace APEX.Native
         public ApxCutResult Cut(ApxCutQuery query)
         {
             ThrowIfDisposed();
-            if (!_cutCapacityPrepared)
-            {
-                EnsureReadbackCapacity(checked(_particleCount * 2U));
-            }
-
             ApxResult result = NativeMethods.ApxCut(_handle, in query, out ApxCutResult cutResult);
             ApxException.ThrowIfFailed(result, "apxCut");
             _particleCount = checked(_particleCount + cutResult.SplitParticleCount);
-            _cutCapacityPrepared = true;
             return cutResult;
+        }
+
+        public ApxCutDetails GetLastCutDetails()
+        {
+            ThrowIfDisposed();
+            ApxResult result = NativeMethods.ApxGetLastCutDetails(
+                _handle,
+                null,
+                0,
+                out uint constraintCount,
+                null,
+                0,
+                out uint affectedParticleCount,
+                null,
+                0,
+                out uint activatedParticleCount);
+            ApxException.ThrowIfFailed(result, "apxGetLastCutDetails");
+
+            uint[] constraintIds = new uint[checked((int)constraintCount)];
+            uint[] affectedParticleIds = new uint[checked((int)affectedParticleCount)];
+            uint[] activatedParticleIds = new uint[checked((int)activatedParticleCount)];
+            GetLastCutDetails(
+                constraintIds,
+                affectedParticleIds,
+                activatedParticleIds,
+                out uint writtenConstraintCount,
+                out uint writtenAffectedParticleCount,
+                out uint writtenActivatedParticleCount);
+            if (writtenConstraintCount != constraintCount ||
+                writtenAffectedParticleCount != affectedParticleCount ||
+                writtenActivatedParticleCount != activatedParticleCount)
+            {
+                throw new InvalidOperationException(
+                    "The native cut-detail counts changed during a synchronous query.");
+            }
+
+            return new ApxCutDetails(
+                constraintIds,
+                affectedParticleIds,
+                activatedParticleIds);
+        }
+
+        public void GetLastCutDetails(
+            uint[] constraintIds,
+            uint[] affectedParticleIds,
+            uint[] activatedParticleIds,
+            out uint constraintCount,
+            out uint affectedParticleCount,
+            out uint activatedParticleCount)
+        {
+            ThrowIfDisposed();
+            if (constraintIds == null)
+            {
+                throw new ArgumentNullException(nameof(constraintIds));
+            }
+            if (affectedParticleIds == null)
+            {
+                throw new ArgumentNullException(nameof(affectedParticleIds));
+            }
+            if (activatedParticleIds == null)
+            {
+                throw new ArgumentNullException(nameof(activatedParticleIds));
+            }
+
+            ApxResult result = NativeMethods.ApxGetLastCutDetails(
+                _handle,
+                constraintIds.Length == 0 ? null : constraintIds,
+                checked((uint)constraintIds.Length),
+                out constraintCount,
+                affectedParticleIds.Length == 0 ? null : affectedParticleIds,
+                checked((uint)affectedParticleIds.Length),
+                out affectedParticleCount,
+                activatedParticleIds.Length == 0 ? null : activatedParticleIds,
+                checked((uint)activatedParticleIds.Length),
+                out activatedParticleCount);
+            ApxException.ThrowIfFailed(result, "apxGetLastCutDetails");
         }
 
         public void SetColliderProxies(ApxColliderProxy[] proxies)

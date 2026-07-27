@@ -13,12 +13,12 @@ namespace APEX.Native.Tests
         private const float ParticleRadius = 0.1F;
 
         [Test]
-        public void AbiVersionMatchesAdditiveVersionZeroPointFour()
+        public void AbiVersionMatchesAdditiveVersionZeroPointFive()
         {
             NativeWorld.GetAbiVersion(out uint major, out uint minor);
 
             Assert.That(major, Is.EqualTo(0U));
-            Assert.That(minor, Is.EqualTo(4U));
+            Assert.That(minor, Is.EqualTo(5U));
         }
 
         [Test]
@@ -128,7 +128,7 @@ namespace APEX.Native.Tests
         }
 
         [Test]
-        public void NativeMethodsExposeExactlyTheAdditiveNineteenCdeclEntrypoints()
+        public void NativeMethodsExposeExactlyTheAdditiveTwentyOneCdeclEntrypoints()
         {
             Type nativeMethods = typeof(NativeWorld).Assembly.GetType(
                 "APEX.Native.NativeMethods",
@@ -142,6 +142,7 @@ namespace APEX.Native.Tests
             {
                 "apxGetAbiVersion",
                 "apxCreateWorld",
+                "apxCreateWorldWithParticleCapacity",
                 "apxDestroyWorld",
                 "apxAddParticles",
                 "apxAddDistanceConstraints",
@@ -155,6 +156,7 @@ namespace APEX.Native.Tests
                 "apxGetRenderVertexPositions",
                 "apxGetRenderVertexNormals",
                 "apxCut",
+                "apxGetLastCutDetails",
                 "apxSetColliderProxies",
                 "apxStep",
                 "apxMapParticleBuffer",
@@ -591,7 +593,8 @@ namespace APEX.Native.Tests
                         4,
                         default,
                         0.0F,
-                        5));
+                        5),
+                    6U);
             }
             catch (ApxException exception)
                 when (backend == ApxBackendKind.Cuda &&
@@ -644,6 +647,41 @@ namespace APEX.Native.Tests
                 Assert.That(result.SplitParticleCount, Is.EqualTo(1U));
                 Assert.That(result.FirstSplitParticleId, Is.EqualTo(5U));
                 Assert.That(world.ParticleCount, Is.EqualTo(6U));
+                ApxCutDetails details = world.GetLastCutDetails();
+                CollectionAssert.AreEqual(
+                    new uint[] { 2U, 3U },
+                    details.DeactivatedConstraintIds);
+                CollectionAssert.AreEqual(
+                    new uint[] { 0U, 3U, 4U },
+                    details.AffectedParticleIds);
+                CollectionAssert.AreEqual(
+                    new uint[] { 5U },
+                    details.ActivatedParticleIds);
+                uint[] undersizedConstraints = { 77U };
+                uint[] affectedIds = { 77U, 88U, 99U };
+                uint[] activatedIds = { 77U };
+                ApxException capacity = Assert.Throws<ApxException>(
+                    () => world.GetLastCutDetails(
+                        undersizedConstraints,
+                        affectedIds,
+                        activatedIds,
+                        out _,
+                        out _,
+                        out _));
+                Assert.That(capacity.Result, Is.EqualTo(ApxResult.CapacityExceeded));
+                CollectionAssert.AreEqual(new uint[] { 77U }, undersizedConstraints);
+                CollectionAssert.AreEqual(new uint[] { 77U, 88U, 99U }, affectedIds);
+                CollectionAssert.AreEqual(new uint[] { 77U }, activatedIds);
+                ApxCutDetails repeatedDetails = world.GetLastCutDetails();
+                CollectionAssert.AreEqual(
+                    details.DeactivatedConstraintIds,
+                    repeatedDetails.DeactivatedConstraintIds);
+                CollectionAssert.AreEqual(
+                    details.AffectedParticleIds,
+                    repeatedDetails.AffectedParticleIds);
+                CollectionAssert.AreEqual(
+                    details.ActivatedParticleIds,
+                    repeatedDetails.ActivatedParticleIds);
                 CollectionAssert.AreEqual(
                     new uint[] { 2U, 3U },
                     world.GetBrokenClothDistanceConstraintIds());
@@ -668,6 +706,80 @@ namespace APEX.Native.Tests
 
         [TestCase(ApxBackendKind.Cpu)]
         [TestCase(ApxBackendKind.Cuda)]
+        public void CutCapacityExhaustionPreservesManagedAndNativeState(
+            ApxBackendKind backend)
+        {
+            NativeWorld world;
+            try
+            {
+                world = NativeWorld.Create(
+                    ApxWorldDesc.Create(
+                        backend,
+                        FixedTimeStep,
+                        4,
+                        default,
+                        0.0F,
+                        3),
+                    3U);
+            }
+            catch (ApxException exception)
+                when (backend == ApxBackendKind.Cuda &&
+                      (exception.Result == ApxResult.Unsupported ||
+                       exception.Result == ApxResult.BackendError))
+            {
+                Assert.Ignore($"CUDA backend is unavailable: {exception.Message}");
+                return;
+            }
+
+            using (world)
+            {
+                world.AddParticles(
+                    new[]
+                    {
+                        new ApxParticleDesc(default, default, 1.0F),
+                        new ApxParticleDesc(
+                            new ApxVec3(1.0F, 0.0F, 0.0F),
+                            default,
+                            0.0F),
+                        new ApxParticleDesc(
+                            new ApxVec3(-1.0F, 0.0F, 0.0F),
+                            default,
+                            0.0F),
+                    });
+                world.AddClothDistanceConstraints(
+                    new[]
+                    {
+                        new ApxClothDistanceConstraintDesc(
+                            0, 1, 1.0F, 0.0F, 100.0F, ApxClothDirection.Warp),
+                        new ApxClothDistanceConstraintDesc(
+                            0, 2, 1.0F, 0.0F, 100.0F, ApxClothDirection.Warp),
+                    });
+                world.Step(FixedTimeStep * 0.5F);
+
+                ApxException capacity = Assert.Throws<ApxException>(
+                    () => world.Cut(
+                        new ApxCutQuery(
+                            new ApxVec3(0.0F, -0.5F, 0.0F),
+                            new ApxVec3(0.0F, 0.5F, 0.0F),
+                            new ApxVec3(1.0F, 0.0F, 0.0F),
+                            0.01F)));
+                Assert.That(capacity.Result, Is.EqualTo(ApxResult.CapacityExceeded));
+                Assert.That(world.ParticleCount, Is.EqualTo(3U));
+                ApxException noDetails = Assert.Throws<ApxException>(
+                    () => world.GetLastCutDetails());
+                Assert.That(noDetails.Result, Is.EqualTo(ApxResult.InvalidState));
+                CollectionAssert.IsEmpty(world.GetBrokenClothDistanceConstraintIds());
+                ApxVec3[] positions = new ApxVec3[3];
+                Assert.That(world.ReadPositionSnapshot(positions), Is.EqualTo(3));
+                foreach (ApxVec3 position in positions)
+                {
+                    AssertFinite(position);
+                }
+            }
+        }
+
+        [TestCase(ApxBackendKind.Cpu)]
+        [TestCase(ApxBackendKind.Cuda)]
         public void RuntimeSplitWithSelfCollisionSeparatesSeamForSixtyFrames(
             ApxBackendKind backend)
         {
@@ -681,7 +793,8 @@ namespace APEX.Native.Tests
                         4,
                         default,
                         0.1F,
-                        3));
+                        3),
+                    4U);
             }
             catch (ApxException exception)
                 when (backend == ApxBackendKind.Cuda &&
