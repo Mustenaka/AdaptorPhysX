@@ -201,6 +201,33 @@ namespace APEX.Native
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct ApxRenderVertexBindingDesc
+    {
+        public uint ParticleA;
+        public uint ParticleB;
+        public uint ParticleC;
+        public float WeightA;
+        public float WeightB;
+        public float WeightC;
+
+        public ApxRenderVertexBindingDesc(
+            uint particleA,
+            uint particleB,
+            uint particleC,
+            float weightA,
+            float weightB,
+            float weightC)
+        {
+            ParticleA = particleA;
+            ParticleB = particleB;
+            ParticleC = particleC;
+            WeightA = weightA;
+            WeightB = weightB;
+            WeightC = weightC;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct ApxColliderProxy
     {
         public ApxColliderProxyType Type;
