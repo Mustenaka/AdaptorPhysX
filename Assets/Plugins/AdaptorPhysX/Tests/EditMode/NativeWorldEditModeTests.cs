@@ -525,6 +525,170 @@ namespace APEX.Native.Tests
         }
 
         [Test]
+        public void RenderMeshCutterCreatesStableInteriorSeamAndInterpolatesAttributes()
+        {
+            RenderMeshData input = CreateSquareRenderMesh();
+            RenderMeshCutResult result = RenderMeshCutter.Cut(input, CreateSquareCutQuery());
+
+            Assert.That(result.CutTriangleCount, Is.EqualTo(2U));
+            Assert.That(result.CreatedSeamPairCount, Is.EqualTo(3U));
+            Assert.That(result.Mesh.Vertices, Has.Length.EqualTo(10));
+            Assert.That(result.Mesh.Indices, Has.Length.EqualTo(18));
+            for (int pairIndex = 0; pairIndex < result.SeamPairs.Length; ++pairIndex)
+            {
+                RenderMeshSeamPair pair = result.SeamPairs[pairIndex];
+                Assert.That(pair.NegativeVertexId, Is.EqualTo(4U + (uint)pairIndex * 2U));
+                Assert.That(pair.PositiveVertexId, Is.EqualTo(pair.NegativeVertexId + 1U));
+                AssertRenderVertexBitsEqual(
+                    result.Mesh.Vertices[pair.NegativeVertexId],
+                    result.Mesh.Vertices[pair.PositiveVertexId]);
+                RenderMeshVertex seam = result.Mesh.Vertices[pair.NegativeVertexId];
+                Assert.That(seam.Position.X, Is.EqualTo(0.5F));
+                Assert.That(seam.Normal.X, Is.EqualTo(0.0F));
+                Assert.That(seam.Normal.Y, Is.EqualTo(0.0F));
+                Assert.That(seam.Normal.Z, Is.EqualTo(1.0F));
+                Assert.That(seam.U, Is.EqualTo(0.5F));
+            }
+
+            Assert.That(result.Mesh.Vertices[4].V, Is.EqualTo(0.0F));
+            Assert.That(result.Mesh.Vertices[6].V, Is.EqualTo(0.5F));
+            Assert.That(result.Mesh.Vertices[8].V, Is.EqualTo(1.0F));
+        }
+
+        [Test]
+        public void RenderMeshCutterRejectsDegenerateInputAndFiniteSegmentAvoidsExtensionHit()
+        {
+            RenderMeshData input = CreateSquareRenderMesh();
+            RenderMeshVertex[] verticesBefore = (RenderMeshVertex[])input.Vertices.Clone();
+            uint[] indicesBefore = (uint[])input.Indices.Clone();
+            ApxCutQuery farSegment = new ApxCutQuery(
+                new ApxVec3(0.5F, 10.0F, 0.0F),
+                new ApxVec3(0.5F, 11.0F, 0.0F),
+                new ApxVec3(1.0F, 0.0F, 0.0F),
+                0.1F);
+
+            RenderMeshCutResult noHit = RenderMeshCutter.Cut(input, farSegment);
+            Assert.That(noHit.CutTriangleCount, Is.EqualTo(0U));
+            Assert.That(noHit.CreatedSeamPairCount, Is.EqualTo(0U));
+            CollectionAssert.AreEqual(indicesBefore, noHit.Mesh.Indices);
+
+            ApxCutQuery degenerate = new ApxCutQuery(
+                default,
+                default,
+                new ApxVec3(1.0F, 0.0F, 0.0F),
+                0.0F);
+            Assert.Throws<ArgumentException>(() => RenderMeshCutter.Cut(input, degenerate));
+            Assert.Throws<ArgumentException>(
+                () => RenderMeshCutter.Cut(
+                    new RenderMeshData(input.Vertices, new uint[] { 0U, 1U, 99U }),
+                    CreateSquareCutQuery()));
+            CollectionAssert.AreEqual(indicesBefore, input.Indices);
+            for (int index = 0; index < verticesBefore.Length; ++index)
+            {
+                AssertRenderVertexBitsEqual(verticesBefore[index], input.Vertices[index]);
+            }
+
+            Assert.That(
+                RenderMeshCutter.TryIntersectSegmentPlane(
+                    new ApxVec3(-1.0F, 0.0F, 0.0F),
+                    new ApxVec3(1.0F, 0.0F, 0.0F),
+                    default,
+                    new ApxVec3(1.0F, 0.0F, 0.0F),
+                    out float parameter,
+                    out ApxVec3 point),
+                Is.True);
+            Assert.That(parameter, Is.EqualTo(0.5F));
+            Assert.That(point.X, Is.EqualTo(0.0F));
+        }
+
+        [Test]
+        public void RenderMeshCutterDeterminismMatchesCompleteHashAcrossSixtySegmentCommits()
+        {
+            ApxCutQuery[] trajectory = new ApxCutQuery[60];
+            for (int segment = 0; segment < trajectory.Length; ++segment)
+            {
+                trajectory[segment] = CreateSquareCutQuery();
+            }
+
+            RenderMeshCutResult first =
+                RenderMeshCutter.CutPolyline(CreateSquareRenderMesh(), trajectory);
+            RenderMeshCutResult second =
+                RenderMeshCutter.CutPolyline(CreateSquareRenderMesh(), trajectory);
+            Assert.That(HashRenderMeshCutResult(first), Is.EqualTo(HashRenderMeshCutResult(second)));
+            Assert.That(first.CutTriangleCount, Is.EqualTo(2U));
+            Assert.That(first.CreatedSeamPairCount, Is.EqualTo(3U));
+        }
+
+        [Test]
+        public void RenderMeshCutterCrosscheckMatchesAnalyticSquareTopologyExactly()
+        {
+            RenderMeshData input = CreateSquareRenderMesh();
+            ApxCutQuery query = CreateSquareCutQuery();
+            foreach (RenderMeshVertex vertex in input.Vertices)
+            {
+                Assert.That(
+                    Math.Abs(vertex.Position.X - query.Start.X),
+                    Is.EqualTo(0.5F),
+                    "Fixture vertices must stay away from the side-classification plane.");
+            }
+            Assert.That(
+                query.Radius * query.Radius,
+                Is.GreaterThan(0.0024F),
+                "The exact trajectory overlap must stay away from the radius boundary.");
+
+            RenderMeshCutResult result = RenderMeshCutter.Cut(input, query);
+            CollectionAssert.AreEqual(
+                new uint[]
+                {
+                    0U, 4U, 6U,
+                    5U, 1U, 2U,
+                    5U, 2U, 7U,
+                    0U, 6U, 8U,
+                    0U, 8U, 3U,
+                    7U, 2U, 9U,
+                },
+                result.Mesh.Indices);
+            Assert.That(result.SeamPairs[0].NegativeVertexId, Is.EqualTo(4U));
+            Assert.That(result.SeamPairs[1].NegativeVertexId, Is.EqualTo(6U));
+            Assert.That(result.SeamPairs[2].NegativeVertexId, Is.EqualTo(8U));
+        }
+
+        [Test]
+        public void RenderMeshCutterPerfMeetsFixedHundredThousandTriangleGate()
+        {
+            RenderMeshData input = CreateRenderGrid(251, 201);
+            Assert.That(input.Vertices, Has.Length.EqualTo(50451));
+            Assert.That(input.Indices, Has.Length.EqualTo(300000));
+            ApxCutQuery query = new ApxCutQuery(
+                new ApxVec3(125.5F, -1.0F, 0.0F),
+                new ApxVec3(125.5F, 201.0F, 0.0F),
+                new ApxVec3(1.0F, 0.0F, 0.0F),
+                0.01F);
+            RenderMeshCutResult warmup = RenderMeshCutter.Cut(input, query);
+            Assert.That(warmup.CutTriangleCount, Is.EqualTo(400U));
+
+            double[] samples = new double[5];
+            for (int sample = 0; sample < samples.Length; ++sample)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                RenderMeshCutResult result = RenderMeshCutter.Cut(input, query);
+                stopwatch.Stop();
+                Assert.That(result.CutTriangleCount, Is.EqualTo(400U));
+                Assert.That(result.CreatedSeamPairCount, Is.EqualTo(401U));
+                samples[sample] = stopwatch.Elapsed.TotalMilliseconds;
+            }
+
+            Array.Sort(samples);
+            double medianMilliseconds = samples[samples.Length / 2];
+            TestContext.Out.WriteLine(
+                "APX_RENDER_CUT_PERF triangles=100000 samples=5 median_ms={0:F4} gate_ms=1500.0000",
+                medianMilliseconds);
+            Assert.That(medianMilliseconds, Is.LessThanOrEqualTo(1500.0));
+        }
+
+        [Test]
         public void StaleMappedSnapshotCannotReadOrUnmapANewerGeneration()
         {
             using (NativeWorld world = CreateFallingPairWorld(ApxBackendKind.Cpu))
@@ -676,6 +840,116 @@ namespace APEX.Native.Tests
             Assert.That(actual.X, Is.EqualTo(expected.X).Within(tolerance));
             Assert.That(actual.Y, Is.EqualTo(expected.Y).Within(tolerance));
             Assert.That(actual.Z, Is.EqualTo(expected.Z).Within(tolerance));
+        }
+
+        private static RenderMeshData CreateSquareRenderMesh()
+        {
+            ApxVec3 normal = new ApxVec3(0.0F, 0.0F, 1.0F);
+            return new RenderMeshData(
+                new[]
+                {
+                    new RenderMeshVertex(new ApxVec3(0.0F, 0.0F, 0.0F), normal, 0.0F, 0.0F),
+                    new RenderMeshVertex(new ApxVec3(1.0F, 0.0F, 0.0F), normal, 1.0F, 0.0F),
+                    new RenderMeshVertex(new ApxVec3(1.0F, 1.0F, 0.0F), normal, 1.0F, 1.0F),
+                    new RenderMeshVertex(new ApxVec3(0.0F, 1.0F, 0.0F), normal, 0.0F, 1.0F),
+                },
+                new uint[] { 0U, 1U, 2U, 0U, 2U, 3U });
+        }
+
+        private static ApxCutQuery CreateSquareCutQuery()
+        {
+            return new ApxCutQuery(
+                new ApxVec3(0.5F, -1.0F, 0.0F),
+                new ApxVec3(0.5F, 2.0F, 0.0F),
+                new ApxVec3(1.0F, 0.0F, 0.0F),
+                0.05F);
+        }
+
+        private static RenderMeshData CreateRenderGrid(int columns, int rows)
+        {
+            RenderMeshVertex[] vertices = new RenderMeshVertex[checked(columns * rows)];
+            ApxVec3 normal = new ApxVec3(0.0F, 0.0F, 1.0F);
+            for (int row = 0; row < rows; ++row)
+            {
+                for (int column = 0; column < columns; ++column)
+                {
+                    vertices[row * columns + column] = new RenderMeshVertex(
+                        new ApxVec3(column, row, 0.0F),
+                        normal,
+                        column / (float)(columns - 1),
+                        row / (float)(rows - 1));
+                }
+            }
+
+            uint[] indices = new uint[checked((columns - 1) * (rows - 1) * 6)];
+            int offset = 0;
+            for (int row = 0; row + 1 < rows; ++row)
+            {
+                for (int column = 0; column + 1 < columns; ++column)
+                {
+                    uint lowerLeft = checked((uint)(row * columns + column));
+                    uint lowerRight = lowerLeft + 1U;
+                    uint upperLeft = lowerLeft + checked((uint)columns);
+                    uint upperRight = upperLeft + 1U;
+                    indices[offset++] = lowerLeft;
+                    indices[offset++] = lowerRight;
+                    indices[offset++] = upperRight;
+                    indices[offset++] = lowerLeft;
+                    indices[offset++] = upperRight;
+                    indices[offset++] = upperLeft;
+                }
+            }
+
+            return new RenderMeshData(vertices, indices);
+        }
+
+        private static void AssertRenderVertexBitsEqual(
+            RenderMeshVertex expected,
+            RenderMeshVertex actual)
+        {
+            Assert.That(FloatBits(actual.Position.X), Is.EqualTo(FloatBits(expected.Position.X)));
+            Assert.That(FloatBits(actual.Position.Y), Is.EqualTo(FloatBits(expected.Position.Y)));
+            Assert.That(FloatBits(actual.Position.Z), Is.EqualTo(FloatBits(expected.Position.Z)));
+            Assert.That(FloatBits(actual.Normal.X), Is.EqualTo(FloatBits(expected.Normal.X)));
+            Assert.That(FloatBits(actual.Normal.Y), Is.EqualTo(FloatBits(expected.Normal.Y)));
+            Assert.That(FloatBits(actual.Normal.Z), Is.EqualTo(FloatBits(expected.Normal.Z)));
+            Assert.That(FloatBits(actual.U), Is.EqualTo(FloatBits(expected.U)));
+            Assert.That(FloatBits(actual.V), Is.EqualTo(FloatBits(expected.V)));
+        }
+
+        private static ulong HashRenderMeshCutResult(RenderMeshCutResult result)
+        {
+            const ulong offsetBasis = 1469598103934665603UL;
+            const ulong prime = 1099511628211UL;
+            ulong hash = offsetBasis;
+            foreach (RenderMeshVertex vertex in result.Mesh.Vertices)
+            {
+                hash = (hash ^ FloatBits(vertex.Position.X)) * prime;
+                hash = (hash ^ FloatBits(vertex.Position.Y)) * prime;
+                hash = (hash ^ FloatBits(vertex.Position.Z)) * prime;
+                hash = (hash ^ FloatBits(vertex.Normal.X)) * prime;
+                hash = (hash ^ FloatBits(vertex.Normal.Y)) * prime;
+                hash = (hash ^ FloatBits(vertex.Normal.Z)) * prime;
+                hash = (hash ^ FloatBits(vertex.U)) * prime;
+                hash = (hash ^ FloatBits(vertex.V)) * prime;
+            }
+            foreach (uint index in result.Mesh.Indices)
+            {
+                hash = (hash ^ index) * prime;
+            }
+            foreach (RenderMeshSeamPair seam in result.SeamPairs)
+            {
+                hash = (hash ^ seam.NegativeVertexId) * prime;
+                hash = (hash ^ seam.PositiveVertexId) * prime;
+            }
+            hash = (hash ^ result.CutTriangleCount) * prime;
+            return hash;
+        }
+
+        private static uint FloatBits(float value)
+        {
+            byte[] bytes = BitConverter.GetBytes(value);
+            return BitConverter.ToUInt32(bytes, 0);
         }
     }
 }

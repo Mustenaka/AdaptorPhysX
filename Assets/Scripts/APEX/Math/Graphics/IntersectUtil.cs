@@ -1,5 +1,6 @@
 using APEX.Common.Collider;
 using APEX.Common.Collider.Desc;
+using APEX.Native;
 using Unity.Mathematics;
 
 namespace APEX.Math.Graphics
@@ -17,6 +18,29 @@ namespace APEX.Math.Graphics
             var v0 = p1 - p0;
             var v1 = p2 - p0;
             return math.length(math.cross(v0, v1)) * 0.5f;
+        }
+
+        /// <summary>
+        /// Deterministic segment/plane primitive shared with the precise
+        /// render-mesh cutter. A parallel or out-of-segment hit returns false.
+        /// </summary>
+        public static bool TryIntersectSegmentPlane(
+            float3 segmentStart,
+            float3 segmentEnd,
+            float3 planePoint,
+            float3 planeNormal,
+            out float parameter,
+            out float3 point)
+        {
+            bool hit = RenderMeshCutter.TryIntersectSegmentPlane(
+                new ApxVec3(segmentStart.x, segmentStart.y, segmentStart.z),
+                new ApxVec3(segmentEnd.x, segmentEnd.y, segmentEnd.z),
+                new ApxVec3(planePoint.x, planePoint.y, planePoint.z),
+                new ApxVec3(planeNormal.x, planeNormal.y, planeNormal.z),
+                out parameter,
+                out ApxVec3 intersection);
+            point = new float3(intersection.X, intersection.Y, intersection.Z);
+            return hit;
         }
 
         /// <summary>

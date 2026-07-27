@@ -1,7 +1,9 @@
 using System.Collections.Generic;
 using System;
 using System.Linq;
+using APEX.Native;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 public class ObjCut : MonoBehaviour
 {
@@ -16,6 +18,12 @@ public class ObjCut : MonoBehaviour
     public float size = 5f;
     //刀片的厚度
     public float tickness = 0.005f;
+    [Tooltip("使用 finite-segment 确定性精切；关闭时保留原有实体切割路径。")]
+    public bool usePreciseRenderMeshCut = true;
+
+    [Header("精切结果")]
+    public uint lastCutTriangleCount;
+    public uint lastCreatedSeamPairCount;
     
     [Header("填充")]
     public Material liverMat;
@@ -190,11 +198,123 @@ public class ObjCut : MonoBehaviour
     {
         if (target == null)
             return;
+        if (usePreciseRenderMeshCut)
+        {
+            CutPreciseRenderMesh();
+            return;
+        }
         CutMesh();
         GC.Collect();
     }
 
     // [Header("Extern")] 
+
+    void CutPreciseRenderMesh()
+    {
+        MeshFilter meshFilter = target.GetComponent<MeshFilter>();
+        if (meshFilter == null || meshFilter.sharedMesh == null)
+            return;
+
+        Mesh source = meshFilter.sharedMesh;
+        Vector3[] sourcePositions = source.vertices;
+        Vector3[] sourceNormals = source.normals;
+        Vector2[] sourceUvs = source.uv;
+        int[] sourceIndices = source.triangles;
+        RenderMeshVertex[] vertices = new RenderMeshVertex[sourcePositions.Length];
+        for (int index = 0; index < sourcePositions.Length; ++index)
+        {
+            Vector3 normal = sourceNormals.Length == sourcePositions.Length
+                ? sourceNormals[index]
+                : Vector3.zero;
+            Vector2 uv = sourceUvs.Length == sourcePositions.Length
+                ? sourceUvs[index]
+                : Vector2.zero;
+            vertices[index] = new RenderMeshVertex(
+                ToApx(sourcePositions[index]),
+                ToApx(normal),
+                uv.x,
+                uv.y);
+        }
+
+        uint[] indices = new uint[sourceIndices.Length];
+        for (int index = 0; index < sourceIndices.Length; ++index)
+        {
+            indices[index] = checked((uint)sourceIndices[index]);
+        }
+
+        Transform blade = planeLocation != null ? planeLocation : transform;
+        float halfLength = Mathf.Max(0.0F, size) * 0.5F;
+        Vector3 localStart = target.transform.InverseTransformPoint(
+            blade.position - blade.right * halfLength);
+        Vector3 localEnd = target.transform.InverseTransformPoint(
+            blade.position + blade.right * halfLength);
+        Vector3 localSideNormal =
+            target.transform.InverseTransformDirection(blade.forward).normalized;
+        Vector3 scale = target.transform.lossyScale;
+        float maximumScale = Mathf.Max(
+            Mathf.Abs(scale.x),
+            Mathf.Max(Mathf.Abs(scale.y), Mathf.Abs(scale.z)));
+        float localRadius = Mathf.Max(0.0F, tickness) /
+            Mathf.Max(maximumScale, 1.0e-6F);
+
+        RenderMeshCutResult result = RenderMeshCutter.Cut(
+            new RenderMeshData(vertices, indices),
+            new ApxCutQuery(
+                ToApx(localStart),
+                ToApx(localEnd),
+                ToApx(localSideNormal),
+                localRadius));
+
+        RenderMeshVertex[] resultVertices = result.Mesh.Vertices;
+        Vector3[] positions = new Vector3[resultVertices.Length];
+        Vector3[] normals = new Vector3[resultVertices.Length];
+        Vector2[] uvs = new Vector2[resultVertices.Length];
+        for (int index = 0; index < resultVertices.Length; ++index)
+        {
+            positions[index] = ToUnity(resultVertices[index].Position);
+            normals[index] = ToUnity(resultVertices[index].Normal);
+            uvs[index] = new Vector2(resultVertices[index].U, resultVertices[index].V);
+        }
+
+        uint[] resultIndices = result.Mesh.Indices;
+        int[] triangles = new int[resultIndices.Length];
+        for (int index = 0; index < resultIndices.Length; ++index)
+        {
+            triangles[index] = checked((int)resultIndices[index]);
+        }
+
+        Mesh preciseMesh = new Mesh
+        {
+            name = source.name + "_PreciseCut",
+            indexFormat = resultVertices.Length > ushort.MaxValue
+                ? IndexFormat.UInt32
+                : IndexFormat.UInt16,
+            vertices = positions,
+            normals = normals,
+            uv = uvs,
+            triangles = triangles,
+        };
+        preciseMesh.RecalculateBounds();
+        meshFilter.sharedMesh = preciseMesh;
+        MeshCollider meshCollider = target.GetComponent<MeshCollider>();
+        if (meshCollider != null)
+        {
+            meshCollider.sharedMesh = preciseMesh;
+        }
+
+        lastCutTriangleCount = result.CutTriangleCount;
+        lastCreatedSeamPairCount = result.CreatedSeamPairCount;
+    }
+
+    static ApxVec3 ToApx(Vector3 value)
+    {
+        return new ApxVec3(value.x, value.y, value.z);
+    }
+
+    static Vector3 ToUnity(ApxVec3 value)
+    {
+        return new Vector3(value.X, value.Y, value.Z);
+    }
     
     void CutMesh()
     {
