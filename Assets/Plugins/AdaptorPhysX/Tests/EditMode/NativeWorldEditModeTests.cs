@@ -251,6 +251,75 @@ namespace APEX.Native.Tests
             }
         }
 
+        [TestCase(ApxBackendKind.Cpu)]
+        [TestCase(ApxBackendKind.Cuda)]
+        public void TearQueryReportsLiteralPropagationAndCallerCapacity(ApxBackendKind backend)
+        {
+            NativeWorld world;
+            try
+            {
+                world = NativeWorld.Create(
+                    ApxWorldDesc.Create(
+                        backend,
+                        1.0F,
+                        1,
+                        default,
+                        0.0F,
+                        3));
+            }
+            catch (ApxException exception)
+                when (backend == ApxBackendKind.Cuda &&
+                      (exception.Result == ApxResult.Unsupported ||
+                       exception.Result == ApxResult.BackendError))
+            {
+                Assert.Ignore($"CUDA backend is unavailable: {exception.Message}");
+                return;
+            }
+
+            using (world)
+            {
+                ApxParticleDesc[] particles =
+                {
+                    new ApxParticleDesc(new ApxVec3(0.0F, 0.0F, 0.0F), default, 0.0F),
+                    new ApxParticleDesc(
+                        new ApxVec3(1.0F, 0.0F, 0.0F),
+                        new ApxVec3(0.5F, 0.0F, 0.0F),
+                        1.0F),
+                    new ApxParticleDesc(new ApxVec3(1.0F, 1.0F, 0.0F), default, 0.0F),
+                };
+                ApxClothDistanceConstraintDesc[] cloth =
+                {
+                    new ApxClothDistanceConstraintDesc(
+                        0, 1, 1.0F, 1.0e6F, 1.05F, ApxClothDirection.Warp),
+                    new ApxClothDistanceConstraintDesc(
+                        1, 2, 1.0F, 1.0e6F, 1.28F, ApxClothDirection.Weft),
+                };
+                Assert.That(world.AddParticles(particles), Is.EqualTo(0U));
+                Assert.That(world.AddClothDistanceConstraints(cloth), Is.EqualTo(0U));
+
+                world.Step(1.0F);
+                Assert.That(world.GetBrokenClothDistanceConstraintCount(), Is.EqualTo(1U));
+                uint[] ids = { 77U, 88U };
+                Assert.That(world.GetBrokenClothDistanceConstraintIds(ids), Is.EqualTo(1));
+                CollectionAssert.AreEqual(new uint[] { 0U, 88U }, ids);
+
+                world.Step(1.0F);
+                ids[0] = 77U;
+                ids[1] = 88U;
+                uint[] undersized = { 99U };
+                ApxException capacity = Assert.Throws<ApxException>(
+                    () => world.GetBrokenClothDistanceConstraintIds(undersized));
+                Assert.That(capacity.Result, Is.EqualTo(ApxResult.CapacityExceeded));
+                CollectionAssert.AreEqual(new uint[] { 99U }, undersized);
+                Assert.That(world.GetBrokenClothDistanceConstraintCount(), Is.EqualTo(2U));
+                CollectionAssert.AreEqual(
+                    new uint[] { 0U, 1U },
+                    world.GetBrokenClothDistanceConstraintIds());
+                Assert.That(world.GetBrokenClothDistanceConstraintIds(ids), Is.EqualTo(2));
+                CollectionAssert.AreEqual(new uint[] { 0U, 1U }, ids);
+            }
+        }
+
         [Test]
         public void StaleMappedSnapshotCannotReadOrUnmapANewerGeneration()
         {

@@ -22,10 +22,10 @@ symbols, and `cudart64_12.dll` is its only direct NVIDIA dependency. It also
 verifies that both existing Unity `.meta` files are unchanged.
 
 - `x86_64/adaptorphysx.dll`
-  - native source baseline: `6d00c2aafc8cfeac6b377cad3113a4cc5d586960`
+  - native source baseline: `77452f71f6789b378d6b1d7c64c5579fb12c7b39`
   - build: CUDA Release, Ninja + MSVC 14.44, `sm_89`
   - current packaged SHA-256:
-    `2FABC81F4467BAA52B3D2F027AC672B10A22C78D8E90B19B3AFA8E0E4E7D3BA0`
+    `EA7394E277794D15B0D284F789770DC657B10D90ACE35602A2CF2CE7E7C2CFFD`
 - `x86_64/cudart64_12.dll`
   - source: CUDA Toolkit 12.6 shared runtime
   - file version: `6.14.11.12060`
