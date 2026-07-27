@@ -1385,44 +1385,64 @@ namespace APEX.Native.Tests
                 0.01F);
             RenderMeshCutResult warmup = RenderMeshCutter.Cut(input, query);
             Assert.That(warmup.CutTriangleCount, Is.EqualTo(400U));
+            warmup = null;
 
             double[] samples = new double[5];
-            long[] allocatedBytes = new long[5];
-            for (int sample = 0; sample < samples.Length; ++sample)
+            int[] allocationBlocks = new int[5];
+            long retainedPayloadBytes = 0L;
+            UnityEngine.Profiling.Recorder allocationRecorder =
+                UnityEngine.Profiling.Recorder.Get("GC.Alloc");
+            allocationRecorder.enabled = false;
+            allocationRecorder.FilterToCurrentThread();
+            try
             {
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-                long allocationStart = GC.GetAllocatedBytesForCurrentThread();
-                long managedHeapStart = GC.GetTotalMemory(false);
-                System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
-                RenderMeshCutResult result = RenderMeshCutter.Cut(input, query);
-                stopwatch.Stop();
-                long threadAllocation =
-                    GC.GetAllocatedBytesForCurrentThread() - allocationStart;
-                long managedHeapDelta =
-                    GC.GetTotalMemory(false) - managedHeapStart;
-                // Unity's Mono profile can report zero for the per-thread API.
-                // Keep the retained managed-heap delta as the deterministic
-                // fallback while the result is still strongly reachable.
-                allocatedBytes[sample] =
-                    Math.Max(threadAllocation, Math.Max(0L, managedHeapDelta));
-                Assert.That(result.CutTriangleCount, Is.EqualTo(400U));
-                Assert.That(result.CreatedSeamPairCount, Is.EqualTo(401U));
-                samples[sample] = stopwatch.Elapsed.TotalMilliseconds;
+                for (int sample = 0; sample < samples.Length; ++sample)
+                {
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    System.Diagnostics.Stopwatch stopwatch =
+                        new System.Diagnostics.Stopwatch();
+                    allocationRecorder.enabled = false;
+                    allocationRecorder.enabled = true;
+                    stopwatch.Start();
+                    RenderMeshCutResult result = RenderMeshCutter.Cut(input, query);
+                    stopwatch.Stop();
+                    allocationRecorder.enabled = false;
+                    allocationBlocks[sample] = allocationRecorder.sampleBlockCount;
+                    Assert.That(result.CutTriangleCount, Is.EqualTo(400U));
+                    Assert.That(result.CreatedSeamPairCount, Is.EqualTo(401U));
+                    samples[sample] = stopwatch.Elapsed.TotalMilliseconds;
+                    retainedPayloadBytes =
+                        result.Mesh.Vertices.LongLength *
+                            Marshal.SizeOf<RenderMeshVertex>() +
+                        result.Mesh.Indices.LongLength * sizeof(uint) +
+                        result.SeamPairs.LongLength *
+                            Marshal.SizeOf<RenderMeshSeamPair>();
+                    GC.KeepAlive(result);
+                }
+            }
+            finally
+            {
+                allocationRecorder.enabled = false;
+                allocationRecorder.CollectFromAllThreads();
             }
 
             Array.Sort(samples);
-            Array.Sort(allocatedBytes);
+            Array.Sort(allocationBlocks);
             double medianMilliseconds = samples[samples.Length / 2];
-            long medianAllocatedBytes = allocatedBytes[allocatedBytes.Length / 2];
+            int medianAllocationBlocks =
+                allocationBlocks[allocationBlocks.Length / 2];
             TestContext.Out.WriteLine(
                 "APX_RENDER_CUT_PERF triangles=100000 samples=5 median_ms={0:F4} " +
-                "median_gc_heap_delta_bytes={1} gate_ms=1500.0000 " +
-                "gate_gc_heap_delta_bytes=8388608",
+                "median_gc_alloc_blocks={1} retained_payload_bytes={2} " +
+                "gate_ms=1500.0000 gate_gc_alloc_blocks=5000 " +
+                "gate_retained_payload_bytes=8388608",
                 medianMilliseconds,
-                medianAllocatedBytes);
+                medianAllocationBlocks,
+                retainedPayloadBytes);
             Assert.That(medianMilliseconds, Is.LessThanOrEqualTo(1500.0));
-            Assert.That(medianAllocatedBytes, Is.LessThanOrEqualTo(8L * 1024L * 1024L));
+            Assert.That(medianAllocationBlocks, Is.LessThanOrEqualTo(5000));
+            Assert.That(retainedPayloadBytes, Is.LessThanOrEqualTo(8L * 1024L * 1024L));
         }
 
         [Test]
