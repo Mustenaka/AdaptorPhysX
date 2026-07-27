@@ -37,9 +37,13 @@ namespace APEX.Native.Tests
             Assert.That(
                 workload.ClothConstraints[0].Direction,
                 Is.EqualTo(ApxClothDirection.Warp));
+            Assert.That(workload.ClothConstraints[0].Compliance, Is.EqualTo(1.0e-6F));
+            Assert.That(workload.ClothConstraints[0].BreakThreshold, Is.EqualTo(1.5F));
             Assert.That(
                 workload.ClothConstraints[9].Direction,
                 Is.EqualTo(ApxClothDirection.Weft));
+            Assert.That(workload.ClothConstraints[9].Compliance, Is.EqualTo(2.0e-6F));
+            Assert.That(workload.ClothConstraints[9].BreakThreshold, Is.EqualTo(1.5F));
             Assert.That(workload.RenderBindings[11].ParticleA, Is.EqualTo(11U));
             Assert.That(workload.RenderBindings[11].ParticleB, Is.EqualTo(0U));
             Assert.That(workload.RenderBindings[11].ParticleC, Is.EqualTo(1U));
@@ -180,6 +184,14 @@ namespace APEX.Native.Tests
                 Assert.That(
                     world.ParticleCount,
                     Is.EqualTo((uint)(initialParticleCount + rows)));
+                uint[] cutBrokenIds = world.GetBrokenClothDistanceConstraintIds();
+                Assert.That(
+                    cutBrokenIds,
+                    Has.Length.EqualTo(checked((int)cut.CutConstraintCount)));
+                for (int index = 1; index < cutBrokenIds.Length; ++index)
+                {
+                    Assert.That(cutBrokenIds[index], Is.GreaterThan(cutBrokenIds[index - 1]));
+                }
 
                 NativeArray<Vector3> unityPositions = new NativeArray<Vector3>(
                     initialParticleCount,
@@ -294,25 +306,27 @@ namespace APEX.Native.Tests
                         string performanceJson = string.Format(
                             CultureInfo.InvariantCulture,
                             "APX_UNITY_PERF_JSON {{\"schema_version\":1," +
-                            "\"benchmark\":\"phase1_dual_mesh_100k\"," +
+                            "\"benchmark\":\"phase1_exit_unity_100k\"," +
                             "\"initial_particles\":{0},\"split_particles\":{1}," +
                             "\"active_particles\":{2},\"cloth_constraints\":{3}," +
                             "\"render_bindings\":{4},\"render_triangles\":{5}," +
-                            "\"cut_event_ms\":{6:F4}," +
+                            "\"broken_constraints_after_cut\":{6}," +
+                            "\"cut_event_ms\":{7:F4}," +
                             "\"substeps_per_frame\":2,\"solver_iterations\":2," +
-                            "\"collision\":true,\"warmup_frames\":{7}," +
-                            "\"sample_frames\":{8}," +
+                            "\"collision\":true,\"warmup_frames\":{8}," +
+                            "\"sample_frames\":{9}," +
                             "\"timing_scope\":\"step+direct_nativearray_readback+mesh_upload\"," +
-                            "\"median_ms\":{9:F4},\"p95_ms\":{10:F4}," +
-                            "\"managed_alloc_bytes\":{11}," +
-                            "\"median_gate_ms\":{12:F4},\"p95_gate_ms\":{13:F4}," +
-                            "\"gate_pass\":{14}}}",
+                            "\"median_ms\":{10:F4},\"p95_ms\":{11:F4}," +
+                            "\"managed_alloc_bytes\":{12}," +
+                            "\"median_gate_ms\":{13:F4},\"p95_gate_ms\":{14:F4}," +
+                            "\"gate_pass\":{15}}}",
                             initialParticleCount,
                             rows,
                             initialParticleCount + rows,
                             expectedConstraintCount,
                             initialParticleCount,
                             expectedRenderTriangleCount,
+                            cutBrokenIds.Length,
                             cutTimer.Elapsed.TotalMilliseconds,
                             warmupFrames,
                             sampleFrames,
@@ -366,6 +380,30 @@ namespace APEX.Native.Tests
             Assert.That(
                 GameObject.Find("PreciseCut_Preview").GetComponent("ObjCut"),
                 Is.Not.Null);
+            Component editModeController =
+                editModeCloth.GetComponent("PhaseOneDemoController");
+            Type controllerType = editModeController.GetType();
+            Assert.That(
+                controllerType.GetField("columns").GetValue(editModeController),
+                Is.EqualTo(400));
+            Assert.That(
+                controllerType.GetField("rows").GetValue(editModeController),
+                Is.EqualTo(250));
+            Assert.That(
+                controllerType.GetField("solverIterations").GetValue(editModeController),
+                Is.EqualTo(2U));
+            Assert.That(
+                controllerType.GetField("particleRadius").GetValue(editModeController),
+                Is.EqualTo(0.006F));
+            Assert.That(
+                controllerType.GetField("warpCompliance").GetValue(editModeController),
+                Is.EqualTo(1.0e-7F));
+            Assert.That(
+                controllerType.GetField("weftCompliance").GetValue(editModeController),
+                Is.EqualTo(2.0e-6F));
+            Assert.That(
+                controllerType.GetField("breakThreshold").GetValue(editModeController),
+                Is.EqualTo(100.0F));
 
             yield return new EnterPlayMode();
             GameObject cloth = GameObject.Find("PhaseOne_100k_Cloth");
