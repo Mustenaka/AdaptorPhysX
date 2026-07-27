@@ -474,6 +474,14 @@ namespace APEX.Native.Tests
                 world.SetRenderVertexBindings(bindings);
 
                 Assert.That(world.GetRenderVertexPositionCount(), Is.EqualTo(2U));
+                Assert.Throws<ArgumentOutOfRangeException>(
+                    () => world.GetRenderVertexPositions(IntPtr.Zero, -1));
+                Assert.Throws<ArgumentNullException>(
+                    () => world.GetRenderVertexPositions(IntPtr.Zero, 1));
+                Assert.Throws<ArgumentOutOfRangeException>(
+                    () => world.GetRenderVertexNormals(IntPtr.Zero, -1));
+                Assert.Throws<ArgumentNullException>(
+                    () => world.GetRenderVertexNormals(IntPtr.Zero, 1));
                 ApxVec3[] undersized = { new ApxVec3(77.0F, 88.0F, 99.0F) };
                 ApxException capacity = Assert.Throws<ApxException>(
                     () => world.GetRenderVertexPositions(undersized));

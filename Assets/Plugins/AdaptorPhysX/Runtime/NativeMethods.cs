@@ -141,12 +141,34 @@ namespace APEX.Native
 
         [DllImport(
             LibraryName,
+            EntryPoint = "apxGetRenderVertexPositions",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        internal static extern ApxResult ApxGetRenderVertexPositionsIntoBuffer(
+            ApxWorldSafeHandle world,
+            IntPtr outPositions,
+            uint capacity,
+            out uint outCount);
+
+        [DllImport(
+            LibraryName,
             EntryPoint = "apxGetRenderVertexNormals",
             CallingConvention = CallingConvention.Cdecl,
             ExactSpelling = true)]
         internal static extern ApxResult ApxGetRenderVertexNormals(
             ApxWorldSafeHandle world,
             [Out] ApxVec3[] outNormals,
+            uint capacity,
+            out uint outCount);
+
+        [DllImport(
+            LibraryName,
+            EntryPoint = "apxGetRenderVertexNormals",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        internal static extern ApxResult ApxGetRenderVertexNormalsIntoBuffer(
+            ApxWorldSafeHandle world,
+            IntPtr outNormals,
             uint capacity,
             out uint outCount);
 

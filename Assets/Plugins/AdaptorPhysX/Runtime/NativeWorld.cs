@@ -343,6 +343,19 @@ namespace APEX.Native
             return checked((int)written);
         }
 
+        public int GetRenderVertexPositions(IntPtr destination, int capacity)
+        {
+            ThrowIfDisposed();
+            ValidateNativeBuffer(destination, capacity, nameof(destination));
+            ApxResult result = NativeMethods.ApxGetRenderVertexPositionsIntoBuffer(
+                _handle,
+                destination,
+                checked((uint)capacity),
+                out uint written);
+            ApxException.ThrowIfFailed(result, "apxGetRenderVertexPositions");
+            return checked((int)written);
+        }
+
         public uint GetRenderVertexNormalCount()
         {
             ThrowIfDisposed();
@@ -367,6 +380,19 @@ namespace APEX.Native
                 _handle,
                 destination.Length == 0 ? null : destination,
                 checked((uint)destination.Length),
+                out uint written);
+            ApxException.ThrowIfFailed(result, "apxGetRenderVertexNormals");
+            return checked((int)written);
+        }
+
+        public int GetRenderVertexNormals(IntPtr destination, int capacity)
+        {
+            ThrowIfDisposed();
+            ValidateNativeBuffer(destination, capacity, nameof(destination));
+            ApxResult result = NativeMethods.ApxGetRenderVertexNormalsIntoBuffer(
+                _handle,
+                destination,
+                checked((uint)capacity),
                 out uint written);
             ApxException.ThrowIfFailed(result, "apxGetRenderVertexNormals");
             return checked((int)written);
@@ -548,6 +574,21 @@ namespace APEX.Native
             if (_disposed)
             {
                 throw new ObjectDisposedException(nameof(NativeWorld));
+            }
+        }
+
+        private static void ValidateNativeBuffer(
+            IntPtr destination,
+            int capacity,
+            string parameterName)
+        {
+            if (capacity < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(capacity));
+            }
+            if (capacity != 0 && destination == IntPtr.Zero)
+            {
+                throw new ArgumentNullException(parameterName);
             }
         }
 

@@ -1,6 +1,7 @@
 using System;
 using APEX.Native;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -40,8 +41,6 @@ namespace APEX.Usage
         private NativeWorld _world;
         private PhaseOneReplayTimeline _timeline;
         private PhaseOneReplayCursor _cursor;
-        private ApxVec3[] _renderPositions;
-        private ApxVec3[] _renderNormals;
         private NativeArray<Vector3> _unityPositions;
         private NativeArray<Vector3> _unityNormals;
         private Mesh _mesh;
@@ -75,7 +74,7 @@ namespace APEX.Usage
             }
         }
 
-        private void FixedUpdate()
+        private unsafe void FixedUpdate()
         {
             if (_world == null)
             {
@@ -102,18 +101,15 @@ namespace APEX.Usage
             _world.Step(NativeFrameDeltaTime);
             // TODO(phase4-zerocopy): replace both blocking readbacks with CUDA
             // external-memory interop into a Unity GraphicsBuffer.
-            int written = _world.GetRenderVertexPositions(_renderPositions);
-            int normalWritten = _world.GetRenderVertexNormals(_renderNormals);
+            int written = _world.GetRenderVertexPositions(
+                (IntPtr)NativeArrayUnsafeUtility.GetUnsafePtr(_unityPositions),
+                _unityPositions.Length);
+            int normalWritten = _world.GetRenderVertexNormals(
+                (IntPtr)NativeArrayUnsafeUtility.GetUnsafePtr(_unityNormals),
+                _unityNormals.Length);
             if (written != normalWritten)
             {
                 throw new InvalidOperationException("Render position/normal counts diverged.");
-            }
-            for (int index = 0; index < written; ++index)
-            {
-                ApxVec3 position = _renderPositions[index];
-                ApxVec3 normal = _renderNormals[index];
-                _unityPositions[index] = new Vector3(position.X, position.Y, position.Z);
-                _unityNormals[index] = new Vector3(normal.X, normal.Y, normal.Z);
             }
             const MeshUpdateFlags uploadFlags =
                 MeshUpdateFlags.DontRecalculateBounds |
@@ -122,7 +118,7 @@ namespace APEX.Usage
                 MeshUpdateFlags.DontResetBoneBounds;
             _mesh.SetVertices(_unityPositions, 0, written, uploadFlags);
             _mesh.SetNormals(_unityNormals, 0, written, uploadFlags);
-            PhaseOneReplayHash.Append(ref _stateHash, _renderPositions, written);
+            AppendRenderPositionsToHash(ref _stateHash, _unityPositions, written);
         }
 
         private void OnDestroy()
@@ -205,8 +201,6 @@ namespace APEX.Usage
                 _cursor = new PhaseOneReplayCursor(_timeline);
                 _stateHash = PhaseOneReplayHash.Begin();
                 PhaseOneReplayHash.Append(ref _stateHash, _timeline.ContentHash);
-                _renderPositions = new ApxVec3[workload.RenderBindings.Length];
-                _renderNormals = new ApxVec3[workload.RenderBindings.Length];
                 _unityPositions = new NativeArray<Vector3>(
                     workload.Particles.Length,
                     Allocator.Persistent,
@@ -232,6 +226,21 @@ namespace APEX.Usage
                 _world.Dispose();
                 _world = null;
                 throw;
+            }
+        }
+
+        private static void AppendRenderPositionsToHash(
+            ref ulong hash,
+            NativeArray<Vector3> positions,
+            int count)
+        {
+            PhaseOneReplayHash.Append(ref hash, checked((uint)count));
+            for (int index = 0; index < count; ++index)
+            {
+                Vector3 position = positions[index];
+                PhaseOneReplayHash.Append(ref hash, position.x);
+                PhaseOneReplayHash.Append(ref hash, position.y);
+                PhaseOneReplayHash.Append(ref hash, position.z);
             }
         }
 

@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Reflection;
 using NUnit.Framework;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -119,7 +120,7 @@ namespace APEX.Native.Tests
         }
 
         [Test]
-        public void HundredThousandReplayMeetsStepAndRenderReadbackGate()
+        public unsafe void HundredThousandReplayMeetsStepAndRenderReadbackGate()
         {
             const int columns = 400;
             const int rows = 250;
@@ -179,8 +180,6 @@ namespace APEX.Native.Tests
                     world.ParticleCount,
                     Is.EqualTo((uint)(initialParticleCount + rows)));
 
-                ApxVec3[] renderPositions = new ApxVec3[initialParticleCount];
-                ApxVec3[] renderNormals = new ApxVec3[initialParticleCount];
                 NativeArray<Vector3> unityPositions = new NativeArray<Vector3>(
                     initialParticleCount,
                     Allocator.Persistent,
@@ -219,20 +218,22 @@ namespace APEX.Native.Tests
                             UnityEngine.Rendering.MeshUpdateFlags.DontValidateIndices |
                             UnityEngine.Rendering.MeshUpdateFlags.DontNotifyMeshUsers |
                             UnityEngine.Rendering.MeshUpdateFlags.DontResetBoneBounds;
+                        IntPtr positionBuffer =
+                            (IntPtr)NativeArrayUnsafeUtility.GetUnsafePtr(unityPositions);
+                        IntPtr normalBuffer =
+                            (IntPtr)NativeArrayUnsafeUtility.GetUnsafePtr(unityNormals);
 
                         for (int frame = 0; frame < warmupFrames; ++frame)
                         {
                             world.Step(FrameDeltaTime);
-                            int written = world.GetRenderVertexPositions(renderPositions);
-                            int normalWritten = world.GetRenderVertexNormals(renderNormals);
+                            int written = world.GetRenderVertexPositions(
+                                positionBuffer,
+                                unityPositions.Length);
+                            int normalWritten = world.GetRenderVertexNormals(
+                                normalBuffer,
+                                unityNormals.Length);
                             Assert.That(written, Is.EqualTo(initialParticleCount));
                             Assert.That(normalWritten, Is.EqualTo(initialParticleCount));
-                            CopyRenderData(
-                                renderPositions,
-                                renderNormals,
-                                unityPositions,
-                                unityNormals,
-                                written);
                             mesh.SetVertices(
                                 unityPositions,
                                 0,
@@ -252,20 +253,18 @@ namespace APEX.Native.Tests
                         {
                             timer.Restart();
                             world.Step(FrameDeltaTime);
-                            int written = world.GetRenderVertexPositions(renderPositions);
-                            int normalWritten = world.GetRenderVertexNormals(renderNormals);
+                            int written = world.GetRenderVertexPositions(
+                                positionBuffer,
+                                unityPositions.Length);
+                            int normalWritten = world.GetRenderVertexNormals(
+                                normalBuffer,
+                                unityNormals.Length);
                             if (written != initialParticleCount ||
                                 normalWritten != initialParticleCount)
                             {
                                 throw new InvalidOperationException(
                                     "Render output count changed in the fixed workload.");
                             }
-                            CopyRenderData(
-                                renderPositions,
-                                renderNormals,
-                                unityPositions,
-                                unityNormals,
-                                written);
                             mesh.SetVertices(
                                 unityPositions,
                                 0,
@@ -302,7 +301,7 @@ namespace APEX.Native.Tests
                             "\"substeps_per_frame\":2,\"solver_iterations\":2," +
                             "\"collision\":true,\"warmup_frames\":{7}," +
                             "\"sample_frames\":{8}," +
-                            "\"timing_scope\":\"step+position_normal_readback+nativearray_mesh_upload\"," +
+                            "\"timing_scope\":\"step+direct_nativearray_readback+mesh_upload\"," +
                             "\"median_ms\":{9:F4},\"p95_ms\":{10:F4}," +
                             "\"managed_alloc_bytes\":{11}," +
                             "\"median_gate_ms\":{12:F4},\"p95_gate_ms\":{13:F4}," +
