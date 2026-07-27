@@ -1,5 +1,7 @@
 using System;
 using APEX.Native;
+using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -39,8 +41,8 @@ namespace APEX.Usage
         private NativeWorld _world;
         private PhaseOneReplayTimeline _timeline;
         private PhaseOneReplayCursor _cursor;
-        private ApxVec3[] _renderPositions;
-        private Vector3[] _unityPositions;
+        private NativeArray<Vector3> _unityPositions;
+        private NativeArray<Vector3> _unityNormals;
         private Mesh _mesh;
         private ulong _fixedTick;
         private ulong _stateHash;
@@ -72,7 +74,7 @@ namespace APEX.Usage
             }
         }
 
-        private void FixedUpdate()
+        private unsafe void FixedUpdate()
         {
             if (_world == null)
             {
@@ -97,21 +99,40 @@ namespace APEX.Usage
             }
 
             _world.Step(NativeFrameDeltaTime);
-            int written = _world.GetRenderVertexPositions(_renderPositions);
-            for (int index = 0; index < written; ++index)
+            // TODO(phase4-zerocopy): replace both blocking readbacks with CUDA
+            // external-memory interop into a Unity GraphicsBuffer.
+            int written = _world.GetRenderVertexPositions(
+                (IntPtr)NativeArrayUnsafeUtility.GetUnsafePtr(_unityPositions),
+                _unityPositions.Length);
+            int normalWritten = _world.GetRenderVertexNormals(
+                (IntPtr)NativeArrayUnsafeUtility.GetUnsafePtr(_unityNormals),
+                _unityNormals.Length);
+            if (written != normalWritten)
             {
-                ApxVec3 value = _renderPositions[index];
-                _unityPositions[index] = new Vector3(value.X, value.Y, value.Z);
+                throw new InvalidOperationException("Render position/normal counts diverged.");
             }
-            _mesh.vertices = _unityPositions;
-            _mesh.RecalculateBounds();
-            PhaseOneReplayHash.Append(ref _stateHash, _renderPositions, written);
+            const MeshUpdateFlags uploadFlags =
+                MeshUpdateFlags.DontRecalculateBounds |
+                MeshUpdateFlags.DontValidateIndices |
+                MeshUpdateFlags.DontNotifyMeshUsers |
+                MeshUpdateFlags.DontResetBoneBounds;
+            _mesh.SetVertices(_unityPositions, 0, written, uploadFlags);
+            _mesh.SetNormals(_unityNormals, 0, written, uploadFlags);
+            AppendRenderPositionsToHash(ref _stateHash, _unityPositions, written);
         }
 
         private void OnDestroy()
         {
             _world?.Dispose();
             _world = null;
+            if (_unityPositions.IsCreated)
+            {
+                _unityPositions.Dispose();
+            }
+            if (_unityNormals.IsCreated)
+            {
+                _unityNormals.Dispose();
+            }
             if (_mesh != null)
             {
                 if (Application.isPlaying)
@@ -166,6 +187,7 @@ namespace APEX.Usage
                 _world.AddParticles(workload.Particles);
                 _world.AddClothDistanceConstraints(workload.ClothConstraints);
                 _world.SetRenderVertexBindings(workload.RenderBindings);
+                _world.SetRenderTriangles(workload.TriangleIndices);
                 _world.Step(NativeFixedTimeStep * 0.5F);
 
                 ApxCutQuery query = workload.CreateVerticalCut(columns / 2, cutRadius);
@@ -179,12 +201,19 @@ namespace APEX.Usage
                 _cursor = new PhaseOneReplayCursor(_timeline);
                 _stateHash = PhaseOneReplayHash.Begin();
                 PhaseOneReplayHash.Append(ref _stateHash, _timeline.ContentHash);
-                _renderPositions = new ApxVec3[workload.RenderBindings.Length];
-                _unityPositions = new Vector3[workload.Particles.Length];
+                _unityPositions = new NativeArray<Vector3>(
+                    workload.Particles.Length,
+                    Allocator.Persistent,
+                    NativeArrayOptions.UninitializedMemory);
+                _unityNormals = new NativeArray<Vector3>(
+                    workload.Particles.Length,
+                    Allocator.Persistent,
+                    NativeArrayOptions.UninitializedMemory);
                 for (int index = 0; index < workload.Particles.Length; ++index)
                 {
                     ApxVec3 position = workload.Particles[index].Position;
                     _unityPositions[index] = new Vector3(position.X, position.Y, position.Z);
+                    _unityNormals[index] = Vector3.forward;
                 }
                 BuildMesh(workload);
                 if (liveBlade != null)
@@ -197,6 +226,21 @@ namespace APEX.Usage
                 _world.Dispose();
                 _world = null;
                 throw;
+            }
+        }
+
+        private static void AppendRenderPositionsToHash(
+            ref ulong hash,
+            NativeArray<Vector3> positions,
+            int count)
+        {
+            PhaseOneReplayHash.Append(ref hash, checked((uint)count));
+            for (int index = 0; index < count; ++index)
+            {
+                Vector3 position = positions[index];
+                PhaseOneReplayHash.Append(ref hash, position.x);
+                PhaseOneReplayHash.Append(ref hash, position.y);
+                PhaseOneReplayHash.Append(ref hash, position.z);
             }
         }
 
@@ -232,14 +276,12 @@ namespace APEX.Usage
             {
                 triangles[index] = checked((int)workload.TriangleIndices[index]);
             }
-            Vector3[] normals = new Vector3[_unityPositions.Length];
             Vector2[] uvs = new Vector2[_unityPositions.Length];
             for (int row = 0; row < rows; ++row)
             {
                 for (int column = 0; column < columns; ++column)
                 {
                     int stableId = row * columns + column;
-                    normals[stableId] = Vector3.back;
                     uvs[stableId] = new Vector2(
                         column / (float)(columns - 1),
                         1.0F - row / (float)(rows - 1));
@@ -250,11 +292,14 @@ namespace APEX.Usage
             {
                 name = "AdaptorPhysX_Phase1_100k_Cloth",
                 indexFormat = IndexFormat.UInt32,
-                vertices = _unityPositions,
-                normals = normals,
-                uv = uvs,
-                triangles = triangles,
             };
+            _mesh.SetVertices(_unityPositions);
+            _mesh.SetNormals(_unityNormals);
+            _mesh.uv = uvs;
+            _mesh.triangles = triangles;
+            _mesh.bounds = new Bounds(
+                Vector3.zero,
+                new Vector3(columns * spacing * 2.0F, rows * spacing * 4.0F, spacing * 16.0F));
             _mesh.MarkDynamic();
             GetComponent<MeshFilter>().sharedMesh = _mesh;
         }

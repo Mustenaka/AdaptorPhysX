@@ -214,6 +214,86 @@ namespace APEX.Native
             ApxException.ThrowIfFailed(result, "apxSetRenderVertexBindings");
         }
 
+        public void BindRenderVertices(
+            ApxVec3[] renderRestPositions,
+            uint[] simulationTriangleParticleIds)
+        {
+            ThrowIfDisposed();
+            if (renderRestPositions == null)
+            {
+                throw new ArgumentNullException(nameof(renderRestPositions));
+            }
+            if (simulationTriangleParticleIds == null)
+            {
+                throw new ArgumentNullException(nameof(simulationTriangleParticleIds));
+            }
+            if (simulationTriangleParticleIds.Length % 3 != 0)
+            {
+                throw new ArgumentException(
+                    "Simulation triangle particle IDs must be a flattened triangle array.",
+                    nameof(simulationTriangleParticleIds));
+            }
+
+            ApxResult result = NativeMethods.ApxBindRenderVertices(
+                _handle,
+                renderRestPositions.Length == 0 ? null : renderRestPositions,
+                checked((uint)renderRestPositions.Length),
+                simulationTriangleParticleIds.Length == 0 ? null : simulationTriangleParticleIds,
+                checked((uint)(simulationTriangleParticleIds.Length / 3)));
+            ApxException.ThrowIfFailed(result, "apxBindRenderVertices");
+        }
+
+        public ApxRenderVertexBindingDesc[] GetRenderVertexBindings()
+        {
+            ThrowIfDisposed();
+            ApxResult result = NativeMethods.ApxGetRenderVertexBindings(
+                _handle,
+                null,
+                0,
+                out uint count);
+            ApxException.ThrowIfFailed(result, "apxGetRenderVertexBindings");
+            if (count == 0)
+            {
+                return Array.Empty<ApxRenderVertexBindingDesc>();
+            }
+
+            ApxRenderVertexBindingDesc[] bindings =
+                new ApxRenderVertexBindingDesc[checked((int)count)];
+            result = NativeMethods.ApxGetRenderVertexBindings(
+                _handle,
+                bindings,
+                count,
+                out uint written);
+            ApxException.ThrowIfFailed(result, "apxGetRenderVertexBindings");
+            if (written != count)
+            {
+                throw new InvalidOperationException(
+                    "The native render-binding count changed during a synchronous query.");
+            }
+            return bindings;
+        }
+
+        public void SetRenderTriangles(uint[] triangleVertexIds)
+        {
+            ThrowIfDisposed();
+            if (triangleVertexIds == null)
+            {
+                throw new ArgumentNullException(nameof(triangleVertexIds));
+            }
+            if (triangleVertexIds.Length % 3 != 0)
+            {
+                throw new ArgumentException(
+                    "Render triangle vertex IDs must be a flattened triangle array.",
+                    nameof(triangleVertexIds));
+            }
+
+            ApxResult result = NativeMethods.ApxSetRenderTriangles(
+                _handle,
+                triangleVertexIds.Length == 0 ? null : triangleVertexIds,
+                checked((uint)(triangleVertexIds.Length / 3)));
+            ApxException.ThrowIfFailed(result, "apxSetRenderTriangles");
+        }
+
         public ApxVec3[] GetRenderVertexPositions()
         {
             ThrowIfDisposed();
@@ -239,7 +319,7 @@ namespace APEX.Native
             ThrowIfDisposed();
             ApxResult result = NativeMethods.ApxGetRenderVertexPositions(
                 _handle,
-                null,
+                IntPtr.Zero,
                 0,
                 out uint count);
             ApxException.ThrowIfFailed(result, "apxGetRenderVertexPositions");
@@ -254,12 +334,89 @@ namespace APEX.Native
                 throw new ArgumentNullException(nameof(destination));
             }
 
+            GCHandle pinned = default;
+            try
+            {
+                IntPtr pointer = IntPtr.Zero;
+                if (destination.Length != 0)
+                {
+                    pinned = GCHandle.Alloc(destination, GCHandleType.Pinned);
+                    pointer = pinned.AddrOfPinnedObject();
+                }
+                return GetRenderVertexPositions(pointer, destination.Length);
+            }
+            finally
+            {
+                if (pinned.IsAllocated)
+                {
+                    pinned.Free();
+                }
+            }
+        }
+
+        public int GetRenderVertexPositions(IntPtr destination, int capacity)
+        {
+            ThrowIfDisposed();
+            ValidateNativeBuffer(destination, capacity, nameof(destination));
             ApxResult result = NativeMethods.ApxGetRenderVertexPositions(
                 _handle,
-                destination.Length == 0 ? null : destination,
-                checked((uint)destination.Length),
+                destination,
+                checked((uint)capacity),
                 out uint written);
             ApxException.ThrowIfFailed(result, "apxGetRenderVertexPositions");
+            return checked((int)written);
+        }
+
+        public uint GetRenderVertexNormalCount()
+        {
+            ThrowIfDisposed();
+            ApxResult result = NativeMethods.ApxGetRenderVertexNormals(
+                _handle,
+                IntPtr.Zero,
+                0,
+                out uint count);
+            ApxException.ThrowIfFailed(result, "apxGetRenderVertexNormals");
+            return count;
+        }
+
+        public int GetRenderVertexNormals(ApxVec3[] destination)
+        {
+            ThrowIfDisposed();
+            if (destination == null)
+            {
+                throw new ArgumentNullException(nameof(destination));
+            }
+
+            GCHandle pinned = default;
+            try
+            {
+                IntPtr pointer = IntPtr.Zero;
+                if (destination.Length != 0)
+                {
+                    pinned = GCHandle.Alloc(destination, GCHandleType.Pinned);
+                    pointer = pinned.AddrOfPinnedObject();
+                }
+                return GetRenderVertexNormals(pointer, destination.Length);
+            }
+            finally
+            {
+                if (pinned.IsAllocated)
+                {
+                    pinned.Free();
+                }
+            }
+        }
+
+        public int GetRenderVertexNormals(IntPtr destination, int capacity)
+        {
+            ThrowIfDisposed();
+            ValidateNativeBuffer(destination, capacity, nameof(destination));
+            ApxResult result = NativeMethods.ApxGetRenderVertexNormals(
+                _handle,
+                destination,
+                checked((uint)capacity),
+                out uint written);
+            ApxException.ThrowIfFailed(result, "apxGetRenderVertexNormals");
             return checked((int)written);
         }
 
@@ -439,6 +596,21 @@ namespace APEX.Native
             if (_disposed)
             {
                 throw new ObjectDisposedException(nameof(NativeWorld));
+            }
+        }
+
+        private static void ValidateNativeBuffer(
+            IntPtr destination,
+            int capacity,
+            string parameterName)
+        {
+            if (capacity < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(capacity));
+            }
+            if (capacity != 0 && destination == IntPtr.Zero)
+            {
+                throw new ArgumentNullException(parameterName);
             }
         }
 

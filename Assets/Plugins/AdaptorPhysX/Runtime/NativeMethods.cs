@@ -97,12 +97,56 @@ namespace APEX.Native
 
         [DllImport(
             LibraryName,
+            EntryPoint = "apxBindRenderVertices",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        internal static extern ApxResult ApxBindRenderVertices(
+            ApxWorldSafeHandle world,
+            [In] ApxVec3[] renderRestPositions,
+            uint renderVertexCount,
+            [In] uint[] simulationTriangleParticleIds,
+            uint simulationTriangleCount);
+
+        [DllImport(
+            LibraryName,
+            EntryPoint = "apxGetRenderVertexBindings",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        internal static extern ApxResult ApxGetRenderVertexBindings(
+            ApxWorldSafeHandle world,
+            [Out] ApxRenderVertexBindingDesc[] outBindings,
+            uint capacity,
+            out uint outCount);
+
+        [DllImport(
+            LibraryName,
+            EntryPoint = "apxSetRenderTriangles",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        internal static extern ApxResult ApxSetRenderTriangles(
+            ApxWorldSafeHandle world,
+            [In] uint[] triangleVertexIds,
+            uint triangleCount);
+
+        [DllImport(
+            LibraryName,
             EntryPoint = "apxGetRenderVertexPositions",
             CallingConvention = CallingConvention.Cdecl,
             ExactSpelling = true)]
         internal static extern ApxResult ApxGetRenderVertexPositions(
             ApxWorldSafeHandle world,
-            [Out] ApxVec3[] outPositions,
+            IntPtr outPositions,
+            uint capacity,
+            out uint outCount);
+
+        [DllImport(
+            LibraryName,
+            EntryPoint = "apxGetRenderVertexNormals",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        internal static extern ApxResult ApxGetRenderVertexNormals(
+            ApxWorldSafeHandle world,
+            IntPtr outNormals,
             uint capacity,
             out uint outCount);
 

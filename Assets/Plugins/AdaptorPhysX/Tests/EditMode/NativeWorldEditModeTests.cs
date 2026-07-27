@@ -13,12 +13,12 @@ namespace APEX.Native.Tests
         private const float ParticleRadius = 0.1F;
 
         [Test]
-        public void AbiVersionMatchesAdditiveVersionZeroPointThree()
+        public void AbiVersionMatchesAdditiveVersionZeroPointFour()
         {
             NativeWorld.GetAbiVersion(out uint major, out uint minor);
 
             Assert.That(major, Is.EqualTo(0U));
-            Assert.That(minor, Is.EqualTo(3U));
+            Assert.That(minor, Is.EqualTo(4U));
         }
 
         [Test]
@@ -128,7 +128,7 @@ namespace APEX.Native.Tests
         }
 
         [Test]
-        public void NativeMethodsExposeExactlyTheAdditiveFifteenCdeclEntrypoints()
+        public void NativeMethodsExposeExactlyTheAdditiveNineteenCdeclEntrypoints()
         {
             Type nativeMethods = typeof(NativeWorld).Assembly.GetType(
                 "APEX.Native.NativeMethods",
@@ -149,7 +149,11 @@ namespace APEX.Native.Tests
                 "apxAddBendConstraints",
                 "apxGetBrokenClothDistanceConstraintIds",
                 "apxSetRenderVertexBindings",
+                "apxBindRenderVertices",
+                "apxGetRenderVertexBindings",
+                "apxSetRenderTriangles",
                 "apxGetRenderVertexPositions",
+                "apxGetRenderVertexNormals",
                 "apxCut",
                 "apxSetColliderProxies",
                 "apxStep",
@@ -470,6 +474,14 @@ namespace APEX.Native.Tests
                 world.SetRenderVertexBindings(bindings);
 
                 Assert.That(world.GetRenderVertexPositionCount(), Is.EqualTo(2U));
+                Assert.Throws<ArgumentOutOfRangeException>(
+                    () => world.GetRenderVertexPositions(IntPtr.Zero, -1));
+                Assert.Throws<ArgumentNullException>(
+                    () => world.GetRenderVertexPositions(IntPtr.Zero, 1));
+                Assert.Throws<ArgumentOutOfRangeException>(
+                    () => world.GetRenderVertexNormals(IntPtr.Zero, -1));
+                Assert.Throws<ArgumentNullException>(
+                    () => world.GetRenderVertexNormals(IntPtr.Zero, 1));
                 ApxVec3[] undersized = { new ApxVec3(77.0F, 88.0F, 99.0F) };
                 ApxException capacity = Assert.Throws<ApxException>(
                     () => world.GetRenderVertexPositions(undersized));
@@ -503,6 +515,64 @@ namespace APEX.Native.Tests
                     particlePositions,
                     bindings[1],
                     1.0e-5F);
+            }
+        }
+
+        [TestCase(ApxBackendKind.Cpu)]
+        [TestCase(ApxBackendKind.Cuda)]
+        public void DualGridAutoBindingSerializesAndRebuildsFiniteNormals(
+            ApxBackendKind backend)
+        {
+            NativeWorld world;
+            try
+            {
+                world = NativeWorld.Create(
+                    ApxWorldDesc.Create(backend, FixedTimeStep, 2U, default, 0.0F, 3U));
+            }
+            catch (ApxException exception)
+                when (backend == ApxBackendKind.Cuda &&
+                      (exception.Result == ApxResult.Unsupported ||
+                       exception.Result == ApxResult.BackendError))
+            {
+                Assert.Ignore($"CUDA backend is unavailable: {exception.Message}");
+                return;
+            }
+
+            using (world)
+            {
+                ApxParticleDesc[] particles =
+                {
+                    new ApxParticleDesc(new ApxVec3(0.0F, 0.0F, 0.0F), default, 0.0F),
+                    new ApxParticleDesc(new ApxVec3(2.0F, 0.0F, 0.0F), default, 0.0F),
+                    new ApxParticleDesc(new ApxVec3(0.0F, 2.0F, 0.0F), default, 0.0F),
+                };
+                Assert.That(world.AddParticles(particles), Is.EqualTo(0U));
+                world.BindRenderVertices(
+                    new[]
+                    {
+                        new ApxVec3(0.0F, 0.0F, 0.0F),
+                        new ApxVec3(2.0F, 0.0F, 0.0F),
+                        new ApxVec3(0.0F, 2.0F, 0.0F),
+                    },
+                    new uint[] { 0U, 1U, 2U });
+                ApxRenderVertexBindingDesc[] serialized = world.GetRenderVertexBindings();
+                Assert.That(serialized, Has.Length.EqualTo(3));
+                Assert.That(serialized[0].WeightA, Is.EqualTo(1.0F));
+                Assert.That(serialized[1].WeightB, Is.EqualTo(1.0F));
+                Assert.That(serialized[2].WeightC, Is.EqualTo(1.0F));
+                world.SetRenderTriangles(new uint[] { 0U, 1U, 2U });
+                world.Step(FixedTimeStep);
+
+                ApxVec3[] normals = new ApxVec3[3];
+                Assert.That(world.GetRenderVertexNormalCount(), Is.EqualTo(3U));
+                Assert.That(world.GetRenderVertexNormals(normals), Is.EqualTo(3));
+                foreach (ApxVec3 normal in normals)
+                {
+                    Assert.That(float.IsNaN(normal.X), Is.False);
+                    Assert.That(float.IsNaN(normal.Y), Is.False);
+                    Assert.That(float.IsNaN(normal.Z), Is.False);
+                    Assert.That(normal.Z, Is.EqualTo(1.0F).Within(1.0e-5F));
+                }
             }
         }
 
