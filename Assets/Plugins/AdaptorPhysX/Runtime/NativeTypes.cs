@@ -253,6 +253,25 @@ namespace APEX.Native
         public uint FirstSplitParticleId;
     }
 
+    public sealed class ApxCutDetails
+    {
+        internal ApxCutDetails(
+            uint[] deactivatedConstraintIds,
+            uint[] affectedParticleIds,
+            uint[] activatedParticleIds)
+        {
+            DeactivatedConstraintIds = deactivatedConstraintIds;
+            AffectedParticleIds = affectedParticleIds;
+            ActivatedParticleIds = activatedParticleIds;
+        }
+
+        public uint[] DeactivatedConstraintIds { get; }
+
+        public uint[] AffectedParticleIds { get; }
+
+        public uint[] ActivatedParticleIds { get; }
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct ApxColliderProxy
     {

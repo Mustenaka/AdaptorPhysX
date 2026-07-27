@@ -159,7 +159,8 @@ namespace APEX.Native.Tests
                     2U,
                     new ApxVec3(0.0F, -9.81F, 0.0F),
                     0.006F,
-                    (uint)initialParticleCount)))
+                    (uint)initialParticleCount),
+                (uint)(initialParticleCount + rows)))
             {
                 Assert.That(world.AddParticles(workload.Particles), Is.EqualTo(0U));
                 Assert.That(
@@ -434,7 +435,8 @@ namespace APEX.Native.Tests
                     2U,
                     new ApxVec3(0.0F, -0.25F, 0.0F),
                     0.04F,
-                    (uint)workload.Particles.Length)))
+                    (uint)workload.Particles.Length),
+                checked((uint)(workload.Particles.Length + 6))))
             {
                 world.AddParticles(workload.Particles);
                 world.AddClothDistanceConstraints(workload.ClothConstraints);

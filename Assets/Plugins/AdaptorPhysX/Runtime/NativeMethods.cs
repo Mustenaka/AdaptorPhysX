@@ -25,6 +25,16 @@ namespace APEX.Native
 
         [DllImport(
             LibraryName,
+            EntryPoint = "apxCreateWorldWithParticleCapacity",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        internal static extern ApxResult ApxCreateWorldWithParticleCapacity(
+            in ApxWorldDesc description,
+            uint maximumParticleCapacity,
+            out IntPtr outWorld);
+
+        [DllImport(
+            LibraryName,
             EntryPoint = "apxDestroyWorld",
             CallingConvention = CallingConvention.Cdecl,
             ExactSpelling = true)]
@@ -159,6 +169,23 @@ namespace APEX.Native
             ApxWorldSafeHandle world,
             in ApxCutQuery query,
             out ApxCutResult outResult);
+
+        [DllImport(
+            LibraryName,
+            EntryPoint = "apxGetLastCutDetails",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        internal static extern ApxResult ApxGetLastCutDetails(
+            ApxWorldSafeHandle world,
+            [Out] uint[] outConstraintIds,
+            uint constraintCapacity,
+            out uint outConstraintCount,
+            [Out] uint[] outAffectedParticleIds,
+            uint affectedParticleCapacity,
+            out uint outAffectedParticleCount,
+            [Out] uint[] outActivatedParticleIds,
+            uint activatedParticleCapacity,
+            out uint outActivatedParticleCount);
 
         [DllImport(
             LibraryName,
