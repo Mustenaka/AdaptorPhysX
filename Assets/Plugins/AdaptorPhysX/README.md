@@ -19,14 +19,16 @@ The script loads VS2022 MSVC 14.44 through `vcvarsall.bat`, uses Ninja and CUDA
 plugin and CUDA runtime into this directory. It fails unless the copied plugin
 exports exactly the nine DL-7 symbols plus the three additive DL-10 v0.1
 symbols, two additive DL-12 v0.2 symbols, and the additive DL-11 v0.3
-`apxCut` symbol. `cudart64_12.dll` remains its only direct NVIDIA dependency.
-The script also verifies that both existing Unity `.meta` files are unchanged.
+`apxCut` symbol, plus the four additive DL-17 v0.4 dual-mesh
+binding/topology/normal symbols. `cudart64_12.dll` remains its only direct
+NVIDIA dependency. The script also verifies that both existing Unity `.meta`
+files are unchanged.
 
 - `x86_64/adaptorphysx.dll`
-  - native source baseline: `d56bc7e1f9ae18aa1c09fc2d0f3babaad0e190e6`
+  - native source baseline: `81fde7ecef9e588b9a670cf2ce42d71aefb93afc`
   - build: CUDA Release, Ninja + MSVC 14.44, `sm_89`
   - current packaged SHA-256:
-    `B03B73DADF50EA9E565141946EEDC1E0355C55F035C0A48A1FAD601CB0A1404B`
+    `EBFF37B5EAD3F7BC066B2F84E208F2CA76B6F92BB9571253A54268A126A07EF8`
 - `x86_64/cudart64_12.dll`
   - source: CUDA Toolkit 12.6 shared runtime
   - file version: `6.14.11.12060`
@@ -37,7 +39,7 @@ MSVC PE output is not promised to be bit-reproducible across independent
 rebuilds, so a newly built DLL must not be compared with a historical packaged
 DLL by hash. Functional equivalence is the gate: the script verifies the
 current build source and copied target have matching hashes, the exact
-DL-7/DL-10/DL-11/DL-12 export/dependency contracts hold, and the
+DL-7/DL-10/DL-11/DL-12/DL-17 export/dependency contracts hold, and the
 script-produced DLL passes all Unity EditMode tests.
 
 `adaptorphysx.dll` imports only `cudart64_12.dll` from NVIDIA. It also uses the
@@ -49,7 +51,9 @@ All other Unity targets inherit the disabled `Any` setting.
 
 ## Readback fallback
 
-Phase 1 maps a blocking host-readable position snapshot. CUDA worlds therefore
-perform a GPU-to-CPU readback before Unity consumes positions. The managed
-wrapper exposes allocation-free mapped access and a reusable managed snapshot
-buffer, but the transfer itself remains a Phase 4 zero-copy technical debt.
+Phase 1 maps blocking host-readable position and normal snapshots. CUDA worlds
+therefore perform two GPU-to-CPU readbacks before Unity consumes the render
+mesh. The managed wrapper writes both snapshots directly into persistent
+`NativeArray<Vector3>` buffers and uploads them without steady-state managed
+allocation. The transfers themselves remain a Phase 4 zero-copy technical
+debt; the native K=5 conservative two-readback cost is `0.8831 ms`.
