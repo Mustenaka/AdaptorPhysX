@@ -1638,6 +1638,11 @@ namespace APEX.Native.Tests
 
                 UnityEngine.Component interactor =
                     interactorObject.AddComponent(interactorType);
+                interactorType.GetMethod(
+                    "Awake",
+                    BindingFlags.Instance | BindingFlags.NonPublic).Invoke(
+                    interactor,
+                    null);
                 interactorObject.transform.rotation = UnityEngine.Quaternion.LookRotation(
                     UnityEngine.Vector3.right,
                     UnityEngine.Vector3.up);
