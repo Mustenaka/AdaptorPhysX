@@ -400,6 +400,12 @@ namespace APEX.Native.Tests
                 uint[] ids = { 77U, 88U };
                 Assert.That(world.GetBrokenClothDistanceConstraintIds(ids), Is.EqualTo(1));
                 CollectionAssert.AreEqual(new uint[] { 0U, 88U }, ids);
+                CollectionAssert.AreEqual(
+                    new uint[] { 0U },
+                    world.GetBrokenClothDistanceConstraintIds());
+                CollectionAssert.AreEqual(
+                    new uint[] { 0U },
+                    world.GetBrokenClothDistanceConstraintIds());
 
                 world.Step(1.0F);
                 ids[0] = 77U;
