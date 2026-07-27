@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Diagnostics;
 using System.Globalization;
+using System.Reflection;
 using NUnit.Framework;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -256,17 +257,17 @@ namespace APEX.Native.Tests
             GameObject cloth = GameObject.Find("PhaseOne_100k_Cloth");
             Component controller = cloth.GetComponent("PhaseOneDemoController");
             Assert.That(controller, Is.Not.Null);
-            for (int update = 0; update < 120; ++update)
+            Behaviour controllerBehaviour = (Behaviour)controller;
+            controllerBehaviour.enabled = false;
+            MethodInfo fixedUpdate = controller
+                .GetType()
+                .GetMethod(
+                    "FixedUpdate",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(fixedUpdate, Is.Not.Null);
+            for (int update = 0; update < 31; ++update)
             {
-                ulong tick = (ulong)controller
-                    .GetType()
-                    .GetProperty("FixedTick")
-                    .GetValue(controller);
-                if (tick >= 31U)
-                {
-                    break;
-                }
-                yield return new WaitForFixedUpdate();
+                fixedUpdate.Invoke(controller, null);
             }
 
             ulong finalTick = (ulong)controller
