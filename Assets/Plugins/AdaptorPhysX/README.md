@@ -6,16 +6,38 @@ namespace, under `APEX.Native`.
 
 ## Packaged Windows x64 binaries
 
+The DLLs in `x86_64/` are committed generated artifacts under locked decision
+DL-9. Do not edit them by hand. From the superproject root, rebuild and sync
+them with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\AdaptorPhysX_Native\tools\sync_unity_plugin.ps1
+```
+
+The script loads VS2022 MSVC 14.44 through `vcvarsall.bat`, uses Ninja and CUDA
+12.6 for a Release `sm_89` build, builds only `apx_c_api`, and then copies the
+plugin and CUDA runtime into this directory. It fails unless the copied plugin
+exports exactly the nine DL-7 symbols and `cudart64_12.dll` is its only direct
+NVIDIA dependency. It also verifies that both existing Unity `.meta` files are
+unchanged.
+
 - `x86_64/adaptorphysx.dll`
-  - native source commit: `6ca73e59ca5f7d44578d0c1057350cd102d14b76`
+  - native source baseline: `ec1ec951f8f723e316e10ab7f936329d444e1373`
   - build: CUDA Release, Ninja + MSVC 14.44, `sm_89`
-  - SHA-256:
-    `4BAEAD2D32859FA315E569F36C93606B8F668D25711A5DF379AB1ECEDDED088E`
+  - current packaged SHA-256:
+    `AEC2787A523932C959F6386D1C49E0186D3F9C53BB947D2E94ED68654DAFF7A4`
 - `x86_64/cudart64_12.dll`
   - source: CUDA Toolkit 12.6 shared runtime
   - file version: `6.14.11.12060`
-  - SHA-256:
+  - current packaged SHA-256:
     `3DF50CF48718712F17B8C77AD72C45A1F43FF94781E302A4BE7F1D7A9B66C746`
+
+MSVC PE output is not promised to be bit-reproducible across independent
+rebuilds, so a newly built DLL must not be compared with a historical packaged
+DLL by hash. Functional equivalence is the gate: the script verifies the
+current build source and copied target have matching hashes, the exact DL-7
+export/dependency contracts hold, and the script-produced DLL passes all six
+Unity EditMode tests.
 
 `adaptorphysx.dll` imports only `cudart64_12.dll` from NVIDIA. It also uses the
 Microsoft Visual C++ 14.x runtime; deployed Windows machines must have a
@@ -30,20 +52,3 @@ Phase 1 maps a blocking host-readable position snapshot. CUDA worlds therefore
 perform a GPU-to-CPU readback before Unity consumes positions. The managed
 wrapper exposes allocation-free mapped access and a reusable managed snapshot
 buffer, but the transfer itself remains a Phase 4 zero-copy technical debt.
-
-## NOTE(needs-decision): candidate ROADMAP DL-9
-
-Human confirmation is required for both packaging decisions before P1-0 can be
-marked done:
-
-1. Keep `adaptorphysx.dll` and its runtime dependency committed directly under
-   Unity `Assets/` (the default implemented here), so a fresh checkout imports
-   a usable plugin without a separate staging step.
-2. Keep the CUDA 12.6 shared runtime colocated and committed as
-   `cudart64_12.dll` (the default implemented here), versus introducing a
-   separate redistributable/install pipeline.
-
-CUDA 12.6 `EULA.txt` section 2.6, Attachment A lists the Windows CUDA runtime as
-redistributable subject to NVIDIA's distribution terms. The project owner must
-confirm that the application's distribution terms and update process satisfy
-those conditions. This note is not legal advice.
