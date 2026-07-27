@@ -124,6 +124,21 @@ namespace APEX.Native
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct ApxKinematicTarget
+    {
+        public uint ParticleId;
+        public uint Active;
+        public ApxVec3 Position;
+
+        public ApxKinematicTarget(uint particleId, bool active, ApxVec3 position)
+        {
+            ParticleId = particleId;
+            Active = active ? 1U : 0U;
+            Position = position;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct ApxDistanceConstraintDesc
     {
         public uint ParticleA;

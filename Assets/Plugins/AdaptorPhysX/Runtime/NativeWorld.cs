@@ -554,6 +554,21 @@ namespace APEX.Native
             ApxException.ThrowIfFailed(result, "apxSetColliderProxies");
         }
 
+        public void SetKinematicTargets(ApxKinematicTarget[] targets)
+        {
+            ThrowIfDisposed();
+            if (targets == null)
+            {
+                throw new ArgumentNullException(nameof(targets));
+            }
+
+            ApxResult result = NativeMethods.ApxSetKinematicTargets(
+                _handle,
+                targets.Length == 0 ? null : targets,
+                checked((uint)targets.Length));
+            ApxException.ThrowIfFailed(result, "apxSetKinematicTargets");
+        }
+
         public void Step(float frameDeltaTime)
         {
             ThrowIfDisposed();

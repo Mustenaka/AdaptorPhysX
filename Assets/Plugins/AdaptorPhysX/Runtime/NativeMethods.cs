@@ -189,6 +189,16 @@ namespace APEX.Native
 
         [DllImport(
             LibraryName,
+            EntryPoint = "apxSetKinematicTargets",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        internal static extern ApxResult ApxSetKinematicTargets(
+            ApxWorldSafeHandle world,
+            [In] ApxKinematicTarget[] targets,
+            uint count);
+
+        [DllImport(
+            LibraryName,
             EntryPoint = "apxSetColliderProxies",
             CallingConvention = CallingConvention.Cdecl,
             ExactSpelling = true)]

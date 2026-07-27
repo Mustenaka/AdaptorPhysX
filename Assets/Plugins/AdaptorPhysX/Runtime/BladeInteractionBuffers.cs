@@ -33,7 +33,7 @@ namespace APEX.Native
         private readonly float _minimumDistanceSquared;
         private readonly float _radius;
         private readonly int _capacity;
-        private readonly List<BladeTrajectorySegment> _pending;
+        private readonly Queue<BladeTrajectorySegment> _pending;
         private ApxVec3 _anchor;
         private ulong _lastFixedTick;
         private uint _nextSegmentId;
@@ -62,7 +62,7 @@ namespace APEX.Native
             _minimumDistanceSquared = distanceSquared;
             _radius = radius;
             _capacity = capacity;
-            _pending = new List<BladeTrajectorySegment>(capacity);
+            _pending = new Queue<BladeTrajectorySegment>(capacity);
         }
 
         public bool IsStrokeActive => _strokeActive;
@@ -123,7 +123,7 @@ namespace APEX.Native
                 _nextSegmentId,
                 fixedTick,
                 new ApxCutQuery(_anchor, position, sideNormal, _radius));
-            _pending.Add(segment);
+            _pending.Enqueue(segment);
             _anchor = position;
             _lastFixedTick = fixedTick;
             ++_nextSegmentId;
@@ -152,6 +152,18 @@ namespace APEX.Native
             BladeTrajectorySegment[] result = _pending.ToArray();
             _pending.Clear();
             return result;
+        }
+
+        public bool TryDequeue(out BladeTrajectorySegment segment)
+        {
+            if (_pending.Count == 0)
+            {
+                segment = default;
+                return false;
+            }
+
+            segment = _pending.Dequeue();
+            return true;
         }
 
         private static void ValidateSample(ApxVec3 position, ApxVec3 sideNormal)
@@ -225,7 +237,7 @@ namespace APEX.Native
     public sealed class GrabCommandBuffer
     {
         private readonly int _capacity;
-        private readonly List<GrabCommand> _pending;
+        private readonly Queue<GrabCommand> _pending;
         private uint _particleId;
         private uint _nextSequenceId;
         private ulong _lastFixedTick;
@@ -238,7 +250,7 @@ namespace APEX.Native
                 throw new ArgumentOutOfRangeException(nameof(capacity));
             }
             _capacity = capacity;
-            _pending = new List<GrabCommand>(capacity);
+            _pending = new Queue<GrabCommand>(capacity);
         }
 
         public bool IsGrabActive => _grabActive;
@@ -295,6 +307,18 @@ namespace APEX.Native
             return result;
         }
 
+        public bool TryDequeue(out GrabCommand command)
+        {
+            if (_pending.Count == 0)
+            {
+                command = default;
+                return false;
+            }
+
+            command = _pending.Dequeue();
+            return true;
+        }
+
         private bool TryAppend(
             uint particleId,
             ApxVec3 position,
@@ -305,7 +329,7 @@ namespace APEX.Native
             {
                 return false;
             }
-            _pending.Add(
+            _pending.Enqueue(
                 new GrabCommand(_nextSequenceId, fixedTick, particleId, phase, position));
             ++_nextSequenceId;
             return true;
