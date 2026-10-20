@@ -4,5 +4,8 @@
 EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
-  m_Scenes: []
+  m_Scenes:
+  - enabled: 1
+    path: Assets/Samples/SurgeryDemo/SurgeryDemo.unity
+    guid: 00d49690a6c03c24f966bfd656a71ec8
   m_configObjects: {}
