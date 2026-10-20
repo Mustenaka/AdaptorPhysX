@@ -111,5 +111,6 @@
 
 - `AdaptorPhysX/Build Surgery Demo Scene`：生成演示场景与材质。
 - `AdaptorPhysX/Capture Standard Scenarios`：在编辑模式下按脚本执行 S1–S5，并输出 PNG 与日志
-  （每个阶段的块大小、副本数、耗时）。batchmode 用法：
+  （每个阶段的块大小、副本数、耗时）。菜单执行前提示保存已修改的场景，结束后从磁盘重新加载原场景；
+  Play 模式下不可用。batchmode 用法：
   `Unity -batchmode -projectPath . -executeMethod AdaptorPhysX.Samples.Editor.SurgeryDemoCapture.CaptureBatch -apxCaptureDir <目录>`

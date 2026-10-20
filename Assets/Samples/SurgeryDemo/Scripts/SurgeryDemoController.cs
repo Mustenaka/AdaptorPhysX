@@ -173,7 +173,9 @@ namespace AdaptorPhysX.Samples
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(10, 10, 420, 400), GUI.skin.box);
+            // The box fits its content so it does not cover the tissue in a small Game view.
+            GUILayout.BeginArea(new Rect(10, 10, 520, Screen.height - 20));
+            GUILayout.BeginVertical(GUI.skin.box);
             GUILayout.Label($"Tool: {tool}   [1] scalpel  [2] forceps   [R] reload");
             GUILayout.Label("LMB: cut / grab    RMB drag: orbit    wheel: zoom");
             GUILayout.Label($"Blade depth: {bladeDepth * 1000.0f:0} mm   [Q]/[E]   severed this stroke: {_severedThisStroke}");
@@ -187,6 +189,7 @@ namespace AdaptorPhysX.Samples
                 GUILayout.Label($"{body.name}: cells {sim.CellCount}  copies {sim.CopyCount}  nodes {sim.NodeCount}  " +
                                 $"step {sim.LastStepMilliseconds:0.0} ms  topo {sim.LastTopologyMilliseconds:0.0} ms");
             }
+            GUILayout.EndVertical();
             GUILayout.EndArea();
         }
     }

@@ -168,6 +168,7 @@ MonoBehaviour:
     m_Bits: 4294967295
   friction: 0.6
   collisionMargin: -0.003
+  selfCollision: 1
   pinColliders: []
   cutMaterial: {fileID: 2100000, guid: f0444024d87d95e4cb4bf735bd08a643, type: 2}
 --- !u!114 &219649369
@@ -591,6 +592,7 @@ MonoBehaviour:
     m_Bits: 4294967295
   friction: 0.6
   collisionMargin: -0.003
+  selfCollision: 1
   pinColliders: []
   cutMaterial: {fileID: 2100000, guid: f0444024d87d95e4cb4bf735bd08a643, type: 2}
 --- !u!114 &1295694221
@@ -787,7 +789,6 @@ GameObject:
   m_Component:
   - component: {fileID: 1402940419}
   - component: {fileID: 1402940418}
-  - component: {fileID: 1402940417}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -795,14 +796,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!81 &1402940417
-AudioListener:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1402940416}
-  m_Enabled: 1
 --- !u!20 &1402940418
 Camera:
   m_ObjectHideFlags: 0
@@ -1020,6 +1013,7 @@ MonoBehaviour:
     m_Bits: 4294967295
   friction: 0.6
   collisionMargin: 0
+  selfCollision: 1
   pinColliders:
   - {fileID: 1675085204}
   - {fileID: 1371275203}

@@ -21,7 +21,33 @@ namespace AdaptorPhysX.Samples.Editor
         private static string _directory;
 
         [MenuItem("AdaptorPhysX/Capture Standard Scenarios")]
-        public static void CaptureMenu() => Capture(Path.Combine(Directory.GetCurrentDirectory(), "Captures"));
+        public static void CaptureMenu()
+        {
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+            {
+                return;
+            }
+            SceneSetup[] setup = EditorSceneManager.GetSceneManagerSetup();
+            try
+            {
+                Capture(Path.Combine(Directory.GetCurrentDirectory(), "Captures"));
+            }
+            finally
+            {
+                // The capture moves the camera and replaces meshes and materials in memory: reload from disk.
+                if (setup.Length > 0 && Array.TrueForAll(setup, s => !string.IsNullOrEmpty(s.path)))
+                {
+                    EditorSceneManager.RestoreSceneManagerSetup(setup);
+                }
+                else
+                {
+                    EditorSceneManager.OpenScene(ScenePath);
+                }
+            }
+        }
+
+        [MenuItem("AdaptorPhysX/Capture Standard Scenarios", true)]
+        private static bool CanCapture() => !EditorApplication.isPlayingOrWillChangePlaymode;
 
         public static void CaptureBatch()
         {
@@ -52,6 +78,22 @@ namespace AdaptorPhysX.Samples.Editor
                 SurgeryDemoSceneBuilder.Build();
             }
             EditorSceneManager.OpenScene(ScenePath);
+            try
+            {
+                RunScenarios();
+            }
+            finally
+            {
+                // Edit-mode bodies get no OnDestroy: release their native memory even when a stage throws.
+                foreach (ApxSoftBody body in ApxSoftBody.Active.ToArray())
+                {
+                    body.Release();
+                }
+            }
+        }
+
+        private static void RunScenarios()
+        {
             foreach (ApxDemoShape shape in UnityEngine.Object.FindObjectsOfType<ApxDemoShape>())
             {
                 shape.Apply();
@@ -126,11 +168,6 @@ namespace AdaptorPhysX.Samples.Editor
             Shot("S5b_liver_wedge_lifted", new Vector3(0.3f, 0.2f, -0.18f), new Vector3(0.22f, 0.06f, 0.0f));
             Shot("S5c_liver_wedge_side", new Vector3(0.22f, 0.09f, -0.2f), new Vector3(0.22f, 0.06f, 0.0f));
             Shot("99_overview", new Vector3(0.0f, 0.32f, -0.42f), new Vector3(0.0f, 0.03f, 0.0f));
-
-            foreach (ApxSoftBody body in UnityEngine.Object.FindObjectsOfType<ApxSoftBody>())
-            {
-                body.Release();
-            }
         }
 
         /// <summary>Height of the topmost real node below <paramref name="above"/>.</summary>

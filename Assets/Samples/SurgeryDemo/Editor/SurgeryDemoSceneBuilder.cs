@@ -21,7 +21,7 @@ namespace AdaptorPhysX.Samples.Editor
 
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
-            var cameraObject = new GameObject("Main Camera", typeof(Camera), typeof(AudioListener)) { tag = "MainCamera" };
+            var cameraObject = new GameObject("Main Camera", typeof(Camera)) { tag = "MainCamera" };
             var camera = cameraObject.GetComponent<Camera>();
             camera.nearClipPlane = 0.01f;
             camera.clearFlags = CameraClearFlags.SolidColor;
