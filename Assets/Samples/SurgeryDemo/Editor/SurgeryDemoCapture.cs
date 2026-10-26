@@ -108,6 +108,7 @@ namespace AdaptorPhysX.Samples.Editor
             ApxSoftBody block = Find("Tissue Block");
             ApxSoftBody flap = Find("Skin Flap");
             ApxSoftBody liver = Find("Liver Lobe");
+            ApxSoftBody pad = Find("Tissue Pad");
 
             Run(45);
             Log("settled");
@@ -167,6 +168,19 @@ namespace AdaptorPhysX.Samples.Editor
             Log("S5 wedge lifted");
             Shot("S5b_liver_wedge_lifted", new Vector3(0.3f, 0.2f, -0.18f), new Vector3(0.22f, 0.06f, 0.0f));
             Shot("S5c_liver_wedge_side", new Vector3(0.22f, 0.09f, -0.2f), new Vector3(0.22f, 0.06f, 0.0f));
+
+            // S6: short, shallow incision into the solid tissue pad. Skin tension opens it; the tissue
+            // below the incision stays solid. Then the forceps retract one edge to show the layers.
+            float padTop = SurfaceHeight(pad, new Vector3(0.0f, 0.3f, -0.21f));
+            Stroke(new Vector3(-0.012f, padTop + 0.01f, -0.21f), new Vector3(0.012f, padTop + 0.01f, -0.21f), Vector3.zero,
+                new Vector3(0.0f, -0.018f, 0.0f), 30);
+            Run(60);
+            Log("S6 small incision");
+            Shot("S6a_pad_incision", new Vector3(0.0f, padTop + 0.06f, -0.27f), new Vector3(0.0f, padTop, -0.21f));
+            Drag(pad, new Vector3(0.0f, padTop, -0.2145f), new Vector3(0.0f, padTop + 0.006f, -0.222f), 40, 0.005f);
+            Log("S6 retraction");
+            Shot("S6b_pad_retracted", new Vector3(0.0f, padTop + 0.05f, -0.255f), new Vector3(0.0f, padTop - 0.004f, -0.21f));
+            Release(pad);
             Shot("99_overview", new Vector3(0.0f, 0.32f, -0.42f), new Vector3(0.0f, 0.03f, 0.0f));
         }
 

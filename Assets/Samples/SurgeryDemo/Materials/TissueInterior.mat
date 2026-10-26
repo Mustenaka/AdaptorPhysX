@@ -25,9 +25,13 @@ Material:
     m_TexEnvs: []
     m_Ints: []
     m_Floats:
+    - _FatDepth: 0
     - _Glossiness: 0.65
     - _Scale: 80
+    - _SkinDepth: 0
     m_Colors:
     - _Color: {r: 0.62, g: 0.12, b: 0.12, a: 1}
     - _Color2: {r: 0.92, g: 0.45, b: 0.42, a: 1}
+    - _FatColor: {r: 0.97, g: 0.86, b: 0.52, a: 1}
+    - _SkinColor: {r: 0.93, g: 0.78, b: 0.72, a: 1}
   m_BuildTextureStacks: []

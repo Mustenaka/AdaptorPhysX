@@ -18,6 +18,9 @@ namespace AdaptorPhysX.Samples.Editor
             Material liver = CreateMaterial("Liver", "Standard", new Color(0.45f, 0.1f, 0.09f), 0.75f);
             Material interior = CreateMaterial("TissueInterior", "AdaptorPhysX/Tissue Interior", Color.white, 0.65f);
             Material floor = CreateMaterial("Table", "Standard", new Color(0.32f, 0.36f, 0.4f), 0.2f);
+            Material layered = CreateMaterial("LayeredInterior", "AdaptorPhysX/Tissue Interior", Color.white, 0.6f);
+            layered.SetFloat("_SkinDepth", 0.0025f);
+            layered.SetFloat("_FatDepth", 0.009f);
 
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
@@ -57,6 +60,26 @@ namespace AdaptorPhysX.Samples.Editor
             CreateBody("Liver Lobe", ApxDemoShape.Kind.Ellipsoid, new Vector3(0.16f, 0.06f, 0.11f),
                 new Vector3(0.22f, 0.033f, 0.0f), liver, interior, 24, 1.0e4f, -0.003f);
 
+            // Thick tissue pad held in a tray (bottom and sides fixed, as if still attached to the body):
+            // a stiff, pre-tensioned skin layer over soft subcutaneous tissue. A short, shallow
+            // incision gapes under the skin tension while the tissue below stays solid.
+            GameObject pad = CreateBody("Tissue Pad", ApxDemoShape.Kind.Box, new Vector3(0.1f, 0.035f, 0.07f),
+                new Vector3(0.0f, 0.0185f, -0.21f), skin, layered, 32, 1.5e4f, 0.0f);
+            var padBody = pad.GetComponent<ApxSoftBody>();
+            padBody.skinThickness = 0.003f;
+            padBody.skinYoungsModulus = 2.0e5f;
+            padBody.skinPreStrain = 0.12f;
+            padBody.damping = 2.0f;
+            Material trayMaterial = CreateMaterial("Clamp", "Standard", new Color(0.7f, 0.72f, 0.75f), 0.8f);
+            padBody.pinColliders = new Collider[]
+            {
+                CreateTrayPart("Tray Base", new Vector3(0.0f, 0.002f, -0.21f), new Vector3(0.12f, 0.008f, 0.09f), null),
+                CreateTrayPart("Tray Wall L", new Vector3(-0.0535f, 0.019f, -0.21f), new Vector3(0.008f, 0.04f, 0.086f), trayMaterial),
+                CreateTrayPart("Tray Wall R", new Vector3(0.0535f, 0.019f, -0.21f), new Vector3(0.008f, 0.04f, 0.086f), trayMaterial),
+                CreateTrayPart("Tray Wall B", new Vector3(0.0f, 0.019f, -0.2485f), new Vector3(0.115f, 0.04f, 0.008f), trayMaterial),
+                CreateTrayPart("Tray Wall F", new Vector3(0.0f, 0.019f, -0.1715f), new Vector3(0.115f, 0.04f, 0.008f), trayMaterial),
+            };
+
             var scalpel = new GameObject("Scalpel", typeof(ApxScalpel));
             var controller = new GameObject("Surgery Demo", typeof(SurgeryDemoController)).GetComponent<SurgeryDemoController>();
             controller.scalpel = scalpel.GetComponent<ApxScalpel>();
@@ -82,6 +105,27 @@ namespace AdaptorPhysX.Samples.Editor
             body.cutMaterial = interior;
             body.collisionMargin = collisionMargin;
             return go;
+        }
+
+        /// <summary>Trigger box that pins the tissue nodes inside it; drawn when a material is given.</summary>
+        private static Collider CreateTrayPart(string name, Vector3 position, Vector3 size, Material material)
+        {
+            GameObject part = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            part.name = name;
+            part.transform.position = position;
+            part.transform.localScale = size;
+            var collider = part.GetComponent<BoxCollider>();
+            collider.isTrigger = true;
+            var renderer = part.GetComponent<MeshRenderer>();
+            if (material != null)
+            {
+                renderer.sharedMaterial = material;
+            }
+            else
+            {
+                Object.DestroyImmediate(renderer);
+            }
+            return collider;
         }
 
         private static Collider CreateClamp(string name, Vector3 position)
