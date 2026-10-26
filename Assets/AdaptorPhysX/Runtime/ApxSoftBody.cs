@@ -65,8 +65,23 @@ namespace AdaptorPhysX
         [Tooltip("Material of cut surfaces (submesh 1).")]
         public Material cutMaterial;
 
+        /// <summary>Wall-clock duration of the stages of <see cref="Initialize"/>, in milliseconds.</summary>
+        public struct InitializeTimings
+        {
+            /// <summary>Reading, scaling and subdividing the surface mesh.</summary>
+            public float Prepare;
+            public float Voxelize;
+            /// <summary>Simulation arrays, initial topology and pins.</summary>
+            public float Simulation;
+            /// <summary>Surface embedding and the first mesh update.</summary>
+            public float Surface;
+
+            public float Total => Prepare + Voxelize + Simulation + Surface;
+        }
+
         public SoftBodySimulation Simulation { get; private set; }
         public SurfaceMesh Surface { get; private set; }
+        public InitializeTimings LastInitializeTimings { get; private set; }
         public bool IsGrabbing { get; private set; }
         /// <summary>True while the body is at rest and skips its steps.</summary>
         public bool IsSleeping => _restSteps >= SleepSteps;
@@ -142,6 +157,8 @@ namespace AdaptorPhysX
                 return;
             }
 
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            var timings = new InitializeTimings();
             Vector3 scale = transform.lossyScale;
             var positions = new List<float3>();
             var normals = new List<float3>();
@@ -168,7 +185,9 @@ namespace AdaptorPhysX
 
             float3[] restPositions = positions.ToArray();
             int[] restTriangles = triangles.ToArray();
+            timings.Prepare = Lap(timer);
             VoxelGrid grid = Voxelizer.Voxelize(restPositions, restTriangles, cellSize);
+            timings.Voxelize = Lap(timer);
             float4x4 restToWorld = float4x4.TRS(transform.position, transform.rotation, new float3(1.0f));
             Simulation = new SoftBodySimulation(grid, BuildParameters(), restToWorld);
 
@@ -192,6 +211,7 @@ namespace AdaptorPhysX
                 }
                 Simulation.Attach(inside, p + 1, _pinFrames[p]);
             }
+            timings.Simulation = Lap(timer);
 
             Surface = new SurfaceMesh(Simulation, restPositions, normals.ToArray(), uvs.ToArray(), restTriangles);
             GetComponent<MeshFilter>().sharedMesh = Surface.Mesh;
@@ -201,7 +221,16 @@ namespace AdaptorPhysX
                 _renderer.sharedMaterials = new[] { skin, cutMaterial };
             }
             Surface.Update(transform.worldToLocalMatrix);
+            timings.Surface = Lap(timer);
+            LastInitializeTimings = timings;
             Active.Add(this);
+        }
+
+        private static float Lap(System.Diagnostics.Stopwatch timer)
+        {
+            float ms = (float)timer.Elapsed.TotalMilliseconds;
+            timer.Restart();
+            return ms;
         }
 
         /// <summary>Advances the body by one fixed step of length <paramref name="dt"/>.</summary>

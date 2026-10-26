@@ -1,0 +1,21 @@
+{
+    "name": "AdaptorPhysX.Benchmarks.Editor",
+    "rootNamespace": "AdaptorPhysX.Benchmarks",
+    "references": [
+        "AdaptorPhysX.Runtime",
+        "Unity.Burst",
+        "Unity.Collections",
+        "Unity.Mathematics"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

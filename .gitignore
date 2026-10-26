@@ -38,3 +38,8 @@ Thumbs.db
 
 # Scenario capture output (AdaptorPhysX/Capture Standard Scenarios)
 /Captures/
+
+# Benchmark meshes (research-use licences, fetched by Benchmarks/fetch-meshes.sh) and results
+/Benchmarks/Meshes/
+/Benchmarks/Downloads/
+/Benchmarks/Results/

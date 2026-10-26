@@ -68,7 +68,9 @@ Assets/AdaptorPhysX/Runtime/        插件运行时（asmdef: AdaptorPhysX.Runti
   Core/                             lattice、求解器、接触、拓扑、切割、渲染
 Assets/AdaptorPhysX/Shaders/        切面着色器
 Assets/AdaptorPhysX/Tests/          EditMode 与 PlayMode 测试
+Assets/AdaptorPhysX/Benchmarks/     基准测试（编辑器，JSON 输出）
 Assets/Samples/SurgeryDemo/         演示场景、脚本、场景生成器、标准场景截图工具
+Benchmarks/                         基准网格下载脚本；网格与结果不提交
 docs/                               设计说明、路线图、截图
 ```
 
@@ -83,6 +85,24 @@ docs/                               设计说明、路线图、截图
 ```
 
 截图工具按脚本执行 `docs/ROADMAP.md` 中的标准场景 S1–S6，输出 PNG，并在日志中记录每个阶段的块大小与耗时。
+
+## 基准测试
+
+网格：组织块（box）与肝形网格（liver）由代码生成；斯坦福兔子（bunny）与龙（dragon）用下面的脚本下载到
+`Benchmarks/Meshes/`（不提交，斯坦福模型仅限研究用途）。放入闭合的 `Benchmarks/Meshes/liver.obj` 时改用该网格。
+
+```bash
+sh Benchmarks/fetch-meshes.sh
+```
+
+batchmode 运行（工程不能同时在编辑器中打开）。参数均可省略，默认值为全部四个网格、分辨率 16/32/48/64、16 子步、
+每阶段 60 步，结果写入 `Benchmarks/Results/apx-benchmark-<时间>.json`：
+
+```bash
+"D:/Program Files/Unity/Hub/Editor/2022.3.54f1/Editor/Unity.exe" -batchmode -projectPath . -executeMethod AdaptorPhysX.Benchmarks.Editor.ApxBenchmark.RunBatch -apxBenchmarkOut Benchmarks/Results/bench.json -apxMeshes box,liver,bunny,dragon -apxResolutions 16,32,48,64
+```
+
+编辑器内使用菜单 `AdaptorPhysX/Run Benchmarks`。测量内容与 JSON 字段见 `docs/DESIGN.md` 第 8 节。
 
 ## 历史
 
