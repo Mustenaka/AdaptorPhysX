@@ -71,7 +71,7 @@ Assets/AdaptorPhysX/Tests/          EditMode 与 PlayMode 测试
 Assets/AdaptorPhysX/Benchmarks/     基准测试（编辑器，JSON 输出）
 Assets/Samples/SurgeryDemo/         演示场景、脚本、场景生成器、标准场景截图工具
 Benchmarks/                         基准网格下载脚本；网格与结果不提交
-docs/                               设计说明、路线图、截图
+docs/                               设计说明、路线图、待办清单（TODO.md）、截图
 ```
 
 ## 测试与标准场景截图

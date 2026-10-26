@@ -39,6 +39,7 @@ M3 以后的顺序可按人工验收时发现的问题调整。
 
 ## 工作约定
 
-- 文档只保留 `README.md`、`docs/DESIGN.md`、`docs/ROADMAP.md`。不再为单个任务写计划与交接文档。
+- 文档只保留 `README.md`、`docs/DESIGN.md`、`docs/ROADMAP.md`、`docs/TODO.md`。不再为单个任务写计划与交接文档。
+  `docs/TODO.md` 是待办与现状的对照表，条目带编号，完成或发现新问题时更新。
 - 每个改动附带 EditMode 测试（拓扑、守恒、无 NaN 等可自动判断的性质），影响效果的改动附带标准场景截图。
 - 提交信息使用 Conventional Commits。
