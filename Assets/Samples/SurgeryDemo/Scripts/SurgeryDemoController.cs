@@ -28,6 +28,7 @@ namespace AdaptorPhysX.Samples
         private float _yaw = 0.0f;
         private float _pitch = 38.0f;
         private float _bladeHeight;
+        private ApxSoftBody _bladeBody;
         private bool _bladeActive;
         private ApxSoftBody _grabbed;
         private Plane _grabPlane;
@@ -80,9 +81,10 @@ namespace AdaptorPhysX.Samples
             {
                 return;
             }
-            if (Input.GetMouseButtonDown(0) && PickSurface(ray, out Vector3 hit, out _))
+            if (Input.GetMouseButtonDown(0) && PickSurface(ray, out Vector3 hit, out ApxSoftBody hitBody))
             {
                 _bladeHeight = hit.y;
+                _bladeBody = hitBody;
                 _bladeActive = true;
                 _severedThisStroke = 0;
                 PlaceBlade(hit);
@@ -95,7 +97,15 @@ namespace AdaptorPhysX.Samples
             scalpel.cutting = _bladeActive;
             if (_bladeActive && new Plane(Vector3.up, new Vector3(0.0f, _bladeHeight, 0.0f)).Raycast(ray, out float enter))
             {
-                PlaceBlade(ray.GetPoint(enter));
+                // The blade keeps its depth below the tissue under it: sagging tissue lies lower than
+                // where the stroke began. Past the edge of the tissue it keeps the last height.
+                Vector3 point = ray.GetPoint(enter);
+                if (SurfaceHeight(_bladeBody, point, out float surface))
+                {
+                    _bladeHeight = surface;
+                    point.y = surface;
+                }
+                PlaceBlade(point);
             }
             _severedThisStroke += scalpel.LastSeveredEdges;
         }
@@ -105,6 +115,24 @@ namespace AdaptorPhysX.Samples
             scalpel.transform.SetPositionAndRotation(surfacePoint + Vector3.up * 0.01f, Quaternion.identity);
             scalpel.edgeStart = Vector3.zero;
             scalpel.edgeEnd = Vector3.down * (0.01f + bladeDepth);
+        }
+
+        /// <summary>Height of the topmost real node of <paramref name="body"/> within a cell of the vertical through <paramref name="point"/>.</summary>
+        private static bool SurfaceHeight(ApxSoftBody body, Vector3 point, out float height)
+        {
+            height = point.y;
+            SoftBodySimulation sim = body != null ? body.Simulation : null;
+            if (sim == null)
+            {
+                return false;
+            }
+            int node = sim.PickNode(point + Vector3.up * 0.2f, Vector3.down, sim.CellSize);
+            if (node < 0)
+            {
+                return false;
+            }
+            height = sim.Positions[node].y;
+            return true;
         }
 
         private void UpdateForceps(Ray ray)
