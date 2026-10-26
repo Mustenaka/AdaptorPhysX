@@ -9,13 +9,20 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 |---|---|---|---|
 | ![S1](docs/images/S1b_block_pulled.png) | ![S2](docs/images/S2_flap_incision.png) | ![S4](docs/images/S4_flap_retraction_close.png) | ![S5](docs/images/S5b_liver_wedge_lifted.png) |
 
+| 实体组织上的小切口 | 牵开切口，露出真皮与脂肪 |
+|---|---|
+| ![S6a](docs/images/S6a_pad_incision.png) | ![S6b](docs/images/S6b_pad_retracted.png) |
+
 - 体积表示：稀疏六面体 lattice，每个体素按 Kuhn 剖分拆为 6 个四面体。
-- 材料模型：Stable Neo-Hookean XPBD（Macklin & Müller 2021），参数为杨氏模量与泊松比。
-- 时间积分：small steps（每帧多个子步，每个子步 1 次迭代），按体素列 4 色并行，结果可逐位复现。
+- 材料模型：co-rotational XPBD（偏量项 `‖F − R‖` 与体积项 `det F − 1` 联立求解），参数为杨氏模量与泊松比。
+  可选皮肤层：表面以下一定厚度内刚度更高，并带沿表面方向的预应力，小切口在张力下张开。
+- 时间积分：small steps（每帧多个子步，每个子步 1 次迭代），按体素切片 2 色并行，切片内 4 个体素一组用 SIMD 求解，
+  同一机器、同一构建下结果可逐位复现。静止的物体自动休眠，不占用计算。
 - 切割：刀刃扫掠面与 lattice 棱求交后断开棱，按 virtual node algorithm 复制体素副本。
   全切、半切（切口终止在组织内部）、交叉切与对已分离部分的再次切割使用同一套机制。
 - 渲染：原始表面网格以三线性插值嵌入体素副本，并沿切平面拆分；切面由断开棱上的交点与法线生成，
-  按原始表面的有符号距离场裁剪到表面以内。切面着色器使用静止坐标的 3D 噪声，不需要 UV。
+  按原始表面的有符号距离场裁剪到表面以内。切面着色器使用静止坐标的 3D 噪声，并按表面以下的深度分层着色
+  （真皮、脂肪、肌肉）。
 - 接触：Unity Sphere/Capsule/Box 碰撞体（含摩擦，子步内插值位姿）；切下的块之间、折叠的组织之间的接触。
 - 交互：手术刀（`ApxScalpel`）、钉住区域、镊子抓取（不跨越切口）。
 
@@ -39,16 +46,19 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 | 鼠标右键拖动、滚轮 | 旋转、缩放相机 |
 | `R` | 重新加载场景 |
 
-场景内三个对象：组织块、两端钉住且带预应力的皮瓣、椭球形肝叶。
+场景内四个对象：组织块、两端钉住且带预应力的皮瓣、椭球形肝叶、放在托盘中带皮肤层的组织垫（Tissue Pad，
+用于实体组织上的小切口）。
 
 ## 在自己的场景中使用
 
 1. 在带 `MeshFilter` + `MeshRenderer` 的对象上添加 `ApxSoftBody`。网格必须闭合且 Read/Write 已开启。
 2. 设置 `resolution`（最长轴上的体素数）、`youngsModulus`、`poissonRatio`、`density`。
+   需要皮肤层时设置 `skinThickness`（米）、`skinYoungsModulus`、`skinPreStrain`；整体预应力用 `preStrain`。
 3. `cutMaterial` 指定切面材质，可使用 `AdaptorPhysX/Tissue Interior` 着色器。
 4. 需要固定的部位放 Collider（可设为 Trigger），拖入 `pinColliders`。
 5. 刀具对象添加 `ApxScalpel`，用 `edgeStart` / `edgeEnd` 定义刀刃，`cutting` 打开时运动即切割。
 6. 抓取：`ApxSoftBody.BeginGrab(ray, radius, out point)` → `MoveGrab(target)` → `EndGrab()`。
+7. `allowSleep`（默认开启）：物体静止后停止步进，碰撞体移动、切割、抓取时恢复。直接修改节点数据后调用 `WakeUp()`。
 
 ## 目录
 
@@ -72,7 +82,7 @@ docs/                               设计说明、路线图、截图
 "D:/Program Files/Unity/Hub/Editor/2022.3.54f1/Editor/Unity.exe" -batchmode -projectPath . -executeMethod AdaptorPhysX.Samples.Editor.SurgeryDemoCapture.CaptureBatch -apxCaptureDir Captures
 ```
 
-截图工具按脚本执行 `docs/ROADMAP.md` 中的标准场景 S1–S5，输出 PNG，并在日志中记录每个阶段的块大小与耗时。
+截图工具按脚本执行 `docs/ROADMAP.md` 中的标准场景 S1–S6，输出 PNG，并在日志中记录每个阶段的块大小与耗时。
 
 ## 历史
 
