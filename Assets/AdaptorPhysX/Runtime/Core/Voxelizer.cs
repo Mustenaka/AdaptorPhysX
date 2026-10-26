@@ -137,7 +137,7 @@ namespace AdaptorPhysX
         }
 
         /// <summary>Even-odd ray parity along +x for every grid point row.</summary>
-        [BurstCompile(CompileSynchronously = true)]
+        [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
         private struct InsideParityJob : IJobParallelFor
         {
             [ReadOnly] public NativeArray<float3> Vertices;
@@ -192,7 +192,7 @@ namespace AdaptorPhysX
         }
 
         /// <summary>Exact distance to the surface for grid points within 1.5 cells of a triangle.</summary>
-        [BurstCompile(CompileSynchronously = true)]
+        [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
         private struct NearDistanceJob : IJob
         {
             [ReadOnly] public NativeArray<float3> Vertices;

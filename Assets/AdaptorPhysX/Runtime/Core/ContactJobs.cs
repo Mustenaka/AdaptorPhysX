@@ -20,7 +20,7 @@ namespace AdaptorPhysX
             (int)((uint)(c.x * 73856093 ^ c.y * 19349663 ^ c.z * 83492791) & (BucketCount - 1));
     }
 
-    [BurstCompile(CompileSynchronously = true)]
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct BuildContactHashJob : IJob
     {
         [ReadOnly] public NativeArray<float3> Positions;
@@ -60,7 +60,7 @@ namespace AdaptorPhysX
         }
     }
 
-    [BurstCompile(CompileSynchronously = true)]
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct FindContactsJob : IJobParallelFor
     {
         [ReadOnly] public NativeArray<float3> Positions;
@@ -127,7 +127,7 @@ namespace AdaptorPhysX
         }
     }
 
-    [BurstCompile(CompileSynchronously = true)]
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct CopyPositionsJob : IJobParallelFor
     {
         [ReadOnly] public NativeArray<float3> Source;

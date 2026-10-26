@@ -24,11 +24,26 @@ namespace AdaptorPhysX
         private readonly Vector2[] _uvs;
         private readonly int[] _triangles;
         private readonly int[] _embedCell;
+        private readonly float3[] _embedU;
+        private readonly Vector3[] _restUv1;
+        private readonly int[] _gridToCell;
+        private readonly int3[] _cellCoord;
+
+        // Managed snapshot of the simulation topology, refreshed on every rebuild.
+        private int2[] _range = Array.Empty<int2>();
+        private CellCopy[] _copies = Array.Empty<CellCopy>();
+        private int[] _copyNodes = Array.Empty<int>();
+        private int[] _pieceId = Array.Empty<int>();
+        private ushort[] _severed = Array.Empty<ushort>();
+        private float[] _edgeT = Array.Empty<float>();
+        private float3[] _edgeNormal = Array.Empty<float3>();
 
         // Per-rebuild cut geometry of cells with more than one copy (rest space).
         private readonly Dictionary<int, List<float3>> _cutTriangles = new Dictionary<int, List<float3>>();
         private readonly Dictionary<int, List<float4>> _cutPlanes = new Dictionary<int, List<float4>>();
 
+        private NativeArray<int> _nativeTriangles;
+        private NativeArray<int> _nativeEmbedCell;
         private NativeArray<int> _vertexCopy;
         private NativeArray<float3> _vertexU;
         private NativeArray<float3> _vertexRestNormal;
@@ -55,11 +70,19 @@ namespace AdaptorPhysX
             _restNormals = restNormals;
             _uvs = uvs;
             _triangles = triangles;
+            _gridToCell = sim.GridToCell.ToArray();
+            _cellCoord = sim.CellCoord.ToArray();
             _embedCell = new int[restPositions.Length];
+            _embedU = new float3[restPositions.Length];
+            _restUv1 = new Vector3[restPositions.Length];
             for (int v = 0; v < restPositions.Length; v++)
             {
                 _embedCell[v] = FindCell(restPositions[v]);
+                _embedU[v] = (restPositions[v] - CellMin(_embedCell[v])) / sim.CellSize;
+                _restUv1[v] = restPositions[v];
             }
+            _nativeTriangles = new NativeArray<int>(triangles, Allocator.Persistent);
+            _nativeEmbedCell = new NativeArray<int>(_embedCell, Allocator.Persistent);
             Mesh = new Mesh { name = "ApxSoftBody", indexFormat = IndexFormat.UInt32 };
             Mesh.MarkDynamic();
         }
@@ -67,6 +90,8 @@ namespace AdaptorPhysX
         public void Dispose()
         {
             DisposeArrays();
+            if (_nativeTriangles.IsCreated) _nativeTriangles.Dispose();
+            if (_nativeEmbedCell.IsCreated) _nativeEmbedCell.Dispose();
             if (Mesh == null)
             {
                 return;
@@ -115,16 +140,25 @@ namespace AdaptorPhysX
             Mesh.RecalculateBounds();
         }
 
+        /// <summary>Render vertices beyond the source vertices, plus skin and cut index lists.</summary>
         private sealed class Builder
         {
+            public readonly int BaseCount;
             public readonly List<int> Copies = new List<int>();
             public readonly List<float3> Us = new List<float3>();
             public readonly List<float3> Normals = new List<float3>();
             public readonly List<Vector2> Uv0 = new List<Vector2>();
             public readonly List<Vector3> Uv1 = new List<Vector3>();
-            public readonly List<int> Skin = new List<int>();
+            public readonly List<int> Skin;
             public readonly List<int> Cut = new List<int>();
-            public readonly Dictionary<(int, int, int, int), int> Lookup = new Dictionary<(int, int, int, int), int>();
+
+            public int2[] Range;
+
+            public Builder(int baseCount, int skinCapacity)
+            {
+                BaseCount = baseCount;
+                Skin = new List<int>(skinCapacity);
+            }
 
             public int Add(int copy, float3 u, float3 normal, Vector2 uv, float3 rest)
             {
@@ -133,7 +167,7 @@ namespace AdaptorPhysX
                 Normals.Add(normal);
                 Uv0.Add(uv);
                 Uv1.Add(rest);
-                return Copies.Count - 1;
+                return BaseCount + Copies.Count - 1;
             }
         }
 
@@ -150,6 +184,27 @@ namespace AdaptorPhysX
             public Vector2 Uv;
         }
 
+        /// <summary>
+        /// Split result of one skin triangle near a cut, stored per cell and copy ordinal within
+        /// the cell, so it stays valid while copy indices of other cells are renumbered.
+        /// </summary>
+        private sealed class SplitTriangle
+        {
+            public readonly List<int> Cell = new List<int>(8);
+            public readonly List<int> Ordinal = new List<int>(8);
+            /// <summary>Source vertex reused when evaluated in its cell's first copy, else -1.</summary>
+            public readonly List<int> Source = new List<int>(8);
+            public readonly List<float3> U = new List<float3>(8);
+            public readonly List<float3> Normal = new List<float3>(8);
+            public readonly List<Vector2> Uv = new List<Vector2>(8);
+            public readonly List<float3> Rest = new List<float3>(8);
+            public readonly List<int> Indices = new List<int>(12);
+            public readonly List<(int, int, int, int)> Keys = new List<(int, int, int, int)>(8);
+        }
+
+        private readonly Dictionary<int, SplitTriangle> _splitCache = new Dictionary<int, SplitTriangle>();
+        private ushort[] _previousSevered = Array.Empty<ushort>();
+
         /// <summary>A convex piece of a skin triangle and the side of each plane it was split by.</summary>
         private sealed class Piece
         {
@@ -161,69 +216,99 @@ namespace AdaptorPhysX
         private void RebuildTopology()
         {
             _version = _sim.TopologyVersion;
+            ushort[] previousSevered = _previousSevered;
+            _range = _sim.CellCopyRange.ToArray();
+            _copies = _sim.Copies.AsArray().ToArray();
+            _copyNodes = _sim.CopyNodes.AsArray().ToArray();
+            _pieceId = _sim.PieceId.ToArray();
+            _severed = _sim.Severed.ToArray();
+            _edgeT = _sim.EdgeT.ToArray();
+            _edgeNormal = _sim.EdgeNormal.ToArray();
             ComputeVisibleCopies();
-            var b = new Builder();
+            bool[] dirty = DirtyCells(previousSevered);
+            _previousSevered = _severed;
+
+            // Source vertex v is render vertex v, evaluated in the (first) copy of its cell.
+            // Triangles away from cuts keep their source indices; only triangles touching a
+            // cut cell are split and get extra vertices.
+            int baseCount = _restPositions.Length;
+            var b = new Builder(baseCount, _triangles.Length + 64) { Range = _range };
             BuildCutGeometry(b);
+
+            // Triangles away from cut cells keep their indices (classified in Burst); the rest are split here.
+            int[] dynamicTriangles;
+            using (var staticIndices = new NativeList<int>(_triangles.Length, Allocator.TempJob))
+            using (var dynamicList = new NativeList<int>(256, Allocator.TempJob))
+            using (var range = new NativeArray<int2>(_range, Allocator.TempJob))
+            {
+                new ClassifyTrianglesJob
+                {
+                    Triangles = _nativeTriangles,
+                    EmbedCell = _nativeEmbedCell,
+                    CellCopyRange = range,
+                    StaticIndices = staticIndices,
+                    DynamicTriangles = dynamicList,
+                }.Run();
+                b.Skin.AddRange(staticIndices.AsArray().ToArray());
+                dynamicTriangles = dynamicList.AsArray().ToArray();
+            }
 
             var planes = new List<float4>(4);
             var pieces = new List<Piece>(4);
             var next = new List<Piece>(4);
-            for (int t = 0; t < _triangles.Length; t += 3)
+            var used = new HashSet<int>();
+            foreach (int t in dynamicTriangles)
             {
-                var corners = new List<SkinCorner>(3);
-                for (int i = 0; i < 3; i++)
+                used.Add(t);
+                if (!_splitCache.TryGetValue(t, out SplitTriangle split) || IsDirty(t, dirty))
                 {
-                    int v = _triangles[t + i];
-                    corners.Add(new SkinCorner
-                    {
-                        Vertex = v,
-                        EdgeLo = -1,
-                        EdgeHi = -1,
-                        Rest = _restPositions[v],
-                        Normal = _restNormals[v],
-                        Uv = _uvs[v],
-                    });
+                    split = SplitSkinTriangle(t, planes, pieces, next);
+                    _splitCache[t] = split;
                 }
-                pieces.Clear();
-                pieces.Add(new Piece { Corners = corners });
-                if (TouchesCut(t))
-                {
-                    CollectPlanes(t, planes);
-                    foreach (float4 plane in planes)
-                    {
-                        next.Clear();
-                        foreach (Piece piece in pieces)
-                        {
-                            Split(piece, plane, next);
-                        }
-                        (pieces, next) = (next, pieces);
-                    }
-                }
-                foreach (Piece piece in pieces)
-                {
-                    EmitSkin(b, piece);
-                }
+                AppendSplit(b, split);
             }
-            if (b.Skin.Count > 0)
+            if (used.Count != _splitCache.Count)
             {
-                RemoveHiddenTriangles(b.Skin, b.Copies);
-                RemoveHiddenTriangles(b.Cut, b.Copies);
+                var stale = new List<int>();
+                foreach (int t in _splitCache.Keys)
+                {
+                    if (!used.Contains(t)) stale.Add(t);
+                }
+                foreach (int t in stale) _splitCache.Remove(t);
+            }
+            int extra = b.Copies.Count;
+            int count = baseCount + extra;
+            var copies = new int[count];
+            for (int v = 0; v < baseCount; v++)
+            {
+                copies[v] = _range[_embedCell[v]].x;
+            }
+            b.Copies.CopyTo(copies, baseCount);
+            if (Array.IndexOf(_copyVisible, false) >= 0)
+            {
+                RemoveHiddenTriangles(b.Skin, copies);
+                RemoveHiddenTriangles(b.Cut, copies);
             }
 
             DisposeArrays();
-            int count = b.Copies.Count;
-            _vertexCopy = new NativeArray<int>(b.Copies.ToArray(), Allocator.Persistent);
-            _vertexU = new NativeArray<float3>(b.Us.ToArray(), Allocator.Persistent);
-            _vertexRestNormal = new NativeArray<float3>(b.Normals.ToArray(), Allocator.Persistent);
+            _vertexCopy = new NativeArray<int>(copies, Allocator.Persistent);
+            _vertexU = Concat(_embedU, b.Us);
+            _vertexRestNormal = Concat(_restNormals, b.Normals);
             _outPositions = new NativeArray<float3>(count, Allocator.Persistent);
             _outNormals = new NativeArray<float3>(count, Allocator.Persistent);
             _nodeJacobian = new NativeArray<float3x3>(_sim.NodeCount, Allocator.Persistent);
 
+            var uv0 = new Vector2[count];
+            Array.Copy(_uvs, uv0, baseCount);
+            b.Uv0.CopyTo(uv0, baseCount);
+            var uv1 = new Vector3[count];
+            Array.Copy(_restUv1, uv1, baseCount);
+            b.Uv1.CopyTo(uv1, baseCount);
             Mesh.Clear();
             Mesh.SetVertices(_outPositions);
             Mesh.SetNormals(_outNormals);
-            Mesh.SetUVs(0, b.Uv0);
-            Mesh.SetUVs(1, b.Uv1);
+            Mesh.SetUVs(0, uv0);
+            Mesh.SetUVs(1, uv1);
             Mesh.subMeshCount = 2;
             Mesh.SetTriangles(b.Skin, 0, false);
             Mesh.SetTriangles(b.Cut, 1, false);
@@ -233,33 +318,43 @@ namespace AdaptorPhysX
 
         private void ComputeVisibleCopies()
         {
-            var pieceSize = new Dictionary<int, int>();
-            for (int i = 0; i < _sim.NodeCount; i++)
+            var pieceSize = new int[_pieceId.Length];
+            foreach (int piece in _pieceId)
             {
-                int piece = _sim.PieceId[i];
                 if (piece >= 0)
                 {
-                    pieceSize[piece] = pieceSize.TryGetValue(piece, out int c) ? c + 1 : 1;
+                    pieceSize[piece]++;
                 }
             }
-            _copyVisible = new bool[_sim.CopyCount];
-            for (int q = 0; q < _sim.CopyCount; q++)
+            _copyVisible = new bool[_copies.Length];
+            for (int q = 0; q < _copies.Length; q++)
             {
-                int mask = _sim.Copies[q].Mask;
+                int mask = _copies[q].Mask;
                 for (int k = 0; k < 8; k++)
                 {
                     if (((mask >> k) & 1) == 0)
                     {
                         continue;
                     }
-                    int piece = _sim.PieceId[_sim.CopyNodes[q * 8 + k]];
+                    int piece = _pieceId[_copyNodes[q * 8 + k]];
                     _copyVisible[q] = piece >= 0 && pieceSize[piece] >= MinVisiblePieceNodes;
                     break;
                 }
             }
         }
 
-        private void RemoveHiddenTriangles(List<int> indices, List<int> vertexCopies)
+        private static NativeArray<float3> Concat(float3[] head, List<float3> tail)
+        {
+            var array = new NativeArray<float3>(head.Length + tail.Count, Allocator.Persistent);
+            NativeArray<float3>.Copy(head, array, head.Length);
+            for (int i = 0; i < tail.Count; i++)
+            {
+                array[head.Length + i] = tail[i];
+            }
+            return array;
+        }
+
+        private void RemoveHiddenTriangles(List<int> indices, int[] vertexCopies)
         {
             int write = 0;
             for (int t = 0; t < indices.Count; t += 3)
@@ -274,18 +369,6 @@ namespace AdaptorPhysX
                 indices[write++] = indices[t + 2];
             }
             indices.RemoveRange(write, indices.Count - write);
-        }
-
-        private bool TouchesCut(int t)
-        {
-            for (int i = 0; i < 3; i++)
-            {
-                if (_sim.CellCopyRange[_embedCell[_triangles[t + i]]].y > 1)
-                {
-                    return true;
-                }
-            }
-            return false;
         }
 
         /// <summary>Distinct cut planes of the cut cells containing the triangle's vertices.</summary>
@@ -371,7 +454,76 @@ namespace AdaptorPhysX
             return piece;
         }
 
-        private void EmitSkin(Builder b, Piece piece)
+        /// <summary>Cells whose severed edges changed since the last rebuild, dilated by one cell.</summary>
+        private bool[] DirtyCells(ushort[] previousSevered)
+        {
+            var dirty = new bool[_cellCoord.Length];
+            if (previousSevered.Length != _severed.Length)
+            {
+                for (int c = 0; c < dirty.Length; c++) dirty[c] = true;
+                return dirty;
+            }
+            int3 dims = _sim.Grid.Dims;
+            for (int c = 0; c < _severed.Length; c++)
+            {
+                if (_severed[c] == previousSevered[c])
+                {
+                    continue;
+                }
+                int3 p = _cellCoord[c];
+                for (int z = -1; z <= 1; z++)
+                for (int y = -1; y <= 1; y++)
+                for (int x = -1; x <= 1; x++)
+                {
+                    int3 n = p + new int3(x, y, z);
+                    if (math.any(n < 0) || math.any(n >= dims)) continue;
+                    int cell = _gridToCell[n.x + dims.x * (n.y + dims.y * n.z)];
+                    if (cell >= 0) dirty[cell] = true;
+                }
+            }
+            return dirty;
+        }
+
+        private bool IsDirty(int t, bool[] dirty) =>
+            dirty[_embedCell[_triangles[t]]] || dirty[_embedCell[_triangles[t + 1]]] || dirty[_embedCell[_triangles[t + 2]]];
+
+        private SplitTriangle SplitSkinTriangle(int t, List<float4> planes, List<Piece> pieces, List<Piece> next)
+        {
+            var corners = new List<SkinCorner>(3);
+            for (int i = 0; i < 3; i++)
+            {
+                int v = _triangles[t + i];
+                corners.Add(new SkinCorner
+                {
+                    Vertex = v,
+                    EdgeLo = -1,
+                    EdgeHi = -1,
+                    Rest = _restPositions[v],
+                    Normal = _restNormals[v],
+                    Uv = _uvs[v],
+                });
+            }
+            pieces.Clear();
+            pieces.Add(new Piece { Corners = corners });
+            CollectPlanes(t, planes);
+            foreach (float4 plane in planes)
+            {
+                next.Clear();
+                foreach (Piece piece in pieces)
+                {
+                    Split(piece, plane, next);
+                }
+                (pieces, next) = (next, pieces);
+            }
+            var split = new SplitTriangle();
+            foreach (Piece piece in pieces)
+            {
+                EmitSkin(split, piece);
+            }
+            return split;
+        }
+
+        private void EmitSkin(SplitTriangle split, Piece piece)
         {
             float3 side = float3.zero;
             foreach (SkinCorner c in piece.Corners)
@@ -383,59 +535,76 @@ namespace AdaptorPhysX
             int first = -1, previous = -1;
             for (int i = 0; i < piece.Corners.Count; i++)
             {
-                int index = SkinVertex(b, piece, piece.Corners[i], side);
+                int index = SkinVertex(split, piece, piece.Corners[i], side);
                 if (i == 0)
                 {
                     first = index;
                 }
                 else if (i >= 2)
                 {
-                    b.Skin.Add(first);
-                    b.Skin.Add(previous);
-                    b.Skin.Add(index);
+                    split.Indices.Add(first);
+                    split.Indices.Add(previous);
+                    split.Indices.Add(index);
                 }
                 previous = index;
             }
         }
 
-        private int SkinVertex(Builder b, Piece piece, SkinCorner corner, float3 side)
+        /// <summary>Local vertex of the split triangle; split points shared by its pieces are merged.</summary>
+        private int SkinVertex(SplitTriangle split, Piece piece, SkinCorner corner, float3 side)
         {
             int cell = corner.Vertex >= 0 ? _embedCell[corner.Vertex] : FindCell(corner.Rest);
             int copy = piece.Planes.Count > 0
                 ? ResolveBySides(cell, corner.Rest, piece, side)
                 : ResolveCopy(cell, corner.Rest, side);
-            (int, int, int, int) key;
-            bool shared = true;
-            if (corner.Vertex >= 0)
+            int ordinal = copy - _range[cell].x;
+            (int, int, int, int) key = corner.Vertex >= 0
+                ? (corner.Vertex, -1, ordinal, 0)
+                : (corner.EdgeLo, corner.EdgeHi, ordinal, (int)math.round(corner.EdgeT * 65536.0f));
+            bool shareable = corner.Vertex >= 0 || corner.EdgeLo >= 0;
+            if (shareable)
             {
-                key = (corner.Vertex, -1, copy, 0);
+                for (int i = 0; i < split.Keys.Count; i++)
+                {
+                    if (split.Keys[i].Equals(key) && split.Cell[i] == cell)
+                    {
+                        return i;
+                    }
+                }
             }
-            else if (corner.EdgeLo >= 0)
+            split.Keys.Add(shareable ? key : (-2, -2, -2, split.Keys.Count));
+            split.Cell.Add(cell);
+            split.Ordinal.Add(ordinal);
+            split.Source.Add(corner.Vertex >= 0 && ordinal == 0 ? corner.Vertex : -1);
+            split.U.Add((corner.Rest - CellMin(cell)) / _sim.CellSize);
+            split.Normal.Add(corner.Normal);
+            split.Uv.Add(corner.Uv);
+            split.Rest.Add(corner.Rest);
+            return split.Cell.Count - 1;
+        }
+
+        /// <summary>Adds a cached split to the mesh with copy indices of the current topology.</summary>
+        private static void AppendSplit(Builder b, SplitTriangle split)
+        {
+            int count = split.Cell.Count;
+            Span<int> map = count <= 64 ? stackalloc int[count] : new int[count];
+            for (int i = 0; i < count; i++)
             {
-                key = (corner.EdgeLo, corner.EdgeHi, copy, (int)math.round(corner.EdgeT * 65536.0f));
+                map[i] = split.Source[i] >= 0
+                    ? split.Source[i]
+                    : b.Add(b.Range[split.Cell[i]].x + split.Ordinal[i], split.U[i], split.Normal[i], split.Uv[i],
+                        split.Rest[i]);
             }
-            else
+            foreach (int index in split.Indices)
             {
-                key = default;
-                shared = false;
+                b.Skin.Add(map[index]);
             }
-            if (shared && b.Lookup.TryGetValue(key, out int index))
-            {
-                return index;
-            }
-            float3 u = (corner.Rest - CellMin(cell)) / _sim.CellSize;
-            index = b.Add(copy, u, corner.Normal, corner.Uv, corner.Rest);
-            if (shared)
-            {
-                b.Lookup.Add(key, index);
-            }
-            return index;
         }
 
         /// <summary>Nearest corner of the cell that lies on the recorded side of every splitting plane.</summary>
         private int ResolveBySides(int cell, float3 query, Piece piece, float3 side)
         {
-            int2 range = _sim.CellCopyRange[cell];
+            int2 range = _range[cell];
             if (range.y == 1)
             {
                 return range.x;
@@ -469,7 +638,7 @@ namespace AdaptorPhysX
         /// </summary>
         private int ResolveCopy(int cell, float3 query, float3 side)
         {
-            int2 range = _sim.CellCopyRange[cell];
+            int2 range = _range[cell];
             if (range.y == 1)
             {
                 return range.x;
@@ -514,7 +683,7 @@ namespace AdaptorPhysX
         {
             for (int q = range.x; q < range.x + range.y; q++)
             {
-                if (((_sim.Copies[q].Mask >> corner) & 1) != 0)
+                if (((_copies[q].Mask >> corner) & 1) != 0)
                 {
                     return q;
                 }
@@ -553,15 +722,15 @@ namespace AdaptorPhysX
             var polygon = new List<CutVertex>(12);
             var clipped = new List<CutVertex>(16);
             var group = new int[8];
-            for (int cell = 0; cell < _sim.CellCount; cell++)
+            for (int cell = 0; cell < _cellCoord.Length; cell++)
             {
-                int2 range = _sim.CellCopyRange[cell];
+                int2 range = _range[cell];
                 if (range.y < 2)
                 {
                     continue;
                 }
-                int severed = _sim.Severed[cell];
-                int3 coord = _sim.CellCoord[cell];
+                int severed = _severed[cell];
+                int3 coord = _cellCoord[cell];
                 float3 cellMin = CellMin(cell);
                 var blockers = new List<float3>();
                 _cutTriangles.Add(cell, blockers);
@@ -569,7 +738,7 @@ namespace AdaptorPhysX
 
                 for (int q = range.x; q < range.x + range.y; q++)
                 {
-                    int mask = _sim.Copies[q].Mask;
+                    int mask = _copies[q].Mask;
                     // Group virtual corners that touch through cube edges; each group gets its own polygon.
                     for (int k = 0; k < 8; k++)
                     {
@@ -604,10 +773,10 @@ namespace AdaptorPhysX
                             {
                                 continue;
                             }
-                            float t = _sim.EdgeT[cell * Lattice.EdgeCount + e];
+                            float t = _edgeT[cell * Lattice.EdgeCount + e];
                             float3 outward = (float3)Lattice.CornerOffset(virtualCorner) -
                                              Lattice.CornerOffset(realA ? a : c);
-                            float3 n = _sim.EdgeNormal[cell * Lattice.EdgeCount + e];
+                            float3 n = _edgeNormal[cell * Lattice.EdgeCount + e];
                             n = math.dot(n, outward) < 0.0f ? -n : n;
                             faceNormal += n;
                             float sdfA = grid.Sdf[grid.PointIndex(coord + Lattice.CornerOffset(a))];
@@ -635,7 +804,7 @@ namespace AdaptorPhysX
                         {
                             continue;
                         }
-                        int first = b.Copies.Count;
+                        int first = b.BaseCount + b.Copies.Count;
                         foreach (CutVertex cv in clipped)
                         {
                             b.Add(q, cv.U, math.normalizesafe(cv.Normal), Vector2.zero, cellMin + cv.U * h);
@@ -666,7 +835,7 @@ namespace AdaptorPhysX
                 {
                     continue;
                 }
-                float3 n = _sim.EdgeNormal[cell * Lattice.EdgeCount + e];
+                float3 n = _edgeNormal[cell * Lattice.EdgeCount + e];
                 float3 p = cellMin + HermitePoint(cell, e) * _sim.CellSize;
                 int cluster = -1;
                 for (int i = 0; i < normals.Count && cluster < 0; i++)
@@ -759,12 +928,12 @@ namespace AdaptorPhysX
 
         private float3 HermitePoint(int cell, int edge)
         {
-            float t = _sim.EdgeT[cell * Lattice.EdgeCount + edge];
+            float t = _edgeT[cell * Lattice.EdgeCount + edge];
             return math.lerp((float3)Lattice.CornerOffset(Lattice.EdgeCorners[2 * edge]),
                 Lattice.CornerOffset(Lattice.EdgeCorners[2 * edge + 1]), t);
         }
 
-        private float3 CellMin(int cell) => _sim.Grid.Origin + (float3)_sim.CellCoord[cell] * _sim.CellSize;
+        private float3 CellMin(int cell) => _sim.Grid.Origin + (float3)_cellCoord[cell] * _sim.CellSize;
 
         /// <summary>Cell containing <paramref name="p"/>, else the nearest cell within two rings.</summary>
         private int FindCell(float3 p)
@@ -784,7 +953,7 @@ namespace AdaptorPhysX
                     {
                         continue;
                     }
-                    int index = _sim.GridToCell[n.x + grid.Dims.x * (n.y + grid.Dims.y * n.z)];
+                    int index = _gridToCell[n.x + grid.Dims.x * (n.y + grid.Dims.y * n.z)];
                     if (index < 0)
                     {
                         continue;
@@ -829,11 +998,39 @@ namespace AdaptorPhysX
             if (_nodeJacobian.IsCreated) _nodeJacobian.Dispose();
         }
 
+        /// <summary>Splits skin triangles into those touching a cut cell and the untouched rest.</summary>
+        [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+        private struct ClassifyTrianglesJob : IJob
+        {
+            [ReadOnly] public NativeArray<int> Triangles;
+            [ReadOnly] public NativeArray<int> EmbedCell;
+            [ReadOnly] public NativeArray<int2> CellCopyRange;
+            public NativeList<int> StaticIndices;
+            public NativeList<int> DynamicTriangles;
+
+            public void Execute()
+            {
+                for (int t = 0; t < Triangles.Length; t += 3)
+                {
+                    int a = Triangles[t], b = Triangles[t + 1], c = Triangles[t + 2];
+                    if (CellCopyRange[EmbedCell[a]].y > 1 || CellCopyRange[EmbedCell[b]].y > 1 ||
+                        CellCopyRange[EmbedCell[c]].y > 1)
+                    {
+                        DynamicTriangles.Add(t);
+                        continue;
+                    }
+                    StaticIndices.Add(a);
+                    StaticIndices.Add(b);
+                    StaticIndices.Add(c);
+                }
+            }
+        }
+
         /// <summary>
         /// Weighted sum of the cell-centre deformation Jacobians around each node, so shading
         /// normals are continuous across cell faces (only the direction is used).
         /// </summary>
-        [BurstCompile(CompileSynchronously = true)]
+        [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
         private struct NodeJacobianJob : IJob
         {
             [ReadOnly] public NativeArray<float3> Positions;
@@ -870,7 +1067,7 @@ namespace AdaptorPhysX
         }
 
         /// <summary>Trilinear skinning; normals use the cofactor of the interpolated node Jacobians.</summary>
-        [BurstCompile(CompileSynchronously = true)]
+        [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
         private struct SkinJob : IJobParallelFor
         {
             [ReadOnly] public NativeArray<float3> Positions;

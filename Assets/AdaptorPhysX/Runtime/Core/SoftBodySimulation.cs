@@ -46,9 +46,11 @@ namespace AdaptorPhysX
     {
         public const int MaxKinematicFrames = 32;
         public const int GrabFrame = 0;
+        /// <summary>Piece contacts are resolved every this many substeps.</summary>
+        public const int ContactInterval = 2;
 
         private LatticeTables _tables;
-        private int[] _colorColumnStart;
+        private int[] _colorSliceStart;
         private JobHandle _pending;
         private bool _hasPending;
         private Stopwatch _stepTimer;
@@ -59,8 +61,8 @@ namespace AdaptorPhysX
         public NativeArray<int3> CellCoord;
         public NativeArray<int> GridToCell;
         public NativeArray<float> CellFill;
-        private NativeArray<int> _columnCells;
-        private NativeArray<int2> _columns;
+        private NativeArray<int> _sliceCells;
+        private NativeArray<int2> _slices;
         private NativeArray<float3x3> _tetInverseRest;
         private NativeArray<float> _tetVolume;
 
@@ -151,42 +153,42 @@ namespace AdaptorPhysX
                 GridToCell[p.x + grid.Dims.x * (p.y + grid.Dims.y * p.z)] = c;
             }
 
-            // Columns of cells along z, coloured by (x, y) parity: columns of one colour are at
-            // least two cells apart in x or y, so they share no grid point and run in parallel;
-            // the cells of a column are solved in order (Gauss-Seidel along z).
-            var columns = new SortedDictionary<long, List<int>>();
+            // Slices of cells across the longest axis, coloured by parity: slices of one colour are
+            // two cells apart, so they share no grid point and run in parallel; the cells of a
+            // slice are solved in order (Gauss-Seidel within the slice). Two colours keep the
+            // number of dependent jobs per substep low.
+            int axis = grid.Dims.x >= grid.Dims.y && grid.Dims.x >= grid.Dims.z ? 0 : grid.Dims.y >= grid.Dims.z ? 1 : 2;
+            var slices = new SortedDictionary<long, List<int>>();
             for (int c = 0; c < cellCount; c++)
             {
-                int3 p = grid.Cells[c];
-                int color = (p.x & 1) | ((p.y & 1) << 1);
-                long key = ((long)color << 40) | ((long)p.y << 20) | (uint)p.x;
-                if (!columns.TryGetValue(key, out List<int> list))
+                int slice = grid.Cells[c][axis];
+                long key = ((long)(slice & 1) << 32) | (uint)slice;
+                if (!slices.TryGetValue(key, out List<int> list))
                 {
-                    columns[key] = list = new List<int>();
+                    slices[key] = list = new List<int>();
                 }
                 list.Add(c);
             }
-            _colorColumnStart = new int[5];
-            var columnCells = new List<int>(cellCount);
-            var columnRanges = new List<int2>(columns.Count);
+            _colorSliceStart = new int[3];
+            var sliceCells = new List<int>(cellCount);
+            var sliceRanges = new List<int2>(slices.Count);
             int lastColor = -1;
-            foreach (KeyValuePair<long, List<int>> column in columns)
+            foreach (KeyValuePair<long, List<int>> slice in slices)
             {
-                int color = (int)(column.Key >> 40);
+                int color = (int)(slice.Key >> 32);
                 while (lastColor < color)
                 {
-                    _colorColumnStart[++lastColor] = columnRanges.Count;
+                    _colorSliceStart[++lastColor] = sliceRanges.Count;
                 }
-                column.Value.Sort((a, b) => grid.Cells[a].z.CompareTo(grid.Cells[b].z));
-                columnRanges.Add(new int2(columnCells.Count, column.Value.Count));
-                columnCells.AddRange(column.Value);
+                sliceRanges.Add(new int2(sliceCells.Count, slice.Value.Count));
+                sliceCells.AddRange(slice.Value);
             }
-            while (lastColor < 4)
+            while (lastColor < 2)
             {
-                _colorColumnStart[++lastColor] = columnRanges.Count;
+                _colorSliceStart[++lastColor] = sliceRanges.Count;
             }
-            _columnCells = new NativeArray<int>(columnCells.ToArray(), Allocator.Persistent);
-            _columns = new NativeArray<int2>(columnRanges.ToArray(), Allocator.Persistent);
+            _sliceCells = new NativeArray<int>(sliceCells.ToArray(), Allocator.Persistent);
+            _slices = new NativeArray<int2>(sliceRanges.ToArray(), Allocator.Persistent);
 
             float restEdge = grid.CellSize * (1.0f - math.clamp(parameters.PreStrain, 0.0f, 0.49f));
             Lattice.BuildRestTets(restEdge, out float3x3[] inverseRest, out float[] volumes);
@@ -221,8 +223,8 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref CellCoord);
             DisposeIfCreated(ref GridToCell);
             DisposeIfCreated(ref CellFill);
-            DisposeIfCreated(ref _columnCells);
-            DisposeIfCreated(ref _columns);
+            DisposeIfCreated(ref _sliceCells);
+            DisposeIfCreated(ref _slices);
             DisposeIfCreated(ref _tetInverseRest);
             DisposeIfCreated(ref _tetVolume);
             DisposeIfCreated(ref Severed);
@@ -273,8 +275,8 @@ namespace AdaptorPhysX
             {
                 Positions = Positions,
                 Weights = _weights,
-                ColumnCells = _columnCells,
-                Columns = _columns,
+                SliceCells = _sliceCells,
+                Slices = _slices,
                 CellCoord = CellCoord,
                 CellCopyRange = CellCopyRange,
                 Copies = Copies.AsArray(),
@@ -354,7 +356,9 @@ namespace AdaptorPhysX
                 node.FinishTimePrev = (s - 1) / (float)substeps;
                 node.FinishTime = s / (float)substeps;
                 node.PredictTime = (s + 1) / (float)substeps;
-                if (contacts && s > 0)
+                // Piece contacts every few substeps: each resolution costs two dependent jobs.
+                node.Contacts = contacts && s > 0 && (s % ContactInterval == 0 || s == substeps);
+                if (node.Contacts)
                 {
                     handle = copy.Schedule(NodeCount, 512, handle);
                 }
@@ -363,15 +367,15 @@ namespace AdaptorPhysX
                 {
                     break;
                 }
-                for (int color = 0; color < 4; color++)
+                for (int color = 0; color < 2; color++)
                 {
-                    int count = _colorColumnStart[color + 1] - _colorColumnStart[color];
+                    int count = _colorSliceStart[color + 1] - _colorSliceStart[color];
                     if (count == 0)
                     {
                         continue;
                     }
-                    solve.ColumnOffset = _colorColumnStart[color];
-                    handle = solve.Schedule(count, 4, handle);
+                    solve.SliceOffset = _colorSliceStart[color];
+                    handle = solve.Schedule(count, 1, handle);
                 }
             }
             handle = new BoundsJob { Positions = Positions, Bounds = _bounds }.Schedule(handle);
@@ -565,51 +569,6 @@ namespace AdaptorPhysX
             return result;
         }
 
-        /// <summary>Connected components of real corners over all copies.</summary>
-        private void ComputePieceIds()
-        {
-            var root = new int[NodeCount];
-            for (int i = 0; i < root.Length; i++)
-            {
-                root[i] = i;
-            }
-            int Find(int x)
-            {
-                while (root[x] != x)
-                {
-                    root[x] = root[root[x]];
-                    x = root[x];
-                }
-                return x;
-            }
-            for (int q = 0; q < Copies.Length; q++)
-            {
-                int mask = Copies[q].Mask;
-                int first = -1;
-                for (int k = 0; k < 8; k++)
-                {
-                    if (((mask >> k) & 1) == 0)
-                    {
-                        continue;
-                    }
-                    int n = CopyNodes[q * 8 + k];
-                    if (first < 0)
-                    {
-                        first = n;
-                    }
-                    else
-                    {
-                        int a = Find(n), b = Find(first);
-                        root[math.max(a, b)] = math.min(a, b);
-                    }
-                }
-            }
-            for (int i = 0; i < NodeCount; i++)
-            {
-                PieceId[i] = NodeReal[i] != 0 ? Find(i) : -1;
-            }
-        }
-
         private void RebuildTopology(bool hasOld)
         {
             var timer = Stopwatch.StartNew();
@@ -694,19 +653,14 @@ namespace AdaptorPhysX
             RestPositions = new NativeArray<float3>(nodeRest.AsArray(), Allocator.Persistent);
             _weights = new NativeArray<float>(count, Allocator.Persistent);
             NodeReal = new NativeArray<byte>(count, Allocator.Persistent);
-            for (int q = 0; q < Copies.Length; q++)
-            {
-                int mask = Copies[q].Mask;
-                for (int k = 0; k < 8; k++)
-                {
-                    if (((mask >> k) & 1) != 0)
-                    {
-                        NodeReal[CopyNodes[q * 8 + k]] = 1;
-                    }
-                }
-            }
             PieceId = new NativeArray<int>(count, Allocator.Persistent);
-            ComputePieceIds();
+            new PieceJob
+            {
+                Copies = Copies.AsArray(),
+                CopyNodes = CopyNodes.AsArray(),
+                NodeReal = NodeReal,
+                PieceId = PieceId,
+            }.Run();
             _contactPartner = new NativeArray<int>(count * Contacts.MaxPerNode, Allocator.Persistent);
             _contactDistance = new NativeArray<float>(count * Contacts.MaxPerNode, Allocator.Persistent);
             _contactCount = new NativeArray<int>(count, Allocator.Persistent);

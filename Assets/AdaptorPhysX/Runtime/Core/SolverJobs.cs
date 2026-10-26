@@ -19,7 +19,7 @@ namespace AdaptorPhysX
     /// Per-node work between constraint passes: finish the previous substep
     /// (collisions, friction, velocity) and/or predict the next one.
     /// </summary>
-    [BurstCompile(CompileSynchronously = true)]
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct NodeStepJob : IJobParallelFor
     {
         public NativeArray<float3> Positions;
@@ -125,7 +125,7 @@ namespace AdaptorPhysX
         }
     }
 
-    [BurstCompile(CompileSynchronously = true)]
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct BoundsJob : IJob
     {
         [ReadOnly] public NativeArray<float3> Positions;
@@ -145,7 +145,7 @@ namespace AdaptorPhysX
     }
 
     /// <summary>Effective inverse masses: kinematic nodes are infinitely heavy for the constraints.</summary>
-    [BurstCompile(CompileSynchronously = true)]
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct EffectiveMassJob : IJobParallelFor
     {
         [ReadOnly] public NativeArray<float> InverseMass;
@@ -157,16 +157,16 @@ namespace AdaptorPhysX
 
     /// <summary>
     /// Stable Neo-Hookean XPBD (Macklin &amp; Müller 2021) for all tetrahedra of the cell
-    /// columns of one colour. Same-colour columns share no grid point, so their nodes are
+    /// slices of one colour. Same-colour slices share no grid point, so their nodes are
     /// disjoint and the colour runs in parallel without atomics.
     /// </summary>
-    [BurstCompile(CompileSynchronously = true)]
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct SolveCellsJob : IJobParallelFor
     {
         [NativeDisableParallelForRestriction] public NativeArray<float3> Positions;
         [ReadOnly] public NativeArray<float> Weights;
-        [ReadOnly] public NativeArray<int> ColumnCells;
-        [ReadOnly] public NativeArray<int2> Columns;
+        [ReadOnly] public NativeArray<int> SliceCells;
+        [ReadOnly] public NativeArray<int2> Slices;
         [ReadOnly] public NativeArray<int3> CellCoord;
         [ReadOnly] public NativeArray<int2> CellCopyRange;
         [ReadOnly] public NativeArray<CellCopy> Copies;
@@ -175,7 +175,7 @@ namespace AdaptorPhysX
         [ReadOnly] public NativeArray<float3x3> TetInverseRest;
         [ReadOnly] public NativeArray<float> TetVolume;
 
-        public int ColumnOffset;
+        public int SliceOffset;
         /// <summary>1 / (lambda dt^2) and 1 / (mu dt^2): compliance per unit volume.</summary>
         public float HydrostaticCompliance;
         public float DeviatoricCompliance;
@@ -183,10 +183,10 @@ namespace AdaptorPhysX
 
         public void Execute(int index)
         {
-            int2 column = Columns[ColumnOffset + index];
-            for (int c = column.x; c < column.x + column.y; c++)
+            int2 slice = Slices[SliceOffset + index];
+            for (int c = slice.x; c < slice.x + slice.y; c++)
             {
-                SolveCell(ColumnCells[c]);
+                SolveCell(SliceCells[c]);
             }
         }
 

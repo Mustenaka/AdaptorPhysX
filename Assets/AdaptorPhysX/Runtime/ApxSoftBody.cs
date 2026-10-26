@@ -34,6 +34,9 @@ namespace AdaptorPhysX
 
         [Header("Solver")]
         [Range(1, 64)] public int substeps = 16;
+        [Tooltip("Simulation steps allowed per rendered frame. When a frame takes longer than the fixed " +
+                 "time step, extra FixedUpdate calls are skipped (slow motion) instead of piling up.")]
+        [Range(1, 8)] public int maxStepsPerFrame = 1;
         public bool useGravity = true;
 
         [Header("Collision")]
@@ -63,6 +66,8 @@ namespace AdaptorPhysX
         private float3 _grabTarget;
         private float3 _grabTargetPrevious;
         private MeshRenderer _renderer;
+        private int _stepFrame = -1;
+        private int _stepsThisFrame;
 
         /// <summary>World-space bounds of the lattice nodes (slightly larger than the rendered surface).</summary>
         public Bounds WorldBounds
@@ -83,7 +88,18 @@ namespace AdaptorPhysX
 
         private void Start() => Initialize();
 
-        private void FixedUpdate() => Simulate(Time.fixedDeltaTime);
+        private void FixedUpdate()
+        {
+            if (_stepFrame != Time.frameCount)
+            {
+                _stepFrame = Time.frameCount;
+                _stepsThisFrame = 0;
+            }
+            if (_stepsThisFrame++ < maxStepsPerFrame)
+            {
+                Simulate(Time.fixedDeltaTime);
+            }
+        }
 
         private void LateUpdate() => UpdateRender();
 

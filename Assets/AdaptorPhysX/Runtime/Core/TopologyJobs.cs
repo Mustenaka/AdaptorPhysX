@@ -16,7 +16,7 @@ namespace AdaptorPhysX
     /// removes connectivity, so each new copy derives from exactly one old copy and
     /// each new node inherits the state of exactly one old node.
     /// </summary>
-    [BurstCompile(CompileSynchronously = true)]
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct TopologyJob : IJob
     {
         [ReadOnly] public NativeArray<int3> CellCoord;
@@ -186,8 +186,64 @@ namespace AdaptorPhysX
         }
     }
 
+    /// <summary>Marks nodes that own material and labels the connected pieces of real corners.</summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal struct PieceJob : IJob
+    {
+        [ReadOnly] public NativeArray<CellCopy> Copies;
+        [ReadOnly] public NativeArray<int> CopyNodes;
+        public NativeArray<byte> NodeReal;
+        public NativeArray<int> PieceId;
+
+        public void Execute()
+        {
+            var root = new NativeArray<int>(PieceId.Length, Allocator.Temp);
+            for (int i = 0; i < root.Length; i++)
+            {
+                root[i] = i;
+            }
+            for (int q = 0; q < Copies.Length; q++)
+            {
+                int mask = Copies[q].Mask;
+                int first = -1;
+                for (int k = 0; k < 8; k++)
+                {
+                    if (((mask >> k) & 1) == 0)
+                    {
+                        continue;
+                    }
+                    int n = CopyNodes[q * 8 + k];
+                    NodeReal[n] = 1;
+                    if (first < 0)
+                    {
+                        first = n;
+                    }
+                    else
+                    {
+                        int a = Find(root, n), b = Find(root, first);
+                        root[math.max(a, b)] = math.min(a, b);
+                    }
+                }
+            }
+            for (int i = 0; i < PieceId.Length; i++)
+            {
+                PieceId[i] = NodeReal[i] != 0 ? Find(root, i) : -1;
+            }
+        }
+
+        private static int Find(NativeArray<int> root, int x)
+        {
+            while (root[x] != x)
+            {
+                root[x] = root[root[x]];
+                x = root[x];
+            }
+            return x;
+        }
+    }
+
     /// <summary>Gathers node state for the new topology from the inherited old nodes.</summary>
-    [BurstCompile(CompileSynchronously = true)]
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct RemapNodesJob : IJobParallelFor
     {
         [ReadOnly] public NativeArray<int> NodeParent;
@@ -234,7 +290,7 @@ namespace AdaptorPhysX
     /// (a0,b0,b1,a1) and records Hermite data (edge parameter and rest-space
     /// normal) on all cells sharing the edge.
     /// </summary>
-    [BurstCompile(CompileSynchronously = true)]
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct CutJob : IJob
     {
         [ReadOnly] public NativeArray<float3> Positions;
