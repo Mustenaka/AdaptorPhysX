@@ -296,6 +296,9 @@ namespace AdaptorPhysX
     [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct CutJob : IJob
     {
+        /// <summary>Edge parameter range at each end where an on-plane endpoint is tested directly.</summary>
+        private const float EndpointTolerance = 1e-3f;
+
         [ReadOnly] public NativeArray<float3> Positions;
         [ReadOnly] public NativeArray<int3> CellCoord;
         [ReadOnly] public NativeArray<int> GridToCell;
@@ -364,10 +367,10 @@ namespace AdaptorPhysX
                     }
                     float3 p = Positions[CopyNodes[owner * 8 + k0]];
                     float3 r = Positions[CopyNodes[owner * 8 + k1]];
-                    float t = Geometry.SegmentTriangle(p, r, A0, B0, B1);
+                    float t = Crossing(p, r, A0, B0, B1, n1);
                     if (t < 0.0f)
                     {
-                        t = Geometry.SegmentTriangle(p, r, A0, B1, A1);
+                        t = Crossing(p, r, A0, B1, A1, n2);
                     }
                     if (t < 0.0f)
                     {
@@ -380,6 +383,33 @@ namespace AdaptorPhysX
                 }
             }
             SeveredCount[0] = severedCount;
+        }
+
+        /// <summary>
+        /// Segment parameter where p-r crosses triangle abc (normal n), or -1. An endpoint on the plane
+        /// counts as the positive side, so a node on the blade keeps the edges to its positive neighbours
+        /// and a blade through a layer of nodes separates the body.
+        /// </summary>
+        private static float Crossing(float3 p, float3 r, float3 a, float3 b, float3 c, float3 n)
+        {
+            float dp = math.dot(p - a, n), dr = math.dot(r - a, n);
+            if ((dp >= 0.0f) == (dr >= 0.0f))
+            {
+                return -1.0f;
+            }
+            float t = Geometry.SegmentTriangle(p, r, a, b, c);
+            if (t >= 0.0f)
+            {
+                return t;
+            }
+            // SegmentTriangle can reject a crossing at an endpoint by rounding of t; away from the
+            // endpoints its result stands.
+            float s = dp / (dp - dr);
+            if (s > EndpointTolerance && s < 1.0f - EndpointTolerance)
+            {
+                return -1.0f;
+            }
+            return Geometry.PointInTriangle(math.lerp(p, r, s), a, b, c, n) ? s : -1.0f;
         }
 
         /// <summary>Maps the world blade normal into rest space with the cell's deformation Jacobian.</summary>

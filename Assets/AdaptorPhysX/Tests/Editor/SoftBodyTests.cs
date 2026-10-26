@@ -165,6 +165,37 @@ namespace AdaptorPhysX.Tests
         }
 
         [Test]
+        public void FullCutThroughALayerOfNodesSeparatesTwoPieces()
+        {
+            // The blade plane holds a layer of lattice nodes exactly: those nodes go to one side,
+            // so only the edges from the layer to the other side are severed.
+            var parameters = SoftBodyParameters.Default;
+            parameters.Gravity = float3.zero;
+            SoftBodySimulation sim = CreateBox(new float3(Size), parameters, 16);
+            float layer = float.MaxValue;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                if (math.abs(sim.Positions[i].x) < math.abs(layer))
+                {
+                    layer = sim.Positions[i].x;
+                }
+            }
+            int onPlane = 0;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                onPlane += sim.Positions[i].x == layer ? 1 : 0;
+            }
+            Assert.Greater(onPlane, 100, "no layer of nodes on the blade plane");
+
+            int severed = CutPlaneX(sim, layer, -0.2f, 0.2f);
+            Assert.Greater(severed, 0);
+            List<int> pieces = sim.PieceSizes();
+            Assert.AreEqual(2, pieces.Count, "piece sizes " + string.Join(", ", pieces));
+            StepFrames(sim, 10);
+            AssertFinite(sim);
+        }
+
+        [Test]
         public void StrokeOfManySmallSweepsCutsThrough()
         {
             var parameters = SoftBodyParameters.Default;

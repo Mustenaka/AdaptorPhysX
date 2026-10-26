@@ -321,8 +321,8 @@ namespace AdaptorPhysX.Benchmarks.Editor
                 };
 
                 // Full cut: a vertical blade taller than the body crosses it along x. The blade plane runs
-                // through the middle of the central cell layer of the rest lattice: a plane through a layer
-                // of lattice nodes does not separate the body (DESIGN §7).
+                // through the middle of the central cell layer of the rest lattice, as in the results of
+                // DESIGN §6.1.
                 var scalpel = new GameObject("Benchmark Scalpel").AddComponent<ApxScalpel>();
                 created.Add(scalpel.gameObject);
                 Bounds bounds = body.WorldBounds;

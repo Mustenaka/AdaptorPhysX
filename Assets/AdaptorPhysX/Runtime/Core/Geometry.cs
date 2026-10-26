@@ -51,6 +51,13 @@ namespace AdaptorPhysX
             return t >= 0.0f && t <= 1.0f ? t : -1.0f;
         }
 
+        /// <summary>Whether x, a point in the plane of triangle abc with normal n, lies inside the triangle or on its boundary.</summary>
+        public static bool PointInTriangle(float3 x, float3 a, float3 b, float3 c, float3 n)
+        {
+            return math.dot(math.cross(b - a, x - a), n) >= 0.0f && math.dot(math.cross(c - b, x - b), n) >= 0.0f &&
+                   math.dot(math.cross(a - c, x - c), n) >= 0.0f;
+        }
+
         /// <summary>Trilinear weight of corner <paramref name="k"/> at local cell coordinate <paramref name="u"/>.</summary>
         public static float TrilinearWeight(int k, float3 u)
         {
