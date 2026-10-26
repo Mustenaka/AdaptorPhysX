@@ -734,6 +734,9 @@ namespace AdaptorPhysX
             }
 
             // Tet rotations follow their copies so the polar decomposition stays warm across cuts.
+            // New tetrahedra start at the rest-to-world rotation: the warm-started update turns at
+            // most half a radian per substep and cannot leave identity for a half turn at all.
+            var initialRotation = new quaternion(new float3x3(RestToWorld.c0.xyz, RestToWorld.c1.xyz, RestToWorld.c2.xyz));
             var rotations = new NativeArray<quaternion>(newCopies.Length * Lattice.TetsPerCell, Allocator.Persistent);
             for (int q = 0; q < copyParent.Length; q++)
             {
@@ -742,7 +745,7 @@ namespace AdaptorPhysX
                 {
                     rotations[q * Lattice.TetsPerCell + t] = parent >= 0 && _tetRotation.IsCreated
                         ? _tetRotation[parent * Lattice.TetsPerCell + t]
-                        : quaternion.identity;
+                        : initialRotation;
                 }
             }
             copyParent.Dispose();

@@ -58,6 +58,23 @@ namespace AdaptorPhysX.Tests
         }
 
         [Test]
+        public void RotatedBodyStaysAtRestWithoutGravity()
+        {
+            // The tetrahedron rotations start at the body's rotation. Started at identity, the
+            // warm-started update needs several substeps for a quarter turn and never leaves
+            // identity for a half turn, and the elastic constraints deform the body meanwhile.
+            var parameters = SoftBodyParameters.Default;
+            parameters.Gravity = float3.zero;
+            foreach (float yaw in new[] { 90.0f, 180.0f })
+            {
+                SoftBodySimulation sim = CreateBox(new float3(Size), parameters, Resolution, yaw);
+                float3[] start = sim.Positions.ToArray();
+                StepFrames(sim, 30);
+                Assert.Less(MaxDisplacement(sim, start), 1e-4f, $"yaw {yaw}");
+            }
+        }
+
+        [Test]
         public void StiffMaterialOnFineLatticeStaysAtRest()
         {
             // mu dt^2 / (rho h^2) is about 40 here: far inside the regime where the stable
@@ -459,11 +476,12 @@ namespace AdaptorPhysX.Tests
             return CreateBox(size, parameters, Resolution, out rest, out normals, out uvs, out triangles, height);
         }
 
-        private SoftBodySimulation CreateBox(float3 size, SoftBodyParameters parameters, int resolution) =>
-            CreateBox(size, parameters, resolution, out _, out _, out _, out _, 0.0f);
+        private SoftBodySimulation CreateBox(float3 size, SoftBodyParameters parameters, int resolution, float yaw = 0.0f) =>
+            CreateBox(size, parameters, resolution, out _, out _, out _, out _, 0.0f, yaw);
 
+        /// <param name="yaw">Rotation of the body about the vertical axis, in degrees.</param>
         private SoftBodySimulation CreateBox(float3 size, SoftBodyParameters parameters, int resolution,
-            out float3[] rest, out float3[] normals, out Vector2[] uvs, out int[] triangles, float height)
+            out float3[] rest, out float3[] normals, out Vector2[] uvs, out int[] triangles, float height, float yaw = 0.0f)
         {
             Mesh mesh = MeshUtil.CreateBox(size, 8);
             var p = new List<float3>();
@@ -480,8 +498,9 @@ namespace AdaptorPhysX.Tests
             uvs = uv.ToArray();
             triangles = tris.ToArray();
             VoxelGrid grid = Voxelizer.Voxelize(rest, triangles, cell);
-            var sim = new SoftBodySimulation(grid, parameters,
-                float4x4.Translate(new float3(0.0f, height + 0.5f * size.y, 0.0f) * (height > 0.0f ? 1.0f : 0.0f)));
+            var sim = new SoftBodySimulation(grid, parameters, float4x4.TRS(
+                new float3(0.0f, height + 0.5f * size.y, 0.0f) * (height > 0.0f ? 1.0f : 0.0f),
+                quaternion.RotateY(math.radians(yaw)), new float3(1.0f)));
             _sims.Add(sim);
             return sim;
         }
