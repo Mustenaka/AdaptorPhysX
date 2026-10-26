@@ -298,10 +298,12 @@ namespace AdaptorPhysX
 
     /// <summary>
     /// Severs every intact lattice edge crossed by the swept blade quad
-    /// (a0,b0,b1,a1) and records Hermite data (edge parameter and rest-space
-    /// normal) on all cells sharing the edge. Within a stroke, nodes are labelled
-    /// with the side of the blade they were on when the blade passed them, and an
-    /// edge whose ends both carry a label is severed exactly when the labels differ.
+    /// (a0,b0,b1,a1), and the edges outside the surface beyond the tip or heel of a
+    /// blade that has left the material through it (<see cref="OutsideCrossing"/>), and records
+    /// Hermite data (edge parameter and rest-space normal) on all cells sharing the edge.
+    /// Within a stroke, nodes are labelled with the side of the blade they were on when the
+    /// blade passed them, and an edge whose ends both carry a label is severed exactly when
+    /// the labels differ.
     /// </summary>
     [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct CutJob : IJob
@@ -312,12 +314,15 @@ namespace AdaptorPhysX
         [ReadOnly] public NativeArray<float3> Positions;
         [ReadOnly] public NativeArray<int3> CellCoord;
         [ReadOnly] public NativeArray<int> GridToCell;
+        [ReadOnly] public NativeArray<float> PointSdf;
         [ReadOnly] public NativeArray<int2> CellCopyRange;
         [ReadOnly] public NativeArray<CellCopy> Copies;
         [ReadOnly] public NativeArray<int> CopyNodes;
         [ReadOnly] public NativeArray<int> EdgeCorners;
         public int3 Dims;
         public float3 A0, B0, A1, B1;
+        /// <summary>Previous blade position without the overlap with the previous sweep.</summary>
+        public float3 SweptA0, SweptB0;
 
         /// <summary>
         /// Per node: side of the blade when the current stroke passed it (+1, -1, or 0 for not
@@ -434,6 +439,10 @@ namespace AdaptorPhysX
                     }
                     else if (t < 0.0f)
                     {
+                        t = OutsideCrossing(c, k0, k1, p, r, n1, n2);
+                    }
+                    if (t < 0.0f)
+                    {
                         continue;
                     }
                     t = math.clamp(t, 0.05f, 0.95f);
@@ -545,6 +554,61 @@ namespace AdaptorPhysX
                 return -1.0f;
             }
             return Geometry.PointInTriangle(math.lerp(p, r, s), a, b, c, n) ? s : -1.0f;
+        }
+
+        /// <summary>
+        /// For an edge with both ends outside the surface, which carries no material: the parameter
+        /// where it crosses the plane of a blade triangle when the swept quad comes at least as close
+        /// to that point as the surface does (rest distance), i.e. the blade has left the material
+        /// through the surface beyond its tip or heel; otherwise -1. The lattice nodes of boundary
+        /// cells lie up to about one cell outside the surface, and the cell splits only when these
+        /// edges are severed too.
+        /// </summary>
+        private float OutsideCrossing(int cell, int k0, int k1, float3 p, float3 r, float3 n1, float3 n2)
+        {
+            int3 pointDims = Dims + 1;
+            int3 g0 = CellCoord[cell] + Lattice.CornerOffset(k0);
+            int3 g1 = CellCoord[cell] + Lattice.CornerOffset(k1);
+            float sdf0 = PointSdf[g0.x + pointDims.x * (g0.y + pointDims.y * g0.z)];
+            float sdf1 = PointSdf[g1.x + pointDims.x * (g1.y + pointDims.y * g1.z)];
+            if (sdf0 <= 0.0f || sdf1 <= 0.0f)
+            {
+                return -1.0f;
+            }
+            for (int half = 0; half < 2; half++)
+            {
+                float3 n = half == 0 ? n1 : n2;
+                float dp = math.dot(p - A0, n), dr = math.dot(r - A0, n);
+                if ((dp >= 0.0f) == (dr >= 0.0f))
+                {
+                    continue;
+                }
+                float s = dp / (dp - dr);
+                float3 x = math.lerp(p, r, s);
+                // Only beyond the tip or heel, and only in the part swept in this step (without the
+                // overlap with the previous sweep). Tissue that moves across the plane between two
+                // steps would otherwise be cut on both sides and leave single-node fragments.
+                float3 normal = n1 + n2;
+                if (math.dot(math.cross(SweptB0 - SweptA0, x - SweptA0), normal) < 0.0f ||
+                    math.dot(math.cross(B1 - A1, x - A1), normal) > 0.0f)
+                {
+                    continue;
+                }
+                float reach = float.MaxValue;
+                if (math.lengthsq(n1) > 0.0f)
+                {
+                    reach = math.distance(x, Geometry.ClosestPointOnTriangle(x, A0, B0, B1));
+                }
+                if (math.lengthsq(n2) > 0.0f)
+                {
+                    reach = math.min(reach, math.distance(x, Geometry.ClosestPointOnTriangle(x, A0, B1, A1)));
+                }
+                if (reach <= math.lerp(sdf0, sdf1, s))
+                {
+                    return s;
+                }
+            }
+            return -1.0f;
         }
 
         /// <summary>Maps the world blade normal into rest space with the cell's deformation Jacobian.</summary>

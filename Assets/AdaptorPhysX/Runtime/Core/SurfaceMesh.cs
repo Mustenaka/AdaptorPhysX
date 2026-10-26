@@ -382,7 +382,12 @@ namespace AdaptorPhysX
             indices.RemoveRange(write, indices.Count - write);
         }
 
-        /// <summary>Distinct cut planes of the cut cells containing the triangle's vertices.</summary>
+        /// <summary>
+        /// Distinct cut planes of the cut cells containing the triangle's vertices. Neighbouring cells fit
+        /// slightly different planes to the same cut; they count as one when parallel (either orientation)
+        /// and close at the triangle. Two such planes would cut a sliver out of the triangle whose corners
+        /// lie on opposite sides of the cut in their two cells.
+        /// </summary>
         private void CollectPlanes(int t, List<float4> planes)
         {
             planes.Clear();
@@ -397,8 +402,7 @@ namespace AdaptorPhysX
                     bool duplicate = false;
                     foreach (float4 other in planes)
                     {
-                        duplicate |= math.dot(plane.xyz, other.xyz) > 0.98f &&
-                                     math.abs(plane.w - other.w) < 0.1f * _sim.CellSize;
+                        duplicate |= SameCut(plane, other, t);
                     }
                     if (!duplicate)
                     {
@@ -406,6 +410,25 @@ namespace AdaptorPhysX
                     }
                 }
             }
+        }
+
+        private bool SameCut(float4 a, float4 b, int t)
+        {
+            float alignment = math.dot(a.xyz, b.xyz);
+            if (math.abs(alignment) < 0.98f)
+            {
+                return false;
+            }
+            b = alignment < 0.0f ? -b : b;
+            for (int i = 0; i < 3; i++)
+            {
+                float3 v = _restPositions[_triangles[t + i]];
+                if (math.abs(math.dot(a.xyz - b.xyz, v) - (a.w - b.w)) > 0.25f * _sim.CellSize)
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         /// <summary>Splits a piece by a plane; each resulting piece records its side of the plane.</summary>
@@ -612,7 +635,9 @@ namespace AdaptorPhysX
             }
         }
 
-        /// <summary>Nearest corner of the cell that lies on the recorded side of every splitting plane.</summary>
+        /// <summary>
+        /// Nearest corner of the cell that lies on the recorded side of every splitting plane (<see cref="CornerSide"/>).
+        /// </summary>
         private int ResolveBySides(int cell, float3 query, Piece piece, float3 side)
         {
             int2 range = _range[cell];
@@ -626,11 +651,11 @@ namespace AdaptorPhysX
             for (int k = 0; k < 8; k++)
             {
                 float3 p = cellMin + (float3)Lattice.CornerOffset(k) * _sim.CellSize;
+                int copy = CopyOwning(range, k);
                 bool ok = true;
                 for (int i = 0; i < piece.Planes.Count && ok; i++)
                 {
-                    float d = math.dot(piece.Planes[i].xyz, p) - piece.Planes[i].w;
-                    ok = (d >= 0.0f) == piece.Signs[i];
+                    ok = CornerSide(cell, copy, p, piece.Planes[i]) == piece.Signs[i];
                 }
                 float distance = math.distancesq(p, query);
                 if (ok && distance < bestDistance)
@@ -640,6 +665,45 @@ namespace AdaptorPhysX
                 }
             }
             return best < 0 ? ResolveCopy(cell, query, side) : CopyOwning(range, best);
+        }
+
+        /// <summary>
+        /// Whether corner <paramref name="p"/>, real in <paramref name="copy"/>, lies on the positive side of a
+        /// cut plane. A copy bounded by severed edges of that cut (normal parallel to the plane, Hermite point
+        /// near it) lies on the side these edges point to from the cut, so all its corners agree with the
+        /// topology. The fitted plane is tilted against the edges (deformed cells, edge parameters clamped
+        /// away from the nodes), and a corner within a few hundredths of a cell of it can lie across it.
+        /// Without such edges, the corner's side of the plane.
+        /// </summary>
+        private bool CornerSide(int cell, int copy, float3 p, float4 plane)
+        {
+            float h = _sim.CellSize;
+            float3 cellMin = CellMin(cell);
+            int mask = _copies[copy].Mask;
+            int severed = _severed[cell];
+            float along = 0.0f;
+            for (int e = 0; e < Lattice.EdgeCount; e++)
+            {
+                int a = Lattice.EdgeCorners[2 * e], c = Lattice.EdgeCorners[2 * e + 1];
+                bool realA = ((mask >> a) & 1) != 0, realC = ((mask >> c) & 1) != 0;
+                if (realA == realC || (severed & (1 << e)) == 0 ||
+                    math.abs(math.dot(_edgeNormal[cell * Lattice.EdgeCount + e], plane.xyz)) < 0.9f)
+                {
+                    continue;
+                }
+                float3 hermite = cellMin + HermitePoint(cell, e) * h;
+                if (math.abs(math.dot(plane.xyz, hermite) - plane.w) > 0.5f * h)
+                {
+                    continue;
+                }
+                float3 inward = Lattice.CornerOffset(realA ? a : c) - Lattice.CornerOffset(realA ? c : a);
+                along += math.dot(inward, plane.xyz);
+            }
+            if (math.abs(along) >= 0.5f)
+            {
+                return along > 0.0f;
+            }
+            return math.dot(plane.xyz, p) - plane.w >= 0.0f;
         }
 
         /// <summary>
