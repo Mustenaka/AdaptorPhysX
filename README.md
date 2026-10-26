@@ -54,9 +54,11 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 1. 在带 `MeshFilter` + `MeshRenderer` 的对象上添加 `ApxSoftBody`。网格必须闭合且 Read/Write 已开启。
 2. 设置 `resolution`（最长轴上的体素数）、`youngsModulus`、`poissonRatio`、`density`。
    需要皮肤层时设置 `skinThickness`（米）、`skinYoungsModulus`、`skinPreStrain`；整体预应力用 `preStrain`。
+   这些参数在运行时修改后下一步生效；修改 `resolution` 或 `pinColliders` 后调用 `Rebuild()`（切割会丢弃）。
 3. `cutMaterial` 指定切面材质，可使用 `AdaptorPhysX/Tissue Interior` 着色器。
 4. 需要固定的部位放 Collider（可设为 Trigger），拖入 `pinColliders`。
 5. 刀具对象添加 `ApxScalpel`，用 `edgeStart` / `edgeEnd` 定义刀刃，`cutting` 打开时运动即切割。
+   自己调用 `ApxSoftBody.Cut` 时，同一次连续切割的各次调用传入相同的非 0 `stroke`，组织在切割过程中移动时也能分开。
 6. 抓取：`ApxSoftBody.BeginGrab(ray, radius, out point)` → `MoveGrab(target)` → `EndGrab()`。
 7. `allowSleep`（默认开启）：物体静止后停止步进，碰撞体移动、切割、抓取时恢复。直接修改节点数据后调用 `WakeUp()`。
 

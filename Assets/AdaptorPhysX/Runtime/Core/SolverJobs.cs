@@ -159,9 +159,11 @@ namespace AdaptorPhysX
     {
         [ReadOnly] public NativeArray<float> InverseMass;
         [ReadOnly] public NativeArray<int> KinematicId;
+        /// <summary>Density the masses were built with over the current density.</summary>
+        public float Scale;
         public NativeArray<float> Weights;
 
-        public void Execute(int i) => Weights[i] = KinematicId[i] >= 0 ? 0.0f : InverseMass[i];
+        public void Execute(int i) => Weights[i] = KinematicId[i] >= 0 ? 0.0f : InverseMass[i] * Scale;
     }
 
     /// <summary>Four 3-vectors, one per SIMD lane (structure of arrays).</summary>

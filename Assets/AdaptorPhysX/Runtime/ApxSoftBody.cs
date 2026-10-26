@@ -18,7 +18,7 @@ namespace AdaptorPhysX
         [Header("Shape")]
         [Tooltip("Closed surface mesh; defaults to the MeshFilter mesh.")]
         public Mesh sourceMesh;
-        [Tooltip("Lattice cells along the longest axis.")]
+        [Tooltip("Lattice cells along the longest axis. A change at runtime takes effect on Rebuild().")]
         [Range(4, 64)] public int resolution = 16;
 
         [Header("Material")]
@@ -29,11 +29,11 @@ namespace AdaptorPhysX
         public float density = 1000.0f;
         [Tooltip("Velocity damping per second.")]
         [Min(0.0f)] public float damping = 1.0f;
-        [Tooltip("Rest-shape contraction applied at Start. Pinned tissue is pre-tensioned and incisions gape.")]
+        [Tooltip("Rest-shape contraction. Pinned tissue is pre-tensioned and incisions gape.")]
         [Range(0.0f, 0.3f)] public float preStrain;
 
         [Header("Skin layer")]
-        [Tooltip("Thickness of the stiffer, pre-tensioned skin layer below the surface in metres (0 = none). Applied at Start.")]
+        [Tooltip("Thickness of the stiffer, pre-tensioned skin layer below the surface in metres (0 = none).")]
         [Min(0.0f)] public float skinThickness;
         [Tooltip("Young's modulus of the skin layer in Pa.")]
         public float skinYoungsModulus = 3.0e5f;
@@ -58,7 +58,7 @@ namespace AdaptorPhysX
         public bool selfCollision = true;
 
         [Header("Attachments")]
-        [Tooltip("Nodes inside these colliders at Start follow the collider's transform.")]
+        [Tooltip("Nodes inside these colliders at Start follow the collider's transform. A change at runtime takes effect on Rebuild().")]
         public Collider[] pinColliders = new Collider[0];
 
         [Header("Rendering")]
@@ -102,6 +102,9 @@ namespace AdaptorPhysX
         private int _stepsThisFrame;
         private int _restSteps;
         private int _shapeCount;
+        /// <summary>Mesh and resolution of the current simulation; the MeshFilter then holds the generated surface.</summary>
+        private Mesh _initializedMesh;
+        private int _initializedResolution;
 
         /// <summary>World-space bounds of the lattice nodes (slightly larger than the rendered surface).</summary>
         public Bounds WorldBounds
@@ -137,7 +140,14 @@ namespace AdaptorPhysX
 
         private void LateUpdate() => UpdateRender();
 
-        private void OnValidate() => WakeUp();
+        private void OnValidate()
+        {
+            WakeUp();
+            if (Simulation != null && resolution != _initializedResolution)
+            {
+                Debug.LogWarning($"{name}: resolution changed to {resolution}; it takes effect on Rebuild(), which discards the cuts.", this);
+            }
+        }
 
         private void OnDestroy() => Release();
 
@@ -149,7 +159,7 @@ namespace AdaptorPhysX
                 return;
             }
             _renderer = GetComponent<MeshRenderer>();
-            Mesh mesh = sourceMesh != null ? sourceMesh : GetComponent<MeshFilter>().sharedMesh;
+            Mesh mesh = sourceMesh != null ? sourceMesh : _initializedMesh != null ? _initializedMesh : GetComponent<MeshFilter>().sharedMesh;
             if (mesh == null || !mesh.isReadable)
             {
                 Debug.LogError("ApxSoftBody needs a readable closed mesh.", this);
@@ -223,6 +233,8 @@ namespace AdaptorPhysX
             Surface.Update(transform.worldToLocalMatrix);
             timings.Surface = Lap(timer);
             LastInitializeTimings = timings;
+            _initializedMesh = mesh;
+            _initializedResolution = resolution;
             Active.Add(this);
         }
 
@@ -288,10 +300,26 @@ namespace AdaptorPhysX
             Simulation = null;
         }
 
-        /// <summary>Cuts along the quad swept by a blade edge from (a0,b0) to (a1,b1). Returns severed lattice edges.</summary>
-        public int Cut(Vector3 a0, Vector3 b0, Vector3 a1, Vector3 b1)
+        /// <summary>
+        /// Voxelizes again with the current settings (resolution, mesh, pin colliders) and restarts
+        /// from the rest shape. Cuts and the grab are discarded; the pins are taken from pinColliders again.
+        /// </summary>
+        public void Rebuild()
         {
-            int severed = Simulation == null ? 0 : Simulation.Cut(a0, b0, a1, b1);
+            Release();
+            IsGrabbing = false;
+            _restSteps = 0;
+            Initialize();
+        }
+
+        /// <summary>
+        /// Cuts along the quad swept by a blade edge from (a0,b0) to (a1,b1). Returns severed lattice
+        /// edges. Consecutive sweeps of one blade stroke pass the same non-zero
+        /// <paramref name="stroke"/> (see <see cref="SoftBodySimulation.Cut"/>).
+        /// </summary>
+        public int Cut(Vector3 a0, Vector3 b0, Vector3 a1, Vector3 b1, int stroke = 0)
+        {
+            int severed = Simulation == null ? 0 : Simulation.Cut(a0, b0, a1, b1, stroke);
             if (severed > 0)
             {
                 WakeUp();

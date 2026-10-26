@@ -21,6 +21,9 @@ namespace AdaptorPhysX
         private Vector3 _previousStart;
         private Vector3 _previousEnd;
         private bool _hasPrevious;
+        /// <summary>Identifies the current stroke (from ResetSweep or cutting on) to the soft bodies.</summary>
+        private int _stroke;
+        private static int s_strokes;
 
         /// <summary>Forget the previous blade pose, e.g. after teleporting the scalpel.</summary>
         public void ResetSweep() => _hasPrevious = false;
@@ -46,9 +49,13 @@ namespace AdaptorPhysX
                 {
                     if (body.WorldBounds.Intersects(sweep))
                     {
-                        LastSeveredEdges += body.Cut(_previousStart, _previousEnd, start, end);
+                        LastSeveredEdges += body.Cut(_previousStart, _previousEnd, start, end, _stroke);
                     }
                 }
+            }
+            if (cutting && !_hasPrevious)
+            {
+                _stroke = ++s_strokes;
             }
             _previousStart = start;
             _previousEnd = end;

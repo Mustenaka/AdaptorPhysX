@@ -257,6 +257,8 @@ namespace AdaptorPhysX
         [ReadOnly] public NativeArray<float3> OldVelocities;
         [ReadOnly] public NativeArray<int> OldKinematicId;
         [ReadOnly] public NativeArray<float3> OldKinematicLocal;
+        [ReadOnly] public NativeArray<sbyte> OldStrokeSide;
+        [ReadOnly] public NativeArray<float> OldStrokeTravel;
         public float4x4 RestToWorld;
 
         public NativeArray<float3> Positions;
@@ -265,6 +267,8 @@ namespace AdaptorPhysX
         public NativeArray<float> InverseMass;
         public NativeArray<int> KinematicId;
         public NativeArray<float3> KinematicLocal;
+        public NativeArray<sbyte> StrokeSide;
+        public NativeArray<float> StrokeTravel;
 
         public void Execute(int i)
         {
@@ -278,6 +282,8 @@ namespace AdaptorPhysX
                 Velocities[i] = float3.zero;
                 KinematicId[i] = -1;
                 KinematicLocal[i] = float3.zero;
+                StrokeSide[i] = 0;
+                StrokeTravel[i] = 0.0f;
                 return;
             }
             Positions[i] = OldPositions[p];
@@ -285,13 +291,17 @@ namespace AdaptorPhysX
             Velocities[i] = OldVelocities[p];
             KinematicId[i] = OldKinematicId[p];
             KinematicLocal[i] = OldKinematicLocal[p];
+            StrokeSide[i] = OldStrokeSide[p];
+            StrokeTravel[i] = OldStrokeTravel[p];
         }
     }
 
     /// <summary>
     /// Severs every intact lattice edge crossed by the swept blade quad
     /// (a0,b0,b1,a1) and records Hermite data (edge parameter and rest-space
-    /// normal) on all cells sharing the edge.
+    /// normal) on all cells sharing the edge. Within a stroke, nodes are labelled
+    /// with the side of the blade they were on when the blade passed them, and an
+    /// edge whose ends both carry a label is severed exactly when the labels differ.
     /// </summary>
     [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct CutJob : IJob
@@ -308,6 +318,21 @@ namespace AdaptorPhysX
         [ReadOnly] public NativeArray<int> EdgeCorners;
         public int3 Dims;
         public float3 A0, B0, A1, B1;
+
+        /// <summary>
+        /// Per node: side of the blade when the current stroke passed it (+1, -1, or 0 for not
+        /// yet), and the blade travel of the stroke at that moment.
+        /// </summary>
+        public NativeArray<sbyte> StrokeSide;
+        public NativeArray<float> StrokeTravel;
+        /// <summary>Blade travel of the stroke up to this sweep.</summary>
+        public float Travel;
+        /// <summary>Blade travel after which a label is renewed, so a stroke may come back over the same tissue.</summary>
+        public float LabelTravel;
+        /// <summary>Distance from the blade within which passed nodes are labelled.</summary>
+        public float Band;
+        /// <summary>+1 or -1: orientation of this sweep's blade normal relative to the stroke, so the labels keep their meaning when the blade reverses.</summary>
+        public float Orientation;
 
         public NativeArray<ushort> Severed;
         public NativeArray<float> EdgeT;
@@ -326,7 +351,9 @@ namespace AdaptorPhysX
                 return;
             }
 
-            int severedCount = 0;
+            // Label the nodes near the blade first, then test the edges of the same cells: an edge whose
+            // ends were labelled in different sweeps may have moved off the blade by now.
+            var cut = new NativeList<int>(256, Allocator.Temp);
             for (int c = 0; c < CellCoord.Length; c++)
             {
                 int2 range = CellCopyRange[c];
@@ -340,11 +367,30 @@ namespace AdaptorPhysX
                         cmax = math.max(cmax, x);
                     }
                 }
-                if (math.any(cmax < lo) || math.any(cmin > hi))
+                if (math.any(cmax < lo - Band) || math.any(cmin > hi + Band))
                 {
                     continue;
                 }
+                for (int q = range.x; q < range.x + range.y; q++)
+                {
+                    int mask = Copies[q].Mask;
+                    for (int k = 0; k < 8; k++)
+                    {
+                        if (((mask >> k) & 1) != 0)
+                        {
+                            Label(CopyNodes[q * 8 + k], n1, n2);
+                        }
+                    }
+                }
+                cut.Add(c);
+            }
 
+            int severedCount = 0;
+            for (int i = 0; i < cut.Length; i++)
+            {
+                int c = cut[i];
+                int2 range = CellCopyRange[c];
+                LabelBetweenSides(c, range, bladeNormal);
                 for (int e = 0; e < Lattice.EdgeCount; e++)
                 {
                     if ((Severed[c] & (1 << e)) != 0)
@@ -365,14 +411,28 @@ namespace AdaptorPhysX
                     {
                         continue;
                     }
-                    float3 p = Positions[CopyNodes[owner * 8 + k0]];
-                    float3 r = Positions[CopyNodes[owner * 8 + k1]];
+                    int np = CopyNodes[owner * 8 + k0], nr = CopyNodes[owner * 8 + k1];
+                    float3 p = Positions[np];
+                    float3 r = Positions[nr];
+                    int sp = Side(np), sr = Side(nr);
                     float t = Crossing(p, r, A0, B0, B1, n1);
                     if (t < 0.0f)
                     {
                         t = Crossing(p, r, A0, B1, A1, n2);
                     }
-                    if (t < 0.0f)
+                    if (sp != 0 && sr != 0)
+                    {
+                        // Both ends were passed by this stroke: the sides they were on then decide.
+                        // Tissue that moves across the blade plane during the stroke would otherwise
+                        // leave an edge whose ends were on different sides when the blade passed
+                        // each of them, but which never crosses the blade when it is tested.
+                        if (sp == sr)
+                        {
+                            continue;
+                        }
+                        t = t < 0.0f ? 0.5f : t;
+                    }
+                    else if (t < 0.0f)
                     {
                         continue;
                     }
@@ -382,7 +442,82 @@ namespace AdaptorPhysX
                     severedCount++;
                 }
             }
+            cut.Dispose();
             SeveredCount[0] = severedCount;
+        }
+
+        /// <summary>
+        /// Labels, by its current side, an unlabelled node joined by intact edges of the cell to nodes
+        /// of both labels. Tissue the blade drags along can leave such a node outside the band
+        /// whenever its projection lies on the quad; through it the two sides would stay joined.
+        /// Nodes next to one label only stay unlabelled, so a partial incision does not grow past
+        /// the blade.
+        /// </summary>
+        private void LabelBetweenSides(int cell, int2 range, float3 bladeNormal)
+        {
+            int severed = Severed[cell];
+            for (int q = range.x; q < range.x + range.y; q++)
+            {
+                int mask = Copies[q].Mask;
+                for (int k = 0; k < 8; k++)
+                {
+                    int node = CopyNodes[q * 8 + k];
+                    if (((mask >> k) & 1) == 0 || Side(node) != 0)
+                    {
+                        continue;
+                    }
+                    bool plus = false, minus = false;
+                    for (int e = 0; e < Lattice.EdgeCount; e++)
+                    {
+                        int k0 = EdgeCorners[2 * e], k1 = EdgeCorners[2 * e + 1];
+                        int other = k0 == k ? k1 : k1 == k ? k0 : -1;
+                        if (other < 0 || (severed & (1 << e)) != 0 || ((mask >> other) & 1) == 0)
+                        {
+                            continue;
+                        }
+                        int side = Side(CopyNodes[q * 8 + other]);
+                        plus |= side > 0;
+                        minus |= side < 0;
+                    }
+                    if (plus && minus)
+                    {
+                        float d = math.dot(Positions[node] - A0, bladeNormal) * Orientation;
+                        StrokeSide[node] = (sbyte)(d >= 0.0f ? 1 : -1);
+                        StrokeTravel[node] = Travel;
+                    }
+                }
+            }
+        }
+
+        /// <summary>The node's label of this stroke, or 0 when the blade has not passed it or the label is old.</summary>
+        private int Side(int node) =>
+            StrokeSide[node] != 0 && Travel - StrokeTravel[node] <= LabelTravel ? StrokeSide[node] : 0;
+
+        /// <summary>Labels a node within <see cref="Band"/> of the blade whose projection lies on the swept quad.</summary>
+        private void Label(int node, float3 n1, float3 n2)
+        {
+            if (Side(node) != 0)
+            {
+                return;
+            }
+            float3 x = Positions[node];
+            for (int half = 0; half < 2; half++)
+            {
+                float3 n = half == 0 ? n1 : n2;
+                float length = math.length(n);
+                if (length <= 0.0f || !Geometry.PointInTriangle(x, A0, half == 0 ? B0 : B1, half == 0 ? B1 : A1, n))
+                {
+                    continue;
+                }
+                float d = math.dot(x - A0, n) / length * Orientation;
+                if (math.abs(d) <= Band)
+                {
+                    // An end on the blade counts as the positive side, as in Crossing.
+                    StrokeSide[node] = (sbyte)(d >= 0.0f ? 1 : -1);
+                    StrokeTravel[node] = Travel;
+                }
+                return;
+            }
         }
 
         /// <summary>

@@ -82,6 +82,10 @@ namespace AdaptorPhysX
         private NativeArray<float3x3> _cellRest;
         /// <summary>Per cell: rest-volume scale times stiffness multiplier.</summary>
         private NativeArray<float> _cellScale;
+        /// <summary>PreStrain, SkinThickness, SkinStiffness and SkinPreStrain that _cellRest and _cellScale were built with.</summary>
+        private float4 _cellRestParameters;
+        /// <summary>Density the node masses were built with (at the last topology rebuild).</summary>
+        private float _massDensity;
 
         // Topology.
         public NativeArray<ushort> Severed;
@@ -103,6 +107,15 @@ namespace AdaptorPhysX
         public NativeArray<byte> NodeReal;
         /// <summary>Material piece of each real node (-1 for virtual-only nodes).</summary>
         public NativeArray<int> PieceId;
+        /// <summary>
+        /// Side of the blade (+1, -1) each node was on when the current cut stroke passed it, 0 when
+        /// not passed; with the stroke's blade travel at that moment (see <see cref="Cut"/>).
+        /// </summary>
+        public NativeArray<sbyte> StrokeSide;
+        public NativeArray<float> StrokeTravel;
+        private int _stroke;
+        private float _strokeTravel;
+        private float3 _strokeNormal;
         private NativeArray<float> _weights;
         private NativeArray<quaternion> _tetRotation;
         /// <summary>Real nodes not enclosed by full uncut cells; only these take part in contacts.</summary>
@@ -229,27 +242,7 @@ namespace AdaptorPhysX
             Lattice.BuildRestTets(grid.CellSize, out float3x3[] inverseRest, out float[] volumes);
             _cellRest = new NativeArray<float3x3>(cellCount, Allocator.Persistent);
             _cellScale = new NativeArray<float>(cellCount, Allocator.Persistent);
-            float bulk = 1.0f - math.clamp(parameters.PreStrain, 0.0f, 0.49f);
-            for (int c = 0; c < cellCount; c++)
-            {
-                // Rest shape X -> S X. The bulk contracts isotropically; the skin contracts only in
-                // the surface plane (S = b n n^T + s (I - n n^T)), as skin tension acts along the
-                // surface. Linear ramp over one cell at the skin boundary.
-                float skin = parameters.SkinThickness > 0.0f
-                    ? math.saturate((parameters.SkinThickness - grid.Depth[c]) / grid.CellSize + 0.5f)
-                    : 0.0f;
-                float3 n = grid.Normal[c];
-                if (math.lengthsq(n) < 0.5f)
-                {
-                    skin = 0.0f;
-                }
-                float tangential = 1.0f - math.clamp(math.lerp(parameters.PreStrain, parameters.SkinPreStrain, skin), 0.0f, 0.49f);
-                float3x3 nn = new float3x3(n * n.x, n * n.y, n * n.z);
-                float3x3 inverse = nn * (1.0f / bulk) + (float3x3.identity - nn) * (1.0f / tangential);
-                float stiffness = math.lerp(1.0f, math.max(parameters.SkinStiffness, 1e-3f), skin);
-                _cellRest[c] = inverse;
-                _cellScale[c] = bulk * tangential * tangential * stiffness;
-            }
+            UpdateCellRest();
             _tetInverseRest = new NativeArray<float3x3>(inverseRest, Allocator.Persistent);
             _tetVolume = new NativeArray<float>(volumes, Allocator.Persistent);
 
@@ -307,6 +300,38 @@ namespace AdaptorPhysX
         /// each quarter of the slice, and single cells. The four cells of a group must share no
         /// grid point; groups that would are solved as single cells.
         /// </summary>
+        /// <summary>
+        /// Per-cell rest-shape scaling and stiffness from the pre-strain and skin parameters.
+        /// <see cref="ScheduleStep"/> calls it again when one of them changes, so they take effect
+        /// on the next step.
+        /// </summary>
+        private void UpdateCellRest()
+        {
+            SoftBodyParameters p = Parameters;
+            _cellRestParameters = new float4(p.PreStrain, p.SkinThickness, p.SkinStiffness, p.SkinPreStrain);
+            float bulk = 1.0f - math.clamp(p.PreStrain, 0.0f, 0.49f);
+            for (int c = 0; c < _cellRest.Length; c++)
+            {
+                // Rest shape X -> S X. The bulk contracts isotropically; the skin contracts only in
+                // the surface plane (S = b n n^T + s (I - n n^T)), as skin tension acts along the
+                // surface. Linear ramp over one cell at the skin boundary.
+                float skin = p.SkinThickness > 0.0f
+                    ? math.saturate((p.SkinThickness - Grid.Depth[c]) / Grid.CellSize + 0.5f)
+                    : 0.0f;
+                float3 n = Grid.Normal[c];
+                if (math.lengthsq(n) < 0.5f)
+                {
+                    skin = 0.0f;
+                }
+                float tangential = 1.0f - math.clamp(math.lerp(p.PreStrain, p.SkinPreStrain, skin), 0.0f, 0.49f);
+                float3x3 nn = new float3x3(n * n.x, n * n.y, n * n.z);
+                float3x3 inverse = nn * (1.0f / bulk) + (float3x3.identity - nn) * (1.0f / tangential);
+                float stiffness = math.lerp(1.0f, math.max(p.SkinStiffness, 1e-3f), skin);
+                _cellRest[c] = inverse;
+                _cellScale[c] = bulk * tangential * tangential * stiffness;
+            }
+        }
+
         private static void BuildLaneGroups(VoxelGrid grid, List<int> cells, List<int4> groups, List<int> singles)
         {
             int quarter = cells.Count / 4;
@@ -403,10 +428,18 @@ namespace AdaptorPhysX
                 Margin = p.CollisionMargin,
             };
 
+            // Pre-strain and skin parameters set the rest shape, density the masses: changes to
+            // them apply from this step on (the masses are rebuilt with the new density at the
+            // next topology change).
+            if (!_cellRestParameters.Equals(new float4(p.PreStrain, p.SkinThickness, p.SkinStiffness, p.SkinPreStrain)))
+            {
+                UpdateCellRest();
+            }
             JobHandle handle = new EffectiveMassJob
             {
                 InverseMass = InverseMass,
                 KinematicId = KinematicId,
+                Scale = _massDensity / math.max(p.Density, 1e-6f),
                 Weights = _weights,
             }.Schedule(NodeCount, 256);
 
@@ -493,10 +526,24 @@ namespace AdaptorPhysX
         /// <summary>
         /// Cuts along the quad swept by a blade edge moving from (a0,b0) to (a1,b1).
         /// Returns the number of lattice edges severed; topology is rebuilt when non-zero.
+        /// Consecutive sweeps of one blade stroke pass the same non-zero <paramref name="stroke"/>:
+        /// nodes then keep the side of the blade they were on when the blade passed them, so
+        /// tissue that moves across the blade plane during the stroke is still separated along
+        /// one surface. Stroke 0 treats every call as a stroke of its own.
         /// </summary>
-        public int Cut(float3 a0, float3 b0, float3 a1, float3 b1)
+        public int Cut(float3 a0, float3 b0, float3 a1, float3 b1, int stroke = 0)
         {
             CompleteStep();
+            if (stroke == 0 || stroke != _stroke)
+            {
+                for (int i = 0; i < StrokeSide.Length; i++)
+                {
+                    StrokeSide[i] = 0;
+                }
+                _strokeTravel = 0.0f;
+                _strokeNormal = float3.zero;
+            }
+            _stroke = stroke;
             // Overlap consecutive sweeps along the motion so edges of tissue that moves
             // relative to the blade between two steps are not skipped.
             float3 motion = 0.5f * ((a1 + b1) - (a0 + b0));
@@ -510,6 +557,14 @@ namespace AdaptorPhysX
                 a1 += dir * front;
                 b1 += dir * front;
             }
+            _strokeTravel += travel;
+            // The blade normal flips when the stroke reverses; the labels keep the stroke's orientation.
+            float3 normal = math.normalizesafe(math.cross(b0 - a0, b1 - a0) + math.cross(b1 - a0, a1 - a0));
+            float orientation = math.dot(normal, _strokeNormal) < 0.0f ? -1.0f : 1.0f;
+            if (math.lengthsq(normal) > 0.5f)
+            {
+                _strokeNormal = normal * orientation;
+            }
             using var count = new NativeArray<int>(1, Allocator.TempJob);
             new CutJob
             {
@@ -522,6 +577,14 @@ namespace AdaptorPhysX
                 EdgeCorners = _tables.EdgeCorners,
                 Dims = Grid.Dims,
                 A0 = a0, B0 = b0, A1 = a1, B1 = b1,
+                StrokeSide = StrokeSide,
+                StrokeTravel = StrokeTravel,
+                Travel = _strokeTravel,
+                // Tissue dragged along by the blade is passed over several cells of blade travel.
+                LabelTravel = 8.0f * CellSize,
+                // Wide enough that a node next to a labelled one is labelled too while the tissue moves.
+                Band = 3.0f * CellSize,
+                Orientation = orientation,
                 Severed = Severed,
                 EdgeT = EdgeT,
                 EdgeNormal = EdgeNormal,
@@ -674,6 +737,7 @@ namespace AdaptorPhysX
             var nodeMass = new NativeList<float>(math.max(NodeCount, 16), Allocator.TempJob);
             var copyParent = new NativeList<int>(Copies.Length + 16, Allocator.TempJob);
             float h = Grid.CellSize;
+            _massDensity = Parameters.Density;
 
             new TopologyJob
             {
@@ -689,7 +753,7 @@ namespace AdaptorPhysX
                 Dims = Grid.Dims,
                 Origin = Grid.Origin,
                 CellSize = h,
-                CellMass = Parameters.Density * h * h * h,
+                CellMass = _massDensity * h * h * h,
                 HasOld = hasOld,
                 OldRange = CellCopyRange,
                 OldCopies = Copies.AsArray(),
@@ -710,8 +774,12 @@ namespace AdaptorPhysX
             var inverseMass = new NativeArray<float>(count, Allocator.Persistent);
             var kinematicId = new NativeArray<int>(count, Allocator.Persistent);
             var kinematicLocal = new NativeArray<float3>(count, Allocator.Persistent);
+            var strokeSide = new NativeArray<sbyte>(count, Allocator.Persistent);
+            var strokeTravel = new NativeArray<float>(count, Allocator.Persistent);
             using (var empty3 = new NativeArray<float3>(0, Allocator.TempJob))
             using (var emptyI = new NativeArray<int>(0, Allocator.TempJob))
+            using (var emptyS = new NativeArray<sbyte>(0, Allocator.TempJob))
+            using (var emptyF = new NativeArray<float>(0, Allocator.TempJob))
             {
                 new RemapNodesJob
                 {
@@ -723,6 +791,8 @@ namespace AdaptorPhysX
                     OldVelocities = hasOld ? Velocities : empty3,
                     OldKinematicId = hasOld ? KinematicId : emptyI,
                     OldKinematicLocal = hasOld ? KinematicLocal : empty3,
+                    OldStrokeSide = hasOld ? StrokeSide : emptyS,
+                    OldStrokeTravel = hasOld ? StrokeTravel : emptyF,
                     RestToWorld = RestToWorld,
                     Positions = positions,
                     Previous = previous,
@@ -730,6 +800,8 @@ namespace AdaptorPhysX
                     InverseMass = inverseMass,
                     KinematicId = kinematicId,
                     KinematicLocal = kinematicLocal,
+                    StrokeSide = strokeSide,
+                    StrokeTravel = strokeTravel,
                 }.Schedule(count, 256).Complete();
             }
 
@@ -765,6 +837,8 @@ namespace AdaptorPhysX
             InverseMass = inverseMass;
             KinematicId = kinematicId;
             KinematicLocal = kinematicLocal;
+            StrokeSide = strokeSide;
+            StrokeTravel = strokeTravel;
             RestPositions = new NativeArray<float3>(nodeRest.AsArray(), Allocator.Persistent);
             _weights = new NativeArray<float>(count, Allocator.Persistent);
             NodeReal = new NativeArray<byte>(count, Allocator.Persistent);
@@ -810,6 +884,8 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref InverseMass);
             DisposeIfCreated(ref KinematicId);
             DisposeIfCreated(ref KinematicLocal);
+            DisposeIfCreated(ref StrokeSide);
+            DisposeIfCreated(ref StrokeTravel);
             DisposeIfCreated(ref _weights);
             DisposeIfCreated(ref NodeReal);
             DisposeIfCreated(ref PieceId);

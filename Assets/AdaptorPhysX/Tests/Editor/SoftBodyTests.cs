@@ -122,6 +122,126 @@ namespace AdaptorPhysX.Tests
             Assert.AreEqual(expected, sag, 0.3f * expected, $"sag {sag * 1000:0.00} mm, expected {expected * 1000:0.00} mm");
         }
 
+        [Test]
+        public void DensityChangeAppliesOnTheNextStep()
+        {
+            // Self-weight sag is proportional to the density: doubling it at runtime doubles the sag
+            // without a topology rebuild.
+            var parameters = SoftBodyParameters.Default;
+            parameters.PoissonRatio = 0.0f;
+            parameters.YoungsModulus = 1.0e4f;
+            parameters.Damping = 5.0f;
+            SoftBodySimulation sim = CreateBox(new float3(Size), parameters, Resolution);
+            float bottom = float.MaxValue, top = float.MinValue;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                bottom = math.min(bottom, sim.Positions[i].y);
+                top = math.max(top, sim.Positions[i].y);
+            }
+            var clamped = new List<int>();
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                if (sim.Positions[i].y < bottom + 1e-4f)
+                {
+                    clamped.Add(i);
+                }
+            }
+            sim.Attach(clamped, 1, float4x4.identity);
+            float topBefore = TopCenterHeight(sim, top);
+            StepFrames(sim, 240);
+            float sag = topBefore - TopCenterHeight(sim, top);
+
+            parameters.Density *= 2.0f;
+            sim.Parameters = parameters;
+            StepFrames(sim, 240);
+            float heavySag = topBefore - TopCenterHeight(sim, top);
+            Assert.AreEqual(2.0f, heavySag / sag, 0.2f, $"sag {sag * 1000:0.00} mm, doubled density {heavySag * 1000:0.00} mm");
+        }
+
+        [Test]
+        public void PreStrainChangeAppliesOnTheNextStep()
+        {
+            // A free body with a 10 % rest-shape contraction shrinks to 90 % of its size.
+            var parameters = SoftBodyParameters.Default;
+            parameters.Gravity = float3.zero;
+            parameters.Damping = 5.0f;
+            SoftBodySimulation sim = CreateBox(new float3(Size), parameters, Resolution);
+            float before = MeanDistanceFromCentroid(sim);
+            parameters.PreStrain = 0.1f;
+            sim.Parameters = parameters;
+            StepFrames(sim, 120);
+            AssertFinite(sim);
+            Assert.AreEqual(0.9f, MeanDistanceFromCentroid(sim) / before, 0.01f);
+        }
+
+        [Test]
+        public void RebuildAppliesResolutionAndKeepsPins()
+        {
+            var bodyObject = new GameObject("Rebuild Test", typeof(MeshFilter), typeof(MeshRenderer));
+            var pinObject = new GameObject("Rebuild Test Pin");
+            Mesh mesh = MeshUtil.CreateBox(new Vector3(0.1f, 0.05f, 0.08f), 4);
+            ApxSoftBody body = null;
+            try
+            {
+                bodyObject.GetComponent<MeshFilter>().sharedMesh = mesh;
+                pinObject.transform.position = new Vector3(-0.05f, 0.0f, 0.0f);
+                var pin = pinObject.AddComponent<BoxCollider>();
+                pin.size = new Vector3(0.03f, 0.2f, 0.2f);
+                Physics.SyncTransforms();
+                body = bodyObject.AddComponent<ApxSoftBody>();
+                body.resolution = 8;
+                body.pinColliders = new Collider[] { pin };
+                body.Initialize();
+                int cells = body.Simulation.CellCount;
+                int pinned = CountPinned(body.Simulation);
+                Assert.Greater(pinned, 0);
+
+                body.resolution = 12;
+                body.Rebuild();
+                Assert.IsTrue(body.IsInitialized);
+                Assert.Greater(body.Simulation.CellCount, cells, "resolution not applied");
+                Assert.Greater(CountPinned(body.Simulation), pinned, "pins not applied to the new lattice");
+                body.Simulate(Dt);
+                body.UpdateRender();
+                AssertFinite(body.Simulation);
+            }
+            finally
+            {
+                // Edit mode calls no OnDestroy: release the body so it leaves ApxSoftBody.Active.
+                body?.Release();
+                Object.DestroyImmediate(bodyObject);
+                Object.DestroyImmediate(pinObject);
+                Object.DestroyImmediate(mesh);
+            }
+        }
+
+        private static int CountPinned(SoftBodySimulation sim)
+        {
+            int count = 0;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                count += sim.KinematicId[i] > SoftBodySimulation.GrabFrame ? 1 : 0;
+            }
+            return count;
+        }
+
+        /// <summary>Size measure that scales with the body: the bounding box is skewed by corner nodes of nearly empty cells.</summary>
+        private static float MeanDistanceFromCentroid(SoftBodySimulation sim)
+        {
+            float3 centroid = float3.zero;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                centroid += sim.Positions[i];
+            }
+            centroid /= sim.NodeCount;
+            float sum = 0.0f;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                sum += math.distance(sim.Positions[i], centroid);
+            }
+            return sum / sim.NodeCount;
+        }
+
         private static float TopCenterHeight(SoftBodySimulation sim, float restTop)
         {
             float sum = 0.0f;
@@ -210,6 +330,45 @@ namespace AdaptorPhysX.Tests
             Assert.AreEqual(2, pieces.Count, "piece sizes " + string.Join(", ", pieces));
             StepFrames(sim, 10);
             AssertFinite(sim);
+        }
+
+        [Test]
+        public void FullCutOfABodyLyingOnAColliderSeparates()
+        {
+            // The box 64 of the benchmark: after landing, friction shifts a layer of nodes across the
+            // blade plane while the blade sweeps along it. Within the stroke the nodes keep the side
+            // they were on when the blade passed them, so no edge joins the two sides.
+            float3 size = new float3(0.15f, 0.06f, 0.1f);
+            SoftBodySimulation sim = CreateBox(size, SoftBodyParameters.Default, 64, out _, out _, out _, out _, 0.006f);
+            using var floor = new NativeArray<ColliderShape>(new[]
+            {
+                ColliderShape.Box(new float3(0.0f, -0.5f, 0.0f), quaternion.identity, new float3(1.0f, 0.5f, 1.0f), 0.6f),
+            }, Allocator.Persistent);
+            StepFrames(sim, 90, floor);
+
+            float h = sim.CellSize;
+            float3 lo = sim.BoundsMin, hi = sim.BoundsMax;
+            // The blade plane runs through the middle of the central cell layer of the rest lattice.
+            float z = math.transform(sim.RestToWorld, sim.Grid.Origin + ((float3)(sim.Grid.Dims / 2) + 0.5f) * h).z;
+            float3 top = new float3(0.0f, hi.y + 2.0f * h, z), bottom = new float3(0.0f, lo.y - 2.0f * h, z);
+            const int frames = 60;
+            float3 previous = new float3(lo.x - 2.0f * h, 0.0f, 0.0f);
+            for (int f = 1; f <= frames; f++)
+            {
+                float3 x = new float3(math.lerp(lo.x - 2.0f * h, hi.x + 2.0f * h, f / (float)frames), 0.0f, 0.0f);
+                sim.Cut(previous + top, previous + bottom, x + top, x + bottom, 1);
+                previous = x;
+                StepFrames(sim, 1, floor);
+            }
+            AssertFinite(sim);
+            List<int> pieces = sim.PieceSizes();
+            int total = 0;
+            foreach (int piece in pieces)
+            {
+                total += piece;
+            }
+            int large = pieces.FindAll(piece => piece >= 0.02f * total).Count;
+            Assert.AreEqual(2, large, "piece sizes " + string.Join(", ", pieces));
         }
 
         [Test]
