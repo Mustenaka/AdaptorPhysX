@@ -70,24 +70,121 @@
 |---|---|---|---|---|
 | MED-7 | 切口精度 | 分辨率上限 64（`ApxSoftBody.cs:22` 的 Inspector 范围），0.15 m 的物体约 2.3 mm 一个体素；薄于一个体素的结构无法分离（DESIGN 4.3 节）；刀路在体素内弯曲时切口为折线（DESIGN 第 7 节） | 未开始 | 切口附近局部加密 lattice；弯曲刀路的切口误差小于设定值 |
 | MED-8 | 切割阻力与切割力 | 扫掠面与棱相交即断开，组织不先压陷；没有切割力输出 | 未开始 | 切入前组织压陷，切入条件取决于刀锋参数与组织韧性；输出刀刃受力 |
-| MED-9 | 器械种类 | 只有线段刀刃（`ApxScalpel`）。缺：剪刀（两刃闭合）、电刀与超声刀（删除体素）、穿刺针（插入不切开）、缝合（重新连接断棱，当前拓扑连通只减少）、夹闭器与吻合器 | 未开始 | 每种器械一个标准场景截图与 EditMode 测试 |
+| MED-9 | 器械种类 | 只有线段刀刃（`ApxScalpel`）。缺：剪刀（两刃闭合）、电刀与超声刀（删除体素）、穿刺针（插入不切开）、夹闭器与吻合器。缝合见 3.3 节 | 未开始 | 每种器械一个标准场景截图与 EditMode 测试 |
 | MED-10 | 镊子夹持 | 半径内节点设为运动学节点（`BeginGrab`），等同固定连接 | 未开始 | 两钳口夹持，接触带摩擦，拉力超过阈值时滑脱 |
 
-### 3.3 力反馈
+### 3.3 缝合
+
+缝合由三部分组成：缝针穿刺组织、缝线在穿刺通道内滑动、收紧缝线使切口两侧对合。SUT-1 是其他条目的基础；
+SUT-5 不模拟缝线，可以在缝针与缝线之前实现，用于验证切口闭合与组织张力。
 
 | 编号 | 需求 | 现状 | 状态 | 验收 |
 |---|---|---|---|---|
-| MED-11 | 器械受力输出 | 没有。需要从约束的拉格朗日乘子 λ 与碰撞投影量汇总器械受力 | 未开始 | 压痕实验中输出的力-位移曲线与线弹性解析解一致 |
-| MED-12 | 1 kHz 触觉更新 | 没有。物理更新为 60–100 Hz，触觉设备（Touch、Force Dimension）需要 1 kHz，两者需要解耦（例如 virtual coupling） | 未开始 | 触觉线程以 1 kHz 输出力，物理帧率下降时输出连续 |
+| SUT-1 | 材料点锚定 | 抓取与钉住通过节点列表绑定到运动学帧（`Attach`，最多 32 帧，`SoftBodySimulation.cs:58`）；没有嵌入在体素副本内的材料点 | 未开始 | 材料点由（体素副本，局部坐标）定义，位置按三线性插值计算；切割后随副本继承；可作为穿刺点、缝线锚点、力反馈接触点使用 |
+| SUT-2 | 缝针穿刺 | 没有（直针穿刺见 MED-9） | 未开始 | 弧形缝针沿轨迹刺入并穿出组织，不产生切口；进针力超过阈值才刺入；针与组织之间有摩擦；记录进针点与出针点（SUT-1 材料点） |
+| SUT-3 | 缝线 | 没有。绳的仿真已冻结（ECO-5，ROADMAP 决策 3） | 未开始 | 缝线可弯曲、长度近似不变，与组织、器械和自身碰撞。开始前需修改 ROADMAP 决策 3 |
+| SUT-4 | 缝线穿过组织 | 没有 | 未开始 | 缝线在穿刺通道内滑动，带摩擦；收紧缝线时切口两侧对合 |
+| SUT-5 | 简化缝合（不模拟缝线） | 没有。另外，按 DESIGN 3.1 节，半切切口两侧属于同一块且静止距离小，不产生接触，对合后切面可能相互穿透 | 未开始 | 每一针为连接切口两侧两个材料点的距离约束，目标长度逐步减小到 0；S6 的切口在皮肤张力下被拉拢闭合；对合后两侧切面不相互穿透 |
+| SUT-6 | 打结 | 没有 | 未开始 | 判定结的形成；成结后缝线两段之间改为固定约束，松开器械后缝线张力保持 |
+| SUT-7 | 缝合后的拓扑 | 切割只减少连通（DESIGN 4.2 节），没有重新连接断棱的机制 | 未开始 | 单次训练的时长内一般不需要愈合；如需要，定义断棱重新连接与体素副本合并的规则，并保持 `positionsHash` 可复现 |
+| SUT-8 | 缝合评分指标 | 没有 | 未开始 | 针距、边距（进针点到切口边缘的距离）、进针深度、对合程度、缝线张力；与 MED-13 使用同一事件接口 |
+| SUT-9 | 标准场景 S7 | 没有 | 未开始 | 在 S6 的小切口上缝 3 针并收紧，切口闭合；加入 ROADMAP 标准场景表，截图工具输出 S7 |
 
-### 3.4 训练系统接口
+### 3.4 力反馈（计算接口）
+
+范围：只提供力的计算接口与线程间交换接口，不包含设备驱动（OpenHaptics、Force Dimension SDK 等）。
+没有实际设备，所有条目的验收都以 EditMode 测试或脚本设备完成。按编号顺序实现，每个条目可单独在一次对话中完成。
+
+约定：
+- 单位为 N、N·m、m、s，坐标为世界坐标。力的方向为组织作用在器械上的力。
+- 一个物理步内各子步结果的平均值为该步的力；可选输出逐子步序列。16 子步、60 Hz 时子步频率为 960 Hz，
+  但这些值在一帧内一次计算完成，对设备有一帧的延迟。
+- 求和不使用浮点原子操作：按批次求部分和，再按固定顺序归约，保持同一机器、同一构建下逐位可复现。
+
+| 编号 | 内容 | 现状 | 状态 | 验收 |
+|---|---|---|---|---|
+| HAP-1 | 碰撞体受力：器械（Collider）受到的力、力矩、接触中心 | 没有。碰撞投影在 `NodeStepJob`（`SolverJobs.cs:61`–`76`）中直接修改节点位置，修正量未记录 | 未开始 | 节点 i 对碰撞体 s 的位置修正 Δx（法向投影加摩擦）换算为力 `m_i Δx / h²`（h 为子步长），对节点求和取反；力矩相对碰撞体 Transform 位置。静止物体放在 Box 碰撞体上，碰撞体受力等于总重量（误差 < 2%） |
+| HAP-2 | 运动学帧受力：抓取帧、钉住区域的支座反力 | 没有。运动学节点在求解中逆质量为 0（`SolverJobs.cs:164`），作用在它们上的约束力不计算 | 未开始 | 两种候选方法：在 `SolveCellsJob` 中累加约束对运动学节点的 `λ∇C / h²`；或在步末对运动学节点计算弹性力 `−∂E/∂x`。按下面两项测试选择：用抓取提起整个物体静止后，抓取受力等于总重量（误差 < 2%）；两端钉住的物体静止时，钉住反力之和等于总重量 |
+| HAP-3 | 力的物理校验测试 | 没有 | 未开始 | EditMode 测试：自重（HAP-1、HAP-2 中的两项）；力平衡（器械力 + 钉住反力 + 重力 = 0，物体静止时）；球形压头压入组织块，力随深度单调增加，小深度下与 Hertz 接触解比较（容差 30%，与 `SelfWeightCompressionMatchesYoungsModulus` 同级）；相同输入时力逐位一致 |
+| HAP-4 | 局部线性力模型：供 1 kHz 线程在两次物理步之间计算力 | 没有 | 未开始 | 每步发布 `F(x) = F0 + K (x − x0)`，K 为 3×3 刚度（N/m）。K 的计算方法待定，候选：各接触节点法向与等效刚度的和 `Σ k n nᵀ`；相邻两步的有限差分（秩一更新）。验收：压头匀速压入时，用模型预测下一步的力，相对误差 < 10% |
+| HAP-5 | 虚拟耦合（纯计算） | 没有 | 未开始 | `F = k_c (x_proxy − x_device) + b_c (v_proxy − v_device)`，带力上限；参数由调用方按设备给出。单元测试：脚本设备沿闭合轨迹往返时，设备对用户做的净功不为正（无能量注入） |
+| HAP-6 | 线程间交换与设备抽象 | 没有 | 未开始 | 设备位姿由触觉线程写入、物理步读取；力模型由物理步发布、触觉线程读取；双缓冲，无锁，读写不阻塞主线程。`IApxHapticDevice` 预留给设备适配 |
+| HAP-7 | 无设备测试 | 没有 | 未开始 | 脚本设备（`ApxScriptedHapticDevice`）在测试线程中以 1 kHz 回放录制或脚本轨迹并记录收到的力；EditMode 测试覆盖：物理帧率从 60 Hz 降到 20 Hz 时输出力连续（相邻 1 ms 的变化小于设定值） |
+
+切割阻力与切割力输出见 MED-8，实现时复用 HAP-1 的累加方式。
+
+接口草案（名称与签名在实现时可调整）：
+
+```csharp
+// 一个物理步的受力，组织作用在器械上
+public struct ApxWrench
+{
+    public float3 Force;            // N
+    public float3 Torque;           // N·m，相对 Origin
+    public float3 Origin;           // 力矩参考点：碰撞体 Transform 位置，或运动学帧原点
+    public float3 ContactCentroid;  // 按力大小加权的接触点
+    public int ContactNodes;
+}
+
+public partial class ApxSoftBody
+{
+    // HAP-1：上一步中该碰撞体受到的力；本步未接触时返回 false
+    public bool TryGetColliderWrench(Collider collider, out ApxWrench wrench);
+    // HAP-2：抓取帧与钉住区域（pinColliders 的下标）受到的力
+    public ApxWrench GrabWrench { get; }
+    public ApxWrench GetPinWrench(int pinIndex);
+}
+
+public static class ApxHaptics
+{
+    // 所有 ApxSoftBody 对同一碰撞体的力之和
+    public static ApxWrench SumColliderWrench(Collider collider);
+}
+
+// HAP-4：局部线性力模型，每个物理步发布一次
+public struct ApxForceModel
+{
+    public double Time;        // 仿真时间，s
+    public float3 Position0;   // 发布时的器械位置
+    public float3 Force0;      // 发布时的力
+    public float3x3 Stiffness; // dF/dx，N/m
+    public float MaxForce;     // 力上限，N
+    public float3 Evaluate(float3 position);
+}
+
+// HAP-5：虚拟耦合
+public struct ApxVirtualCoupling
+{
+    public float Stiffness;    // N/m
+    public float Damping;      // N·s/m
+    public float MaxForce;     // N
+    public float3 DeviceForce(float3 proxyPosition, float3 proxyVelocity, float3 devicePosition, float3 deviceVelocity);
+}
+
+// HAP-6：设备抽象与线程间交换
+public interface IApxHapticDevice
+{
+    bool TryReadPose(out float3 position, out quaternion rotation, out double time);
+    void WriteForce(float3 force, float3 torque);
+}
+
+public sealed class ApxHapticBridge
+{
+    public void PublishModel(ApxForceModel model);            // 物理步结束后，主线程
+    public ApxForceModel LatestModel { get; }                 // 触觉线程
+    public void PublishPose(float3 position, quaternion rotation, double time); // 触觉线程
+    public bool TryGetLatestPose(out float3 position, out quaternion rotation, out double time); // 物理步开始前
+}
+```
+
+### 3.5 训练系统接口
 
 | 编号 | 需求 | 现状 | 状态 | 验收 |
 |---|---|---|---|---|
-| MED-13 | 评分事件与指标 | 没有。需要：切口长度、深度、位置，组织损伤量，超力事件 | 未开始 | 事件 API 与一个标准场景的评分输出 |
+| MED-13 | 评分事件与指标 | 没有。需要：切口长度、深度、位置，组织损伤量，超力事件，缝合指标（SUT-8） | 未开始 | 事件 API 与一个标准场景的评分输出 |
 | MED-14 | 输入录制与回放 | 同一机器、同一构建下结果逐位一致（`SameInputsGiveBitIdenticalResults`）；基准测试输出节点位置哈希。没有录制与回放 API | 部分完成 | 录制器械位姿与操作序列，回放后 `positionsHash` 与录制时一致 |
 
-### 3.5 平台
+### 3.6 平台
 
 | 编号 | 需求 | 现状 | 状态 | 验收 |
 |---|---|---|---|---|
@@ -109,7 +206,7 @@
 | CFG-7 | 硬编码常量改为参数 | `SleepSteps`、`SleepSpeed`（`ApxSoftBody.cs:90`、`92`）；接触搜索半径 1.8h、最小距离 0.8h（`SoftBodySimulation.cs:417`、`436`、`437`）；扫掠延伸 0.5h / 0.1h（`SoftBodySimulation.cs:507`）；`ContactInterval`（`SoftBodySimulation.cs:61`）；`MaxKinematicFrames`（`SoftBodySimulation.cs:58`） | 未开始 | 常量带 CFG-1 元数据，默认值不变时 `positionsHash` 不变 |
 | CFG-8 | unity-mcp 自定义工具：`apx_get_params`、`apx_set_params`、`apx_run_scenario`、`apx_benchmark` | 基准测试可通过 MCP 的代码执行调用 `ApxBenchmark.ScheduleKeepingScenes`；没有自定义工具 | 未开始 | 四个工具可用；长时间任务异步执行并可查询结果 |
 | CFG-9 | 文本描述的实验场景（刀路、参数、期望指标），batchmode 运行并输出 JSON | 基准测试输出 JSON，场景固定在代码中；标准场景截图工具（S1–S6）只输出 PNG 与日志 | 部分完成 | 场景文件定义刀路与期望指标；S1–S6 输出 JSON 指标 |
-| CFG-10 | 闭环调参示例 | 没有。依赖 MED-11 的力输出 | 未开始 | 调整材料参数，使压痕的力-位移曲线与给定文献数据的误差小于设定值 |
+| CFG-10 | 闭环调参示例 | 没有。依赖 HAP-1 的器械受力与 HAP-3 的校验 | 未开始 | 调整材料参数，使压痕的力-位移曲线与给定文献数据的误差小于设定值 |
 
 ## 5. 性能与基准测试
 
@@ -134,8 +231,9 @@
 | 2 | 切割与接触缺陷（BUG-1、BUG-2、BUG-4），之后 BUG-3 | 未开始 |
 | 3 | 参数元数据、生效时机、MCP 工具（CFG-1、CFG-2、CFG-5、CFG-6、CFG-8；同时处理 BUG-5） | 未开始 |
 | 4 | 跨物体碰撞、MeshCollider 与 SDF 器械、局部重建（ECO-1、ECO-2、PERF-5、PERF-6） | 未开始 |
-| 5 | 力反馈（MED-11、MED-12） | 未开始 |
+| 5 | 力反馈计算接口（HAP-1 至 HAP-7，按编号顺序） | 未开始 |
 | 6 | 体素材料标签 → 非线性与粘弹性材料 → 撕裂（MED-5、MED-1、MED-2、MED-6） | 未开始 |
+| 7 | 缝合：SUT-1、SUT-5、SUT-9 先行；SUT-2 至 SUT-4、SUT-6 依赖穿刺（MED-9）与缝线（ECO-5） | 未开始 |
 
 第 2 项排在参数化之前：BUG-1 与 BUG-2 影响切割结果与基准测试中的“全切结果”列，后续改动需要以此为对照。
 
@@ -144,4 +242,5 @@
 | 日期 | 提交 | 内容 |
 |---|---|---|
 | 2026-10-26 | `17fde10` | 基准测试框架（PERF-1）；基准测试与代码检查发现 BUG-1 至 BUG-5 |
-| 2026-10-26 | — | 建立本文件 |
+| 2026-10-26 | `7ee1147` | 建立本文件 |
+| 2026-10-26 | — | 新增 3.3 节缝合（SUT-1 至 SUT-9）；力反馈改为计算接口范围（3.4 节，HAP-1 至 HAP-7 与接口草案），替代原 MED-11、MED-12 |
