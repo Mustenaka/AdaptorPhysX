@@ -13,6 +13,10 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 |---|---|
 | ![S6a](docs/images/S6a_pad_incision.png) | ![S6b](docs/images/S6b_pad_retracted.png) |
 
+| 软体之间的接触 | 钢球（Rigidbody）落在组织上 | 环形器械（距离场）压入 | 粘附的平板提起组织 |
+|---|---|---|---|
+| ![S8](docs/images/S8_bodies_stacked.png) | ![S9](docs/images/S9_ball_on_tissue.png) | ![S10](docs/images/S10a_ring_pressed.png) | ![S11c](docs/images/S11c_paddle_lifting.png) |
+
 - 体积表示：稀疏六面体 lattice，每个体素按 Kuhn 剖分拆为 6 个四面体。
 - 材料模型：co-rotational XPBD（偏量项 `‖F − R‖` 与体积项 `det F − 1` 联立求解），参数为杨氏模量与泊松比。
   可选皮肤层：表面以下一定厚度内刚度更高，并带沿表面方向的预应力，小切口在张力下张开。
@@ -23,7 +27,12 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 - 渲染：原始表面网格以三线性插值嵌入体素副本，并沿切平面拆分；切面由断开棱上的交点与法线生成，
   按原始表面的有符号距离场裁剪到表面以内。切面着色器使用静止坐标的 3D 噪声，并按表面以下的深度分层着色
   （真皮、脂肪、肌肉）。
-- 接触：Unity Sphere/Capsule/Box 碰撞体（含摩擦，子步内插值位姿）；切下的块之间、折叠的组织之间的接触。
+- 接触：Unity Sphere/Capsule/Box 碰撞体（含摩擦，子步内插值位姿）；MeshCollider 与任意形状的器械
+  （有符号距离场，运行时或在编辑器中烘焙）；切下的块之间、折叠的组织之间、不同 `ApxSoftBody` 之间的接触。
+- 器械与刚体：碰撞体受到的力、力矩与接触中心（`TryGetColliderWrench`）；与非运动学 Rigidbody 的双向耦合
+  （组织托住、推开刚体）；器械表面粘附（stickiness）。
+- 材料：可选塑性（超过屈服应变的形变按速率计入静止形状）。
+- 状态快照（含切割拓扑）与 blueprint 资产（预先体素化，Start 不再体素化）。
 - 交互：手术刀（`ApxScalpel`）、钉住区域、镊子抓取（不跨越切口）。
 
 ## 环境
@@ -49,6 +58,17 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 场景内四个对象：组织块、两端钉住且带预应力的皮瓣、椭球形肝叶、放在托盘中带皮肤层的组织垫（Tissue Pad，
 用于实体组织上的小切口）。
 
+交互演示 `Assets/Samples/InteractionDemo/InteractionDemo.unity`（菜单 `AdaptorPhysX/Build Interaction Demo Scene`
+重新生成），操作与手术演示相同：
+
+| 对象 | 内容 |
+|---|---|
+| Base Block、Dropped Lobe | 肝叶落在组织块上，两个软体相互接触 |
+| Hammock、Steel Ball | 钢球（Rigidbody，0.1 kg）落在两端夹住的组织上，组织下垂并托住钢球 |
+| Pressed Block、Ring Instrument | 环形器械（MeshCollider，距离场资产 `Ring Field`）循环压入组织 |
+| Putty、Putty Press | 塑性材料被球压一次后保留压痕 |
+| Wet Tissue、Sticky Paddle | 带粘附的平板压在组织上后抬起，组织表面随之上移，超过粘附距离后脱离 |
+
 ## 在自己的场景中使用
 
 1. 在带 `MeshFilter` + `MeshRenderer` 的对象上添加 `ApxSoftBody`。网格必须闭合且 Read/Write 已开启。
@@ -61,17 +81,33 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
    自己调用 `ApxSoftBody.Cut` 时，同一次连续切割的各次调用传入相同的非 0 `stroke`，组织在切割过程中移动时也能分开。
 6. 抓取：`ApxSoftBody.BeginGrab(ray, radius, out point)` → `MoveGrab(target)` → `EndGrab()`。
 7. `allowSleep`（默认开启）：物体静止后停止步进，碰撞体移动、切割、抓取时恢复。直接修改节点数据后调用 `WakeUp()`。
+8. 器械：
+   - MeshCollider 直接可用（网格需 Read/Write，运行时按网格烘焙距离场）。复杂器械可新建 `ApxDistanceField` 资产
+     （菜单 Create → AdaptorPhysX → Distance Field，检视面板中烘焙），在器械的 Collider 上添加 `ApxColliderMaterial`
+     并引用该资产；此时 Collider 只用于包围范围查询。
+   - `ApxColliderMaterial` 还可设置该碰撞体的摩擦系数与粘附（`stickiness`、`stickDistance`）。
+   - 碰撞体带非运动学 Rigidbody 时与组织双向耦合（`twoWayCoupling`，默认开启）；此时物体每次 FixedUpdate 都步进，不受 `maxStepsPerFrame` 限制。
+   - 器械受力：`TryGetColliderWrench(collider, out ApxWrench)`；多个软体对同一碰撞体的合力用 `ApxHaptics.TrySumColliderWrench`。
+9. 多个 `ApxSoftBody` 之间默认相互接触（`collideWithBodies`，并受 `collisionLayers` 过滤）。
+10. 塑性：`plasticCreep` 大于 0 时启用，`plasticYield` 为屈服应变，`plasticRecovery` 为恢复速率，
+    `maxPlasticDeformation` 为塑性变形上限。
+11. 快照：`ApxSoftBodyState state = body.CaptureState()`，之后 `body.RestoreState(state)` 回到该状态（含切口）。
+12. Blueprint：检视面板“Bake Blueprint”生成资产并赋给 `blueprint`；网格、分辨率或缩放改变后需重新烘焙。
 
 ## 目录
 
 ```
 Assets/AdaptorPhysX/Runtime/        插件运行时（asmdef: AdaptorPhysX.Runtime）
-  ApxSoftBody.cs, ApxScalpel.cs     组件
-  Core/                             lattice、求解器、接触、拓扑、切割、渲染
+  ApxSoftBody*.cs, ApxScalpel.cs    组件（ApxSoftBody.Interaction.cs：器械、刚体、快照、blueprint）
+  ApxColliderMaterial.cs 等         碰撞材质、距离场资产、blueprint 资产、力的类型
+  SoftBodyWorld.cs                  软体之间的配对
+  Core/                             lattice、求解器、接触、拓扑、切割、渲染、距离场、刚体耦合
+Assets/AdaptorPhysX/Editor/         检视面板（blueprint 与距离场烘焙）
 Assets/AdaptorPhysX/Shaders/        切面着色器
 Assets/AdaptorPhysX/Tests/          EditMode 与 PlayMode 测试
 Assets/AdaptorPhysX/Benchmarks/     基准测试（编辑器，JSON 输出）
 Assets/Samples/SurgeryDemo/         演示场景、脚本、场景生成器、标准场景截图工具
+Assets/Samples/InteractionDemo/     交互演示场景（S8–S11）、场景生成器与截图工具
 Benchmarks/                         基准网格下载脚本；网格与结果不提交
 docs/                               设计说明、路线图、待办清单（TODO.md）、截图
 ```
@@ -87,6 +123,8 @@ docs/                               设计说明、路线图、待办清单（TO
 ```
 
 截图工具按脚本执行 `docs/ROADMAP.md` 中的标准场景 S1–S6，输出 PNG，并在日志中记录每个阶段的块大小与耗时。
+交互场景 S8–S11 用 `AdaptorPhysX.Samples.Editor.InteractionDemoCapture.CaptureBatch`（参数相同），
+编辑器内为菜单 `AdaptorPhysX/Capture Interaction Scenarios`。
 
 ## 基准测试
 

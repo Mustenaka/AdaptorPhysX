@@ -31,6 +31,15 @@ namespace AdaptorPhysX
         public float SkinThickness;
         public float SkinStiffness;
         public float SkinPreStrain;
+        /// <summary>
+        /// Plasticity: elastic strain (Frobenius norm of U - I) above which the rest shape flows,
+        /// the rate of that flow (1/s, 0 disables plasticity), the rate at which the plastic
+        /// deformation recovers (1/s) and its largest size (Frobenius norm of P - I, 0 = unlimited).
+        /// </summary>
+        public float PlasticYield;
+        public float PlasticCreep;
+        public float PlasticRecovery;
+        public float MaxPlasticDeformation;
 
         public static SoftBodyParameters Default => new SoftBodyParameters
         {
@@ -45,6 +54,10 @@ namespace AdaptorPhysX
             SkinThickness = 0.0f,
             SkinStiffness = 10.0f,
             SkinPreStrain = 0.15f,
+            PlasticYield = 0.1f,
+            PlasticCreep = 0.0f,
+            PlasticRecovery = 0.0f,
+            MaxPlasticDeformation = 0.5f,
         };
     }
 
@@ -53,7 +66,7 @@ namespace AdaptorPhysX
     /// tetrahedra per cell copy, and virtual-node duplication for cuts.
     /// Nodes live in world space; the rest space is the voxel grid space.
     /// </summary>
-    public sealed class SoftBodySimulation : IDisposable
+    public sealed partial class SoftBodySimulation : IDisposable
     {
         public const int MaxKinematicFrames = 32;
         public const int GrabFrame = 0;
@@ -263,6 +276,7 @@ namespace AdaptorPhysX
                 FramesEnd[i] = float4x4.identity;
             }
 
+            CreateInteraction();
             RebuildTopology(false);
         }
 
@@ -293,6 +307,7 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref _bucketStart);
             DisposeIfCreated(ref FramesStart);
             DisposeIfCreated(ref FramesEnd);
+            DisposeInteraction();
         }
 
         /// <summary>
@@ -327,7 +342,7 @@ namespace AdaptorPhysX
                 float3x3 nn = new float3x3(n * n.x, n * n.y, n * n.z);
                 float3x3 inverse = nn * (1.0f / bulk) + (float3x3.identity - nn) * (1.0f / tangential);
                 float stiffness = math.lerp(1.0f, math.max(p.SkinStiffness, 1e-3f), skin);
-                _cellRest[c] = inverse;
+                _cellRest[c] = WithPlasticity(c, inverse);
                 _cellScale[c] = bulk * tangential * tangential * stiffness;
             }
         }
@@ -358,17 +373,23 @@ namespace AdaptorPhysX
         private static bool Apart(VoxelGrid grid, int a, int b) => math.cmax(math.abs(grid.Cells[a] - grid.Cells[b])) >= 2;
 
         /// <summary>Advances the body by <paramref name="dt"/> and waits for the result.</summary>
-        public void Step(float dt, int substeps, NativeArray<ColliderShape> shapes)
+        public void Step(float dt, int substeps, NativeArray<ColliderShape> shapes, NativeArray<float> fields = default,
+            NativeArray<RigidBodyState> rigidBodies = default)
         {
-            ScheduleStep(dt, substeps, shapes);
+            ScheduleStep(dt, substeps, shapes, fields, rigidBodies);
             CompleteStep();
         }
 
         /// <summary>
         /// Schedules one step of <paramref name="dt"/> with small XPBD substeps. The shapes are
-        /// copied, so the caller may reuse its array. Every other method completes the step first.
+        /// copied, so the caller may reuse its array. <paramref name="fields"/> holds the values of the
+        /// distance-field shapes (see <see cref="ColliderShape.FieldOffset"/>); it is read by the jobs and
+        /// must stay valid until the step completes. <paramref name="rigidBodies"/> (copied) are the
+        /// dynamic bodies of shapes with <see cref="ColliderShape.DynamicBody"/>; their response is read
+        /// with <see cref="TryGetRigidBodyResponse"/>. Every other method completes the step first.
         /// </summary>
-        public void ScheduleStep(float dt, int substeps, NativeArray<ColliderShape> shapes)
+        public void ScheduleStep(float dt, int substeps, NativeArray<ColliderShape> shapes, NativeArray<float> fields = default,
+            NativeArray<RigidBodyState> rigidBodies = default)
         {
             CompleteStep();
             _stepTimer = Stopwatch.StartNew();
@@ -474,6 +495,7 @@ namespace AdaptorPhysX
                 }.Schedule(NodeCount, 128, handle);
             }
 
+            handle = ConfigureInteraction(ref node, handle, dt, substeps, fields, rigidBodies);
             for (int s = 0; s <= substeps; s++)
             {
                 // Finish substep s-1 (contacts, colliders, velocity) and predict substep s.
@@ -488,7 +510,8 @@ namespace AdaptorPhysX
                 {
                     handle = copy.Schedule(NodeCount, 512, handle);
                 }
-                handle = node.Schedule(NodeCount, 256, handle);
+                handle = node.Schedule(NodeCount, NodeBatch, handle);
+                handle = ScheduleRigidCoupling(handle, s, substeps, h, dt);
                 if (s == substeps)
                 {
                     break;
@@ -504,6 +527,7 @@ namespace AdaptorPhysX
                     handle = solve.Schedule(count, 1, handle);
                 }
             }
+            handle = ScheduleAfterSubsteps(handle, dt);
             handle = new BoundsJob { Positions = Positions, Velocities = Velocities, NodeReal = NodeReal, Bounds = _bounds }.Schedule(handle);
             StepCount++;
             _pending = handle;
@@ -869,6 +893,7 @@ namespace AdaptorPhysX
             nodeParent.Dispose();
             nodeRest.Dispose();
             nodeMass.Dispose();
+            RebuildInteractionNodes();
 
             new BoundsJob { Positions = Positions, Velocities = Velocities, NodeReal = NodeReal, Bounds = _bounds }.Run();
             TopologyVersion++;
@@ -895,6 +920,7 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref _contactCount);
             DisposeIfCreated(ref _snapshot);
             DisposeIfCreated(ref _bucketEntries);
+            DisposeInteractionNodes();
         }
 
         private static void DisposeIfCreated<T>(ref NativeArray<T> array) where T : struct

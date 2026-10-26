@@ -36,6 +36,38 @@ namespace AdaptorPhysX
         [ReadOnly] public NativeArray<float> ContactDistance;
         [ReadOnly] public NativeArray<int> ContactCount;
         public bool Contacts;
+        /// <summary>Values of the distance-field shapes.</summary>
+        [ReadOnly] public NativeArray<float> Fields;
+        /// <summary>Collider impulses per (node block, shape); see <see cref="SoftBodySimulation.NodeBatch"/>.</summary>
+        [NativeDisableParallelForRestriction] public NativeArray<ColliderImpulse> Impulses;
+        public bool AccumulateImpulses;
+        /// <summary>
+        /// 1 for nodes held by a sticky collider: they touched it and have not been pulled further
+        /// than its stick distance since. Updated only when a shape is sticky.
+        /// </summary>
+        public NativeArray<byte> Stuck;
+        public bool Sticky;
+
+        /// <summary>Contact with other soft bodies (see <see cref="BodyContacts"/>).</summary>
+        public bool BodyContacts;
+        [ReadOnly] public NativeArray<float> NodeSdf;
+        [ReadOnly] public NativeArray<int> PartnerCandidate;
+        [ReadOnly] public NativeArray<int> PartnerCandidateCount;
+        [ReadOnly] public NativeArray<PartnerCell> PartnerCells;
+        [ReadOnly] public NativeArray<float3> PartnerCorner;
+        [ReadOnly] public NativeArray<float3> PartnerVelocity;
+        [ReadOnly] public NativeArray<float> PartnerSdf;
+        [ReadOnly] public NativeArray<float> PartnerWeight;
+        /// <summary>Length of the whole step, to place a substep in time for the partners' motion.</summary>
+        public float StepDt;
+        /// <summary>Largest push out of another body per substep; deeper overlaps resolve over several substeps.</summary>
+        public float MaxBodyPush;
+        /// <summary>
+        /// Per node, the part of its overlap with other bodies left to them in this step. The partner's
+        /// copy does not move during the step, so without it each body would resolve the whole overlap
+        /// instead of its share, and the two together twice that.
+        /// </summary>
+        public NativeArray<float> PartnerShare;
 
         public bool Finish;
         public bool Predict;
@@ -58,21 +90,51 @@ namespace AdaptorPhysX
                 {
                     x += ContactCorrection(i);
                 }
+                if (BodyContacts)
+                {
+                    x = BodyContact(i, x);
+                }
+                bool held = false;
                 for (int s = 0; s < Shapes.Length; s++)
                 {
                     ColliderShape shape = Shapes[s];
-                    float d = shape.Distance(x, FinishTime, out float3 n);
+                    // A dynamic body's pose is set substep by substep: A1 is the current one.
+                    bool dynamic = shape.DynamicBody > 0;
+                    float d = shape.Distance(x, dynamic ? 1.0f : FinishTime, Fields, out float3 n);
+                    float3 before = x;
+                    float pushed;
                     if (d >= Margin)
                     {
-                        continue;
+                        // Adhesion: a node that touched a sticky collider is pulled back towards its
+                        // surface until it is further away than the stick distance.
+                        if (!(shape.Stickiness > 0.0f) || Stuck[i] == 0 || d >= Margin + shape.StickDistance)
+                        {
+                            continue;
+                        }
+                        pushed = (d - Margin) * shape.Stickiness;
+                        x -= n * pushed;
+                        held = true;
                     }
-                    float penetration = Margin - d;
-                    x += n * penetration;
-                    float3 relative = (x - Previous[i]) - shape.Displacement(FinishTimePrev, FinishTime);
+                    else
+                    {
+                        pushed = Margin - d;
+                        x += n * pushed;
+                        held |= shape.Stickiness > 0.0f;
+                    }
+                    float3 relative = (x - Previous[i]) -
+                                      (dynamic ? MaterialPointMotion(shape, x) : shape.Displacement(FinishTimePrev, FinishTime));
                     float3 tangent = relative - math.dot(relative, n) * n;
                     float slip = math.length(tangent);
-                    float limit = shape.Friction * penetration;
+                    float limit = shape.Friction * pushed;
                     x -= slip <= limit ? tangent : tangent * (limit / slip);
+                    if (AccumulateImpulses)
+                    {
+                        AddImpulse(i, s, x, x - before, shape.A1);
+                    }
+                }
+                if (Sticky)
+                {
+                    Stuck[i] = (byte)(held ? 1 : 0);
                 }
                 Positions[i] = x;
                 Velocities[i] = (x - Previous[i]) / Dt;
@@ -96,6 +158,59 @@ namespace AdaptorPhysX
             Previous[i] = Positions[i];
             Positions[i] = Positions[i] + v * Dt;
             Velocities[i] = v;
+        }
+
+        /// <summary>Motion during the substep of the point of a dynamic body's collider now at <paramref name="x"/> (translation and rotation).</summary>
+        private static float3 MaterialPointMotion(ColliderShape shape, float3 x)
+        {
+            float3 local = math.mul(math.conjugate(shape.R1), x - shape.A1);
+            return x - (shape.A0 + math.mul(shape.R0, local));
+        }
+
+        /// <summary>Momentum m dx / h the node received from shape <paramref name="s"/>, added to the node's block.</summary>
+        private void AddImpulse(int i, int s, float3 x, float3 dx, float3 origin)
+        {
+            float w = Weights[i];
+            if (!(w > 0.0f))
+            {
+                return;
+            }
+            int index = i / SoftBodySimulation.NodeBatch * Shapes.Length + s;
+            ColliderImpulse impulse = Impulses[index];
+            impulse.Add(x, origin, dx * (1.0f / (w * Dt)), math.length(dx));
+            Impulses[index] = impulse;
+        }
+
+        /// <summary>
+        /// Pushes the node out of the other bodies' cells, taking its mass-weighted share, with
+        /// friction against the partner's motion (see <see cref="AdaptorPhysX.BodyContacts"/>).
+        /// </summary>
+        private float3 BodyContact(int i, float3 x)
+        {
+            int count = PartnerCandidateCount[i];
+            float wi = Weights[i];
+            if (count == 0 || !(wi > 0.0f))
+            {
+                return x;
+            }
+            float depth = AdaptorPhysX.BodyContacts.Penetration(x, NodeSdf[i], i * AdaptorPhysX.BodyContacts.MaxCandidates,
+                count, FinishTime * StepDt, PartnerCandidate, PartnerCells, PartnerCorner, PartnerVelocity, PartnerSdf,
+                PartnerWeight, out float3 n, out float partnerWeight, out float3 partnerVelocity, out float friction);
+            // The partner resolves its share of the overlap in its own step.
+            depth -= PartnerShare[i];
+            if (!(depth > 0.0f))
+            {
+                return x;
+            }
+            float share = wi / (wi + partnerWeight);
+            float push = math.min(depth * share, MaxBodyPush);
+            PartnerShare[i] += push * (1.0f - share) / share;
+            x += n * push;
+            float3 relative = (x - Previous[i]) - partnerVelocity * Dt;
+            float3 tangent = relative - math.dot(relative, n) * n;
+            float slip = math.length(tangent);
+            float limit = friction * push;
+            return x - (slip <= limit ? tangent : tangent * (limit / slip));
         }
 
         /// <summary>Jacobi projection of the node's piece contacts against the post-solve snapshot.</summary>

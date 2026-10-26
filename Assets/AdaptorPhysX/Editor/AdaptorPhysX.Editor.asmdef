@@ -1,0 +1,19 @@
+{
+    "name": "AdaptorPhysX.Editor",
+    "rootNamespace": "AdaptorPhysX.Editor",
+    "references": [
+        "AdaptorPhysX.Runtime",
+        "Unity.Mathematics"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

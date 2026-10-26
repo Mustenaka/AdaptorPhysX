@@ -44,14 +44,14 @@
 
 | 编号 | 能力 | Obi | AdaptorPhysX 现状 | 状态 | 验收 |
 |---|---|---|---|---|---|
-| ECO-1 | 不同物体之间的碰撞 | 同一 solver 内全部物体互相碰撞 | 没有（DESIGN 第 7 节）。切下的块只与同一物体的其他块接触 | 未开始 | 两个 `ApxSoftBody` 相互挤压不穿透；属于 M3 |
-| ECO-2 | 碰撞体类型 | 支持 MeshCollider 与距离场 | 只有 Sphere、Capsule、Box（`ApxSoftBody.cs:401`–`418`） | 未开始 | MeshCollider 或 SDF 形状的器械（钳口、弯剪）与组织接触 |
-| ECO-3 | 与刚体的双向耦合 | 有 | 单向：组织不对 Rigidbody 施加力 | 未开始 | 组织能推动带 Rigidbody 的器械 |
+| ECO-1 | 不同物体之间的碰撞 | 同一 solver 内全部物体互相碰撞 | 已实现（DESIGN 9.4 节）：每轮步进开始时复制对方附近的体素副本，节点按对方静止 SDF 在形变四面体上的插值推出，按质量分担，`collideWithBodies` 与 `collisionLayers` 过滤。`StackedBodiesRestOnEachOther`：小块停在大块上（中心 57.6 mm，关闭接触时 18.4 mm）；S8 中肝叶停在组织块上。限制：切面不在对方 SDF 中；接触面上质量小的边界节点每步末仍有往复运动，接触的物体不休眠 | 已完成 | 两个 `ApxSoftBody` 相互挤压不穿透；属于 M3 |
+| ECO-2 | 碰撞体类型 | 支持 MeshCollider 与距离场 | 已实现（DESIGN 9.1 节）：MeshCollider 运行时按网格烘焙距离场；`ApxDistanceField` 资产（编辑器中烘焙）经 `ApxColliderMaterial` 用于任意 Collider。`DistanceFieldMatchesTheBoxDistance`、`DistanceFieldFloorHoldsTheBodyLikeABoxCollider`；S10 环形器械压入组织 | 已完成 | MeshCollider 或 SDF 形状的器械（钳口、弯剪）与组织接触 |
+| ECO-3 | 与刚体的双向耦合 | 有 | 已实现（DESIGN 9.3 节）：非运动学 Rigidbody 在步内由软体逐子步推进，步末把组织造成的位移、转动与速度修正加到 PhysX 的结果上（`twoWayCoupling`）。`RigidBodyRestsOnPinnedTissueAndBendsIt`：组织对钢球的力 0.976 N（重量 0.981 N），关闭耦合时钢球穿过组织；S9。限制：Rigidbody 的 Freeze 约束不参与 | 已完成 | 组织能推动带 Rigidbody 的器械 |
 | ECO-4 | GPU 后端 | Obi 7 有 Compute Shader 后端 | 没有 | 未开始 | 属于 M4 |
 | ECO-5 | 布料、绳、流体 | 有 | 已冻结（ROADMAP 决策 3）。医疗场景用途：膜与筋膜（布料）、缝线与血管（绳）、出血（流体） | 未开始 | 需先修改 ROADMAP 决策 3 |
-| ECO-6 | 粘附与塑性 | 碰撞材质有 stickiness，softbody 有 plasticity | 没有 | 未开始 | 湿组织粘附器械；按压后保留残余形变 |
-| ECO-7 | 编辑器工具 | blueprint 预计算；用笔刷绘制质量、钉住区域 | 每次 Start 重新体素化（M5 列出“blueprint 资产缓存体素化结果”）；钉住区域只能用 Collider 选取 | 未开始 | 体素化结果存为资产，Start 不再体素化；在编辑器中绘制钉住区域与材料 |
-| ECO-8 | 状态快照与撤销 | 有 | 没有 API | 未开始 | 保存与恢复仿真状态（含切割拓扑），恢复后 `positionsHash` 与保存时一致 |
+| ECO-6 | 粘附与塑性 | 碰撞材质有 stickiness，softbody 有 plasticity | 已实现（DESIGN 9.5 节）：`ApxColliderMaterial.stickiness`、`stickDistance`（接触过的节点被拉回，超过粘附距离后脱离）；`plasticYield`、`plasticCreep`、`plasticRecovery`、`maxPlasticDeformation`（每个体素的塑性伸长，体积不变）。`StickyInstrumentPullsTheSurfaceAfterIt`（粘附时表面上移 1.00 mm，无粘附时 −0.05 mm）、`PressedPlasticBodyKeepsADent`（压痕 11.5 mm，弹性 0.12 mm）；S11 | 已完成 | 湿组织粘附器械；按压后保留残余形变 |
+| ECO-7 | 编辑器工具 | blueprint 预计算；用笔刷绘制质量、钉住区域 | blueprint 已实现（DESIGN 9.7 节）：`ApxSoftBodyBlueprint` 资产保存细分网格与体素化结果，检视面板“Bake Blueprint”，匹配时 Start 不细分、不体素化，结果逐位一致（`BlueprintGivesTheSameSimulationWithoutVoxelizing`）。未实现：在编辑器中用笔刷绘制钉住区域与材料（钉住区域仍用 Collider 选取） | 部分完成 | 体素化结果存为资产，Start 不再体素化；在编辑器中绘制钉住区域与材料 |
+| ECO-8 | 状态快照与撤销 | 有 | 已实现（DESIGN 9.6 节）：`SoftBodySimulation` / `ApxSoftBody` 的 `CaptureState`、`RestoreState`，含切割拓扑、塑性与抓取状态。`RestoredStateRepeatsTheSameSteps`：切割、恢复后再步进的节点位置与保存后直接步进逐位一致；`RestoredBodyRendersItsTopology` | 已完成 | 保存与恢复仿真状态（含切割拓扑），恢复后 `positionsHash` 与保存时一致 |
 
 ## 3. 医疗仿真需求
 
@@ -105,7 +105,7 @@ SUT-5 不模拟缝线，可以在缝针与缝线之前实现，用于验证切�
 
 | 编号 | 内容 | 现状 | 状态 | 验收 |
 |---|---|---|---|---|
-| HAP-1 | 碰撞体受力：器械（Collider）受到的力、力矩、接触中心 | 没有。碰撞投影在 `NodeStepJob`（`SolverJobs.cs:61`–`76`）中直接修改节点位置，修正量未记录 | 未开始 | 节点 i 对碰撞体 s 的位置修正 Δx（法向投影加摩擦）换算为力 `m_i Δx / h²`（h 为子步长），对节点求和取反；力矩相对碰撞体 Transform 位置。静止物体放在 Box 碰撞体上，碰撞体受力等于总重量（误差 < 2%） |
+| HAP-1 | 碰撞体受力：器械（Collider）受到的力、力矩、接触中心 | 已实现（DESIGN 9.2 节）：节点修正的冲量按 256 个节点一块累加、步末按固定顺序求和；`ApxSoftBody.TryGetColliderWrench`、`ColliderWrenches`、`ApxHaptics.TrySumColliderWrench`、`SoftBodySimulation.TryGetShapeWrench`。力矩参考点为碰撞体形状的参考点（球、盒、距离场为中心，胶囊为第一个端点），与下方草案中的 Transform 位置不同。`ColliderForceEqualsTheWeightOfARestingBody`：−9.790 N，重量 9.810 N（偏差 0.2%） | 已完成 | 节点 i 对碰撞体 s 的位置修正 Δx（法向投影加摩擦）换算为力 `m_i Δx / h²`（h 为子步长），对节点求和取反；力矩相对碰撞体 Transform 位置。静止物体放在 Box 碰撞体上，碰撞体受力等于总重量（误差 < 2%） |
 | HAP-2 | 运动学帧受力：抓取帧、钉住区域的支座反力 | 没有。运动学节点在求解中逆质量为 0（`SolverJobs.cs:164`），作用在它们上的约束力不计算 | 未开始 | 两种候选方法：在 `SolveCellsJob` 中累加约束对运动学节点的 `λ∇C / h²`；或在步末对运动学节点计算弹性力 `−∂E/∂x`。按下面两项测试选择：用抓取提起整个物体静止后，抓取受力等于总重量（误差 < 2%）；两端钉住的物体静止时，钉住反力之和等于总重量 |
 | HAP-3 | 力的物理校验测试 | 没有 | 未开始 | EditMode 测试：自重（HAP-1、HAP-2 中的两项）；力平衡（器械力 + 钉住反力 + 重力 = 0，物体静止时）；球形压头压入组织块，力随深度单调增加，小深度下与 Hertz 接触解比较（容差 30%，与 `SelfWeightCompressionMatchesYoungsModulus` 同级）；相同输入时力逐位一致 |
 | HAP-4 | 局部线性力模型：供 1 kHz 线程在两次物理步之间计算力 | 没有 | 未开始 | 每步发布 `F(x) = F0 + K (x − x0)`，K 为 3×3 刚度（N/m）。K 的计算方法待定，候选：各接触节点法向与等效刚度的和 `Σ k n nᵀ`；相邻两步的有限差分（秩一更新）。验收：压头匀速压入时，用模型预测下一步的力，相对误差 < 10% |
@@ -204,7 +204,7 @@ public sealed class ApxHapticBridge
 | CFG-3 | 从元数据生成 JSON Schema 与参数文档 | 没有 | 未开始 | 生成的 schema 覆盖 CFG-1 的全部参数 |
 | CFG-4 | 材料预设（JSON，附文献出处），组件引用预设并局部覆盖 | 没有 | 未开始 | liver、skin、fat 三个预设；预设文件可文本比较 |
 | CFG-5 | `GetParams` / `SetParams` 接口 | 没有 | 未开始 | `SetParams` 返回每个参数的结果：已生效、需重建、超出范围 |
-| CFG-6 | 只读派生量 | 已有：`CellSize`、`LastStepMilliseconds`、`LastTopologyMilliseconds`、`LastInitializeTimings`。缺：子步 dt、总质量、稳定性数 μΔt²/(ρh²)（DESIGN 第 3 节） | 部分完成 | 派生量可通过 CFG-5 的接口读取 |
+| CFG-6 | 只读派生量 | 已有：`CellSize`、`LastStepMilliseconds`、`LastTopologyMilliseconds`、`LastInitializeTimings`、`TotalMass`。缺：子步 dt、稳定性数 μΔt²/(ρh²)（DESIGN 第 3 节） | 部分完成 | 派生量可通过 CFG-5 的接口读取 |
 | CFG-7 | 硬编码常量改为参数 | `SleepSteps`、`SleepSpeed`（`ApxSoftBody.cs:90`、`92`）；接触搜索半径 1.8h、最小距离 0.8h（`SoftBodySimulation.cs:417`、`436`、`437`）；扫掠延伸 0.5h / 0.1h（`SoftBodySimulation.cs:507`）；`ContactInterval`（`SoftBodySimulation.cs:61`）；`MaxKinematicFrames`（`SoftBodySimulation.cs:58`） | 未开始 | 常量带 CFG-1 元数据，默认值不变时 `positionsHash` 不变 |
 | CFG-8 | unity-mcp 自定义工具：`apx_get_params`、`apx_set_params`、`apx_run_scenario`、`apx_benchmark` | 基准测试可通过 MCP 的代码执行调用 `ApxBenchmark.ScheduleKeepingScenes`；没有自定义工具 | 未开始 | 四个工具可用；长时间任务异步执行并可查询结果 |
 | CFG-9 | 文本描述的实验场景（刀路、参数、期望指标），batchmode 运行并输出 JSON | 基准测试输出 JSON，场景固定在代码中；标准场景截图工具（S1–S6）只输出 PNG 与日志 | 部分完成 | 场景文件定义刀路与期望指标；S1–S6 输出 JSON 指标 |
@@ -220,7 +220,7 @@ public sealed class ApxHapticBridge
 | PERF-4 | batchmode、Player（IL2CPP）与 ARM 数据 | 6.1 节数据来自交互式编辑器（Debug、Jobs Debugger 开启）。batchmode 入口未实际运行过 | 未开始 | batchmode 运行一次；Windows Player（IL2CPP、Release）与 Quest 各一组结果 |
 | PERF-5 | 仿真拓扑局部重建 | 每个切割帧全量重建：1428 个体素 1.2 ms，77220 个体素 51 ms（6.1 节） | 未开始 | 77220 个体素时切割帧扫掠小于 5 ms；属于 M3 |
 | PERF-6 | 表面更新与渲染拓扑重建 | 龙（43.5 万顶点）每帧表面更新 8–11 ms，切割帧表面重建 p95 200–460 ms；box、liver、bunny 分辨率 64 时 p95 约 160 ms | 未开始 | 切割帧表面重建 p95 小于 16 ms；顶点在 GPU 上写入（M4） |
-| PERF-7 | 初始化耗时 | box 64 的 4.78 s 中表面细分 3.67 s（`MeshUtil.Subdivide`，托管 List）；龙 64 的 3.93 s 中体素化 2.43 s（`InsideParityJob` 每行遍历全部三角形） | 未开始 | 两项各降低一个数量级；或由 ECO-7 的 blueprint 缓存替代 |
+| PERF-7 | 初始化耗时 | box 64 的 4.78 s 中表面细分 3.67 s（`MeshUtil.Subdivide`，托管 List）；龙 64 的 3.93 s 中体素化 2.43 s（`InsideParityJob` 每行遍历全部三角形）。使用 ECO-7 的 blueprint 时两项均跳过；不使用 blueprint 时仍为上述耗时 | 部分完成 | 两项各降低一个数量级；或由 ECO-7 的 blueprint 缓存替代 |
 | PERF-8 | 自适应 lattice | 分辨率上限 64，lattice 均匀 | 未开始 | 与 MED-7 一起验收 |
 | PERF-9 | 减少子步数的求解方法 | 16 子步、每子步 1 次迭代。候选：Chebyshev 加速、Vertex Block Descent | 未开始 | 评估报告：相同精度下的耗时对比（与 BUG-3 的体积损失一起比较） |
 | PERF-10 | 开放网格的内外判定 | 体素化要求闭合网格（射线奇偶测试）。当前 bunny 为闭合版本，不受影响 | 未开始 | 广义缠绕数判定；原始扫描版兔子（底部有孔）体素化结果正确 |
@@ -232,8 +232,8 @@ public sealed class ApxHapticBridge
 | 1 | 基准测试框架（PERF-1） | 已完成 |
 | 2 | 切割与接触缺陷（BUG-1、BUG-2、BUG-4、BUG-6），之后 BUG-3 | 部分完成（BUG-1、BUG-4、BUG-5、BUG-7 已完成；BUG-2、BUG-3 原因已确认，修复需改动求解器） |
 | 3 | 参数元数据、生效时机、MCP 工具（CFG-1、CFG-2、CFG-5、CFG-6、CFG-8；同时处理 BUG-5） | 部分完成（CFG-2 已完成） |
-| 4 | 跨物体碰撞、MeshCollider 与 SDF 器械、局部重建（ECO-1、ECO-2、PERF-5、PERF-6） | 未开始 |
-| 5 | 力反馈计算接口（HAP-1 至 HAP-7，按编号顺序） | 未开始 |
+| 4 | 跨物体碰撞、MeshCollider 与 SDF 器械、局部重建（ECO-1、ECO-2、PERF-5、PERF-6） | 部分完成（ECO-1、ECO-2 已完成；同时完成 ECO-3、ECO-6、ECO-8，ECO-7 部分完成） |
+| 5 | 力反馈计算接口（HAP-1 至 HAP-7，按编号顺序） | 部分完成（HAP-1 已完成） |
 | 6 | 体素材料标签 → 非线性与粘弹性材料 → 撕裂（MED-5、MED-1、MED-2、MED-6） | 未开始 |
 | 7 | 缝合：SUT-1、SUT-5、SUT-9 先行；SUT-2 至 SUT-4、SUT-6 依赖穿刺（MED-9）与缝线（ECO-5） | 未开始 |
 
@@ -250,3 +250,4 @@ public sealed class ApxHapticBridge
 | 2026-10-26 | `db3ad63` | 演示：刀刃深度从刀下组织表面算起，拖动时随表面高度变化。新增 BUG-6；BUG-1 补充证据 |
 | 2026-10-26 | `44aa786` | BUG-2 原因已确认，记录求解顺序与镜像剖分实验（未采用）；新增并完成 BUG-7（旋转放置的物体变形）；BUG-1 补充证据 |
 | 2026-10-27 | — | BUG-1 已完成（刀路内节点侧别）；BUG-5、CFG-2 已完成（参数下一步生效、`Rebuild()`）；BUG-3 原因已确认；BUG-2 补充对称 Gauss-Seidel 实验 |
+| 2026-10-27 | — | 与 Obi 的差距：ECO-1、ECO-2、ECO-3、ECO-6、ECO-8、HAP-1 已完成，ECO-7 部分完成（blueprint），PERF-7 部分完成；CFG-6 增加 `TotalMass`。新增 EditMode 测试 10 个（`InteractionTests`）、交互演示场景与标准场景 S8–S11。默认设置下基准测试 16 组的 `positionsHash`、块数与断棱数与 `c6e5da1` 一致 |

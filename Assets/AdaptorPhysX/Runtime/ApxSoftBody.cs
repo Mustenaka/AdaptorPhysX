@@ -11,7 +11,7 @@ namespace AdaptorPhysX
     /// </summary>
     [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
     [DisallowMultipleComponent]
-    public sealed class ApxSoftBody : MonoBehaviour
+    public sealed partial class ApxSoftBody : MonoBehaviour
     {
         public static readonly List<ApxSoftBody> Active = new List<ApxSoftBody>();
 
@@ -20,6 +20,9 @@ namespace AdaptorPhysX
         public Mesh sourceMesh;
         [Tooltip("Lattice cells along the longest axis. A change at runtime takes effect on Rebuild().")]
         [Range(4, 64)] public int resolution = 16;
+        [Tooltip("Precomputed surface and lattice (Bake Blueprint in the inspector). Used when baked for this " +
+                 "mesh, resolution and scale; Start then skips subdivision and voxelization.")]
+        public ApxSoftBodyBlueprint blueprint;
 
         [Header("Material")]
         [Tooltip("Young's modulus in Pa.")]
@@ -40,10 +43,21 @@ namespace AdaptorPhysX
         [Tooltip("Rest-shape contraction of the skin layer; the bulk keeps preStrain.")]
         [Range(0.0f, 0.3f)] public float skinPreStrain = 0.15f;
 
+        [Header("Plasticity")]
+        [Tooltip("Elastic strain above which the rest shape flows (Frobenius norm of U - I).")]
+        [Min(0.0f)] public float plasticYield = 0.1f;
+        [Tooltip("Rate of plastic flow in 1/s; 0 disables plasticity.")]
+        [Min(0.0f)] public float plasticCreep;
+        [Tooltip("Rate in 1/s at which the plastic deformation returns to the original shape.")]
+        [Min(0.0f)] public float plasticRecovery;
+        [Tooltip("Largest plastic deformation (Frobenius norm of P - I); 0 = unlimited.")]
+        [Min(0.0f)] public float maxPlasticDeformation = 0.5f;
+
         [Header("Solver")]
         [Range(1, 64)] public int substeps = 16;
         [Tooltip("Simulation steps allowed per rendered frame. When a frame takes longer than the fixed " +
-                 "time step, extra FixedUpdate calls are skipped (slow motion) instead of piling up.")]
+                 "time step, extra FixedUpdate calls are skipped (slow motion) instead of piling up. " +
+                 "A body near dynamic Rigidbodies steps in every FixedUpdate, as the physics engine does.")]
         [Range(1, 8)] public int maxStepsPerFrame = 1;
         public bool useGravity = true;
         [Tooltip("Stop stepping once the body is at rest, until a collider, pin, grab or cut disturbs it.")]
@@ -56,6 +70,10 @@ namespace AdaptorPhysX
         public float collisionMargin;
         [Tooltip("Contact between cut-off pieces and between folded parts of the body.")]
         public bool selfCollision = true;
+        [Tooltip("Contact with other ApxSoftBody objects whose collision layers include this body's layer.")]
+        public bool collideWithBodies = true;
+        [Tooltip("Two-way coupling: non-kinematic Rigidbodies of the colliders the tissue touches are pushed back by it.")]
+        public bool twoWayCoupling = true;
 
         [Header("Attachments")]
         [Tooltip("Nodes inside these colliders at Start follow the collider's transform. A change at runtime takes effect on Rebuild().")]
@@ -132,9 +150,17 @@ namespace AdaptorPhysX
                 _stepFrame = Time.frameCount;
                 _stepsThisFrame = 0;
             }
-            if (_stepsThisFrame++ < maxStepsPerFrame)
+            // A body touching dynamic Rigidbodies keeps pace with the physics engine, which steps them
+            // anyway: a skipped step leaves them without the tissue's support for that step (a ball
+            // dropped on tissue fell through during the long first frames of Play mode).
+            if (_stepsThisFrame++ < maxStepsPerFrame || _stepBodies.Count > 0)
             {
                 Simulate(Time.fixedDeltaTime);
+            }
+            else
+            {
+                // Rigid bodies still receive the response of the last step.
+                ApplyRigidResponse();
             }
         }
 
@@ -169,6 +195,36 @@ namespace AdaptorPhysX
 
             var timer = System.Diagnostics.Stopwatch.StartNew();
             var timings = new InitializeTimings();
+            float3[] restPositions;
+            float3[] restNormals;
+            Vector2[] restUvs;
+            int[] restTriangles;
+            VoxelGrid grid;
+            if (blueprint != null && blueprint.Matches(mesh, resolution, transform.lossyScale))
+            {
+                blueprint.Load(out restPositions, out restNormals, out restUvs, out restTriangles, out grid);
+                timings.Prepare = Lap(timer);
+            }
+            else
+            {
+                if (blueprint != null)
+                {
+                    Debug.LogWarning($"{name}: the blueprint was baked for other settings and is not used; bake it again.", this);
+                }
+                BuildGeometry(mesh, out restPositions, out restNormals, out restUvs, out restTriangles);
+                timings.Prepare = Lap(timer);
+                grid = Voxelizer.Voxelize(restPositions, restTriangles, CellSizeFor(mesh));
+                timings.Voxelize = Lap(timer);
+            }
+            float4x4 restToWorld = float4x4.TRS(transform.position, transform.rotation, new float3(1.0f));
+            Simulation = new SoftBodySimulation(grid, BuildParameters(), restToWorld);
+            FinishInitialize(mesh, timer, timings, restPositions, restNormals, restUvs, restTriangles);
+        }
+
+        /// <summary>Surface mesh in rest space (scaled), subdivided to at most half a cell per edge.</summary>
+        private void BuildGeometry(Mesh mesh, out float3[] restPositions, out float3[] restNormals, out Vector2[] restUvs,
+            out int[] restTriangles)
+        {
             Vector3 scale = transform.lossyScale;
             var positions = new List<float3>();
             var normals = new List<float3>();
@@ -189,18 +245,22 @@ namespace AdaptorPhysX
                 triangles.AddRange(mesh.GetTriangles(s));
             }
 
-            Vector3 size = Vector3.Scale(mesh.bounds.size, scale);
-            float cellSize = Mathf.Max(size.x, Mathf.Max(size.y, size.z)) / resolution;
-            MeshUtil.Subdivide(positions, normals, uvs, triangles, 0.5f * cellSize);
+            MeshUtil.Subdivide(positions, normals, uvs, triangles, 0.5f * CellSizeFor(mesh));
+            restPositions = positions.ToArray();
+            restNormals = normals.ToArray();
+            restUvs = uvs.ToArray();
+            restTriangles = triangles.ToArray();
+        }
 
-            float3[] restPositions = positions.ToArray();
-            int[] restTriangles = triangles.ToArray();
-            timings.Prepare = Lap(timer);
-            VoxelGrid grid = Voxelizer.Voxelize(restPositions, restTriangles, cellSize);
-            timings.Voxelize = Lap(timer);
-            float4x4 restToWorld = float4x4.TRS(transform.position, transform.rotation, new float3(1.0f));
-            Simulation = new SoftBodySimulation(grid, BuildParameters(), restToWorld);
+        private float CellSizeFor(Mesh mesh)
+        {
+            Vector3 size = Vector3.Scale(mesh.bounds.size, transform.lossyScale);
+            return Mathf.Max(size.x, Mathf.Max(size.y, size.z)) / resolution;
+        }
 
+        private void FinishInitialize(Mesh mesh, System.Diagnostics.Stopwatch timer, InitializeTimings timings,
+            float3[] restPositions, float3[] restNormals, Vector2[] restUvs, int[] restTriangles)
+        {
             _pinFrames = new float4x4[pinColliders.Length];
             for (int p = 0; p < pinColliders.Length && p + 1 < SoftBodySimulation.MaxKinematicFrames; p++)
             {
@@ -223,7 +283,7 @@ namespace AdaptorPhysX
             }
             timings.Simulation = Lap(timer);
 
-            Surface = new SurfaceMesh(Simulation, restPositions, normals.ToArray(), uvs.ToArray(), restTriangles);
+            Surface = new SurfaceMesh(Simulation, restPositions, restNormals, restUvs, restTriangles);
             GetComponent<MeshFilter>().sharedMesh = Surface.Mesh;
             if (cutMaterial != null)
             {
@@ -252,7 +312,9 @@ namespace AdaptorPhysX
             {
                 return;
             }
+            SoftBodyWorld.BeginStep(this);
             Simulation.CompleteStep();
+            ApplyRigidResponse();
             Simulation.Parameters = BuildParameters();
             bool disturbed = GatherColliders() || IsGrabbing;
 
@@ -280,7 +342,13 @@ namespace AdaptorPhysX
 
             // Scheduled only: bodies step in parallel and complete in LateUpdate (or on the next access).
             using var shapes = new NativeArray<ColliderShape>(_shapes.ToArray(), Allocator.Temp);
-            Simulation.ScheduleStep(dt, substeps, shapes);
+            PackFields();
+            _wrenchColliders.Clear();
+            _wrenchColliders.AddRange(_shapeColliders);
+            _stepBodies.Clear();
+            _stepBodies.AddRange(_gatheredBodies);
+            using var bodies = new NativeArray<RigidBodyState>(_gatheredStates.ToArray(), Allocator.Temp);
+            Simulation.ScheduleStep(dt, substeps, shapes, _fieldBuffer, bodies);
         }
 
         /// <summary>Deforms the rendered mesh to the current node positions.</summary>
@@ -294,6 +362,7 @@ namespace AdaptorPhysX
         public void Release()
         {
             Active.Remove(this);
+            ReleaseInteraction();
             Surface?.Dispose();
             Simulation?.Dispose();
             Surface = null;
@@ -374,6 +443,10 @@ namespace AdaptorPhysX
             SkinThickness = skinThickness,
             SkinStiffness = Mathf.Max(skinYoungsModulus, 1.0f) / Mathf.Max(youngsModulus, 1.0f),
             SkinPreStrain = skinPreStrain,
+            PlasticYield = plasticYield,
+            PlasticCreep = plasticCreep,
+            PlasticRecovery = plasticRecovery,
+            MaxPlasticDeformation = maxPlasticDeformation,
         };
 
         private static float4x4 FrameOf(Transform t) => float4x4.TRS(t.position, t.rotation, new float3(1.0f));
@@ -383,10 +456,16 @@ namespace AdaptorPhysX
         {
             bool changed = false;
             _shapes.Clear();
+            _shapeColliders.Clear();
+            _gatheredBodies.Clear();
+            _gatheredStates.Clear();
+            _fields.Clear();
+            _fieldLength = 0;
             Bounds bounds = WorldBounds;
             bounds.Expand(2.0f * Simulation.CellSize + 0.05f);
-            int count = Physics.OverlapBoxNonAlloc(bounds.center, bounds.extents, _overlap, Quaternion.identity,
-                collisionLayers, QueryTriggerInteraction.Ignore);
+            // The body's own physics scene: the default one, or a local one (preview and multi-scene setups).
+            int count = gameObject.scene.GetPhysicsScene().OverlapBox(bounds.center, bounds.extents, _overlap,
+                Quaternion.identity, collisionLayers, QueryTriggerInteraction.Ignore);
             for (int i = 0; i < count; i++)
             {
                 Collider collider = _overlap[i];
@@ -398,12 +477,13 @@ namespace AdaptorPhysX
                 {
                     continue;
                 }
+                shape.DynamicBody = DynamicBodyOf(collider);
                 int id = collider.GetInstanceID();
                 if (_previousShapes.TryGetValue(id, out ColliderShape previous))
                 {
                     changed |= !previous.A1.Equals(shape.A1) || !previous.B1.Equals(shape.B1) ||
                                !previous.R1.Equals(shape.R1) || previous.Radius != shape.Radius ||
-                               !previous.HalfExtents.Equals(shape.HalfExtents);
+                               !previous.HalfExtents.Equals(shape.HalfExtents) || !previous.FieldScale.Equals(shape.FieldScale);
                     shape.A0 = previous.A1;
                     shape.B0 = previous.B1;
                     shape.R0 = previous.R1;
@@ -414,6 +494,7 @@ namespace AdaptorPhysX
                 }
                 _previousShapes[id] = shape;
                 _shapes.Add(shape);
+                _shapeColliders.Add(collider);
             }
             changed |= _shapes.Count != _shapeCount;
             _shapeCount = _shapes.Count;
@@ -422,8 +503,27 @@ namespace AdaptorPhysX
 
         private bool TryMakeShape(Collider collider, out ColliderShape shape)
         {
+            if (!TryMakeContactShape(collider, out shape))
+            {
+                return false;
+            }
+            if (collider.TryGetComponent(out ApxColliderMaterial material))
+            {
+                shape.Friction = material.friction >= 0.0f ? material.friction : shape.Friction;
+                shape.Stickiness = material.stickiness;
+                shape.StickDistance = material.stickDistance;
+            }
+            return true;
+        }
+
+        private bool TryMakeContactShape(Collider collider, out ColliderShape shape)
+        {
             Transform t = collider.transform;
             Vector3 s = t.lossyScale;
+            if (TryMakeFieldShape(collider, out shape))
+            {
+                return true;
+            }
             switch (collider)
             {
                 case SphereCollider sphere:

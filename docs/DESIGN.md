@@ -198,7 +198,9 @@
 
 | 问题 | 影响 |
 |---|---|
-| 不同物体之间无碰撞 | 切下的块只与同一物体的其他块接触 |
+| 物体之间的接触按对方的原始表面计算 | 切面不在对方的静止 SDF 中；进入对方切开部位的节点按原始表面的梯度推出（9.4 节） |
+| 相互接触的两个物体不休眠 | 接触面上质量小的边界节点在每步的最后几个子步往复运动，步末速度高于休眠阈值（9.4 节） |
+| 刚体耦合不考虑 Rigidbody 的约束 | 位置与转动的 Freeze 约束不参与组织对刚体的修正（9.3 节） |
 | 碰撞作用在 lattice 节点 | 表面与碰撞体之间留有不超过约 0.5h 的间隙，可用负的 `collisionMargin` 补偿 |
 | 皮肤切口位置为每个体素的拟合平面 | 刀路在一个体素内弯曲时切口边缘为折线 |
 | 刀刃穿出表面不足约一个体素时不分离 | 边界体素的节点位于表面外，刀刃须到达这些节点之间的棱才能把两侧分开；刀尖只略低于可见表面时，边缘仍连在一起（TODO BUG-6） |
@@ -211,6 +213,10 @@
 ## 8. 工具
 
 - `AdaptorPhysX/Build Surgery Demo Scene`：生成演示场景与材质。
+- `AdaptorPhysX/Build Interaction Demo Scene`：生成交互演示场景（S8–S11）、环形器械网格与距离场资产。
+- `AdaptorPhysX/Capture Interaction Scenarios`：在编辑模式下按脚本执行 S8–S11（PhysX 由脚本步进），输出 PNG，
+  日志记录各物体的包围盒、钢球高度、环形器械下方与塑性块中部的表面高度。batchmode 入口
+  `AdaptorPhysX.Samples.Editor.InteractionDemoCapture.CaptureBatch`，参数同上。
 - `AdaptorPhysX/Capture Standard Scenarios`：在编辑模式下按脚本执行 S1–S6，并输出 PNG 与日志
   （每个阶段的块大小、副本数、耗时）。菜单执行前提示保存已修改的场景，结束后从磁盘重新加载原场景；
   Play 模式下不可用。batchmode 用法：
@@ -236,3 +242,123 @@
   - 每个阶段记录每步耗时与表面更新耗时的 mean/min/p50/p95/p99/max、节点位置是否有限、最大速度、节点位置的 FNV-1a 哈希
     （同一机器、同一构建下用于回归比较）。环境信息含编辑器的托管代码优化级别、Burst、Jobs Debugger 与泄漏检测状态，
     这几项对编辑器中的耗时影响明显，比较结果时需一致。
+
+## 9. 器械、刚体与物体之间的交互
+
+代码位置：`ColliderShape.cs`、`DistanceField.cs`、`BodyContactJobs.cs`、`MaterialJobs.cs`、`RigidCouplingJobs.cs`、
+`SoftBodySimulation.Interaction.cs`、`ApxSoftBody.Interaction.cs`、`SoftBodyWorld.cs`。测试：`InteractionTests.cs`。
+只有一个物体、碰撞体均为静态或运动学、没有距离场碰撞体与粘附、`plasticCreep` 为 0 时，计算与加入这些功能之前相同，
+基准测试 16 组各阶段的 `positionsHash` 与加入前一致。
+
+### 9.1 距离场碰撞体（TODO ECO-2）
+
+- `DistanceField.Bake`：在网格局部空间的规则格点上采样有符号距离。网格最长轴 `resolution` 个单元，四周至少留 2 个单元。
+  - 内外判定：沿 x、y、z 三个方向做射线奇偶测试，两个以上方向判为内部即为内部。网格有小孔时只影响经过小孔的方向。
+  - 距离：三角形 2 个单元以内的格点精确计算最近点；其余格点从相邻格点传播最近点（26 邻域，正向、反向各扫描两遍），
+    距离取到传播所得最近点的距离。
+- 碰撞形状 `ColliderShapeType.DistanceField`：节点变换到碰撞体局部坐标并按分量除以 `lossyScale`，三线性插值得到
+  距离 d 与梯度 g；取 ĝ = g / |g|，世界空间距离为 d / |ĝ / s|，法线为 R (ĝ / s) 归一化。均匀缩放时为精确换算，
+  非均匀缩放时为一阶近似。只用梯度方向：中轴附近（如环形器械管的中心线）插值梯度的长度约 0.3，按 d / |g / s| 换算时
+  深度被放大约 3 倍，演示中节点一个子步被推出 17 mm（速度 17 m/s）。
+  点在格点范围外时，距离加上到格点范围的距离（距离的上界，不产生错误的接触），法线取指向范围外的方向。
+- 来源：`MeshCollider` 默认在运行时按 `sharedMesh` 烘焙（分辨率 32，按网格与分辨率缓存，网格需可读）；
+  `ApxColliderMaterial.distanceField` 指定 `ApxDistanceField` 资产时使用资产中的数据，资产可在编辑器中烘焙，
+  此时任意类型的 Collider 只用于包围范围查询，形状由距离场决定（钳口、弯剪等器械）。
+- 每个物体把本步用到的距离场按顺序拼接为一个 NativeArray，形状记录各自的起始偏移；距离场集合与上一步相同时不重新拼接。
+- `DistanceFieldMatchesTheBoxDistance`：box 网格的距离场在格点范围内与解析距离之差小于 0.5 个单元，范围外不小于解析距离。
+  `DistanceFieldFloorHoldsTheBodyLikeABoxCollider`：平面的距离在三线性插值下没有误差，物体落在距离场地面上与落在 Box 上的
+  最低节点高度相同。
+- 碰撞体查询使用物体所在场景的 `PhysicsScene`（默认场景或独立物理场景）。
+
+### 9.2 碰撞体受力（TODO HAP-1）
+
+- 节点 job 中，节点 i 被碰撞体 s 修正 Δx（法向投影、摩擦、粘附）后，把冲量 m_i Δx / h 累加到（节点块, s）。
+  节点块为 256 个节点，与节点 job 的批大小相同，一个块由一个线程按节点顺序处理，不使用原子操作；
+  步末 `ReduceImpulseJob` 按块序号顺序求和，结果在同一机器、同一构建下逐位一致。
+- 一步的力 F = −Σ m Δx / h / Δt（组织作用在碰撞体上的力）。力矩相对碰撞体参考点（球、盒、距离场为中心，胶囊为第一个端点）
+  在步末的位置；接触中心按 |Δx| 加权；接触节点数为各子步的平均值。物体休眠时保留最后一步的结果。
+  接口：`SoftBodySimulation.TryGetShapeWrench`、`ApxSoftBody.TryGetColliderWrench`、`ApxSoftBody.ColliderWrenches`、
+  `ApxHaptics.TrySumColliderWrench`（所有物体对同一碰撞体的合力）。
+- `ColliderForceEqualsTheWeightOfARestingBody`：1 kg 的物体静止在 Box 上，碰撞体受力 −9.790 N，重量 9.810 N（偏差 0.2%）。
+  阻尼使每个子步的重力位移乘以 (1 − c h)，c = 2 s⁻¹、h = 1/960 s 时偏差约 0.2%。
+
+### 9.3 刚体双向耦合（TODO ECO-3）
+
+- 碰撞体带非运动学 Rigidbody 且 `twoWayCoupling` 开启（默认）时，该刚体在本步内由软体一侧推进：
+  - 起点为步开始时的位姿与速度。无组织作用时的路径按 PhysX 一步的结果取：质心 c0 + (v0 + g Δt) t，转动为 exp(ω0 t)。
+  - 每个子步的节点 job 之后，`RigidCouplingJob` 取该子步节点从刚体各碰撞体得到的动量（9.2 节的块和之差），
+    刚体的修正速度减去 动量 / m，修正角速度减去 I⁻¹ × 角动量（相对当前质心，I 为步开始时的世界惯量），
+    随后把刚体的碰撞体移到下一个子步结束时的位姿（自由路径加修正位移与修正转动）。
+  - 节点 job 对这类碰撞体使用当前子步的位姿；摩擦按碰撞体上该点在子步内的位移（含转动）计算。
+  - 下一次 `Simulate` 开始时，把修正位移、修正转动（绕质心）、修正速度与角速度加到 PhysX 推进后的刚体状态上
+    （位置写入 Transform，PhysX 在下一步同步）。PhysX 在同一步内照常处理刚体与其他碰撞体的接触。
+- 每个子步的动量交换相当于刚体与接触节点的完全非弹性碰撞，动量守恒且不增加能量。只在每步末按受力施加 `AddForce`
+  的显式耦合在测试场景中不稳定：钢球压入组织后被弹起到 129 mm 高，再次落下时穿过组织。
+- `RigidBodyRestsOnPinnedTissueAndBendsIt`：0.1 kg 钢球落在两端钉住的组织上，5 s 后组织对钢球的力 0.976 N（重量 0.981 N），
+  组织中部下垂 10.35 mm（无钢球时 4.33 mm）；关闭耦合时钢球穿过组织下落。
+- 碰撞体附近有动态刚体时，物体在每次 FixedUpdate 都步进，不受 `maxStepsPerFrame` 限制：PhysX 每个固定步都推进刚体，
+  软体跳过的步内刚体得不到组织的支撑。Play 模式开始时的几帧耗时长，限制为每帧 1 步时钢球曾穿过组织落到桌面。
+- 限制：Rigidbody 的位置与转动约束（Freeze）不参与修正；多个软体接触同一刚体时各自计算修正后相加。
+
+### 9.4 物体之间的接触（TODO ECO-1）
+
+- 各物体的 job 并行执行，一个物体不能读取另一个物体正在更新的节点。每一轮步进开始时
+  （`SoftBodyWorld.BeginStep`：第一次调用 `Simulate`，或本轮已步进过的物体再次调用 `Simulate`），
+  完成所有物体的 job，按包围盒找出相互接近的物体对（双方 `collideWithBodies` 开启、`collisionLayers` 互相包含对方的层、
+  处于同一物理场景），把对方在本物体包围盒附近的体素副本复制到本物体：每个副本 8 个角点的位置、速度、静止 SDF、
+  有效逆质量与材料角点掩码。步进中对方的角点按 x + v τ 外推（τ 为步内时间）。
+- 参与的节点：3.1 节块间接触的表面节点中，静止 SDF 不小于 −0.25h 的外层节点。更深的节点的间隙条件已由外层节点覆盖，
+  两者在粗 lattice 上相差零点几毫米；包含这些节点时，接触与弹性每个子步把它们来回推动（节点速度约 1 m/s）。
+- 每步开始时用空间哈希为这些节点查找可能进入的对方副本，按距离保留最近的 12 个，
+  范围为副本外接球半径加两物体在一步内的位移。
+- 检测：在对方副本的 6 个四面体中找到包含节点 a 的四面体（重心坐标），对方的静止 SDF 在形变后的四面体上线性插值，
+  世界梯度为 M⁻ᵀ Δφ。a 到对方表面的距离为 φ / |∇φ|；a 自身在自己表面外 s_a（a 所在格点的静止 SDF），
+  φ / |∇φ| + s_a < 0 时两个表面相交，沿梯度方向推出。边界体素的节点位于表面外，用 s_a 修正后接触位置在两个可见表面之间，
+  而不在两层 lattice 节点之间。|∇φ| < 0.5 的四面体不参与：对方 SDF 只在表面 1.5 个体素以内精确，更深处取固定值，
+  梯度接近 0，φ / |∇φ| 会给出远大于实际的深度（演示场景中曾使肝叶以 176 m/s 弹出，并通过副本波及其他物体）。
+- 推出量按逆质量分配：a 取 w_a / (w_a + Σ b_k² w_k)，对方在自己的节点 job 中以相反角色处理同一接触。
+  对方的副本在步内不移动，若每个子步都按当前重叠量推出，两物体在一步内各自消除全部重叠，合计为重叠量的两倍，
+  表现为持续抖动。因此每个节点记录本步内留给对方的部分（每次推出 p 时累加 p (1 − share) / share），
+  之后的子步从重叠量中减去该部分。每个子步的推出量不超过 0.25h。
+  摩擦按相对于对方插值点速度的切向位移计算，上限为推出量乘以两物体摩擦系数的平均值。
+- 休眠：重叠的物体对中，一方未休眠且速度大于休眠阈值时唤醒另一方；两个静止的物体都可以休眠。
+- `StackedBodiesRestOnEachOther`：6 × 4 × 6 cm 的块落在 10 × 4 × 10 cm 的块上，静止后中心高度 57.6 mm
+  （下方块顶面 40 mm，上方块半高 20 mm）；关闭物体间接触时为 18.4 mm（穿过下方块落到地面）。相同输入两次运行结果逐位一致。
+- 限制：
+  - 切面不在对方的静止 SDF 中；节点进入对方切开的副本时，按原始表面的梯度推出。含虚拟角点的四面体不参与检测。
+  - 对方的位置在一轮步进内按速度外推，高速相向运动时接触有一步的滞后。
+  - 对方的体素副本每轮在主线程复制一次，复制量与重叠区域内的体素数成正比。
+  - 填充率低的边界体素的节点质量小，接触面上这类节点在一步的最后几个子步仍有往复运动：步末位置在各帧之间相差 0.1 mm 以内，
+    但步末速度可达 0.5–1 m/s，相互接触的两个物体因此不进入休眠（S8 中椭球与组织块）。
+
+### 9.5 粘附与塑性（TODO ECO-6）
+
+- 粘附（`ApxColliderMaterial.stickiness`、`stickDistance`）：节点接触过带粘附的碰撞体后标记为粘住；
+  粘住的节点到碰撞体表面的距离 d 满足 margin ≤ d < margin + stickDistance 时，每个子步把 d − margin 减小 stickiness 倍，
+  摩擦上限按该位移计算，该修正计入 9.2 节的受力；距离超过 stickDistance 后标记清除。器械抬起后组织随之上移，
+  超过粘附距离后脱离。未接触过的节点不受吸引：否则器械接近时，粘附距离内的节点每个子步被拉到器械表面，
+  在弹性作用下来回运动（演示中节点速度持续为 1.4 m/s）。
+  `StickyInstrumentPullsTheSurfaceAfterIt`：平板压入 0.5 mm 后抬起 1.5 mm，粘附时组织顶面比压入前高 1.00 mm，无粘附时低 0.05 mm。
+- 塑性（`plasticYield`、`plasticCreep`、`plasticRecovery`、`maxPlasticDeformation`）：
+  - 每个体素的静止形状为 P S X（S 为预应变与皮肤层的缩放，P 为塑性伸长），求解器使用 S⁻¹ P⁻¹。
+  - 每步末 `PlasticityJob` 对每个体素取第一个副本：体素中心的形变梯度 F 乘以 S⁻¹ P⁻¹ 得到弹性部分 F_e，
+    用该副本第一个四面体的旋转 R 求 U = sym(Rᵀ F_e)，应变 ε = U − I。‖ε‖ 超过 `plasticYield` 时
+    P ← (I + c (1 − yield / ‖ε‖) ε) P，c = 1 − exp(−creep Δt)；恢复项 P ← P + r (I − P)，r = 1 − exp(−recovery Δt)；
+    随后把 det P 归一化为 1（体积不变），并把 ‖P − I‖ 限制在 `maxPlasticDeformation` 以内。
+  - 同一体素的多个副本共用 P。`plasticCreep` 为 0 且没有已有的塑性变形时不调度该 job。`ResetPlasticity()` 恢复原始静止形状。
+  - `PressedPlasticBodyKeepsADent`：半径 2 cm 的球压入 17 mm 后抬起，塑性物体保留 11.5 mm 的压痕，弹性物体为 0.12 mm。
+
+### 9.6 状态快照（TODO ECO-8）
+
+- `SoftBodySimulation.CaptureState()` 复制拓扑（断棱、交点、法线、体素副本与副本节点）、全部节点数组、四面体旋转、
+  运动学帧、静止形状（含塑性）与切割笔画状态；`RestoreState` 整体替换并递增 `TopologyVersion`，渲染拓扑按断棱的差异增量重建。
+  `ApxSoftBody.CaptureState()` 另保存抓取目标、休眠计数与钉住帧。
+- `RestoredStateRepeatsTheSameSteps`：保存后直接步进 20 步的节点位置，与“全切成两块、再恢复、再步进 20 步”的结果逐位一致。
+  `RestoredBodyRendersItsTopology`：恢复到切割前后渲染网格没有切面。
+
+### 9.7 Blueprint（TODO ECO-7）
+
+- `ApxSoftBodyBlueprint` 保存细分后的表面网格与体素化结果（格点 SDF、体素、填充率、深度、法线），按网格、分辨率与
+  `lossyScale` 匹配。匹配时 `Initialize` 跳过细分与体素化；不匹配时输出警告并重新体素化。
+- `BlueprintGivesTheSameSimulationWithoutVoxelizing`：使用 blueprint 时体素化耗时为 0，20 步后的节点位置与不使用时逐位一致。
+- 检视面板的“Bake Blueprint”按钮生成或更新资产；`ApxDistanceField` 资产的检视面板有“Bake”按钮。

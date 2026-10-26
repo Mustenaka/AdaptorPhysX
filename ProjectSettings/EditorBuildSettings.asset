@@ -8,4 +8,7 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Samples/SurgeryDemo/SurgeryDemo.unity
     guid: 00d49690a6c03c24f966bfd656a71ec8
+  - enabled: 1
+    path: Assets/Samples/InteractionDemo/InteractionDemo.unity
+    guid: 4494b81632d50a64dac78647caebdb66
   m_configObjects: {}
