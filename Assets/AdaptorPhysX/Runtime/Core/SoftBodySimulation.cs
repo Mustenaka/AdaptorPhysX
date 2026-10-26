@@ -23,6 +23,14 @@ namespace AdaptorPhysX
         public float CollisionMargin;
         /// <summary>Contact between separated pieces and folded tissue.</summary>
         public bool SelfCollision;
+        /// <summary>
+        /// Skin layer: cells within this depth below the surface use SkinStiffness times the
+        /// Young's modulus and SkinPreStrain. Pre-strained skin over a softer bulk makes incisions
+        /// gape like real skin. Zero disables the layer. Applied when the simulation is created.
+        /// </summary>
+        public float SkinThickness;
+        public float SkinStiffness;
+        public float SkinPreStrain;
 
         public static SoftBodyParameters Default => new SoftBodyParameters
         {
@@ -34,6 +42,9 @@ namespace AdaptorPhysX
             Gravity = new float3(0.0f, -9.81f, 0.0f),
             CollisionMargin = 0.0f,
             SelfCollision = true,
+            SkinThickness = 0.0f,
+            SkinStiffness = 10.0f,
+            SkinPreStrain = 0.15f,
         };
     }
 
@@ -62,9 +73,15 @@ namespace AdaptorPhysX
         public NativeArray<int> GridToCell;
         public NativeArray<float> CellFill;
         private NativeArray<int> _sliceCells;
-        private NativeArray<int2> _slices;
+        private NativeArray<int4> _sliceGroups;
+        /// <summary>Per slice: lane groups (start, count) and single cells (start, count).</summary>
+        private NativeArray<int4> _slices;
         private NativeArray<float3x3> _tetInverseRest;
         private NativeArray<float> _tetVolume;
+        /// <summary>Per cell: inverse rest-shape scaling (pre-strain) applied to the tet rest matrices.</summary>
+        private NativeArray<float3x3> _cellRest;
+        /// <summary>Per cell: rest-volume scale times stiffness multiplier.</summary>
+        private NativeArray<float> _cellScale;
 
         // Topology.
         public NativeArray<ushort> Severed;
@@ -87,6 +104,9 @@ namespace AdaptorPhysX
         /// <summary>Material piece of each real node (-1 for virtual-only nodes).</summary>
         public NativeArray<int> PieceId;
         private NativeArray<float> _weights;
+        private NativeArray<quaternion> _tetRotation;
+        /// <summary>Real nodes not enclosed by full uncut cells; only these take part in contacts.</summary>
+        private NativeArray<byte> _contactNode;
         private NativeArray<int> _contactPartner;
         private NativeArray<float> _contactDistance;
         private NativeArray<int> _contactCount;
@@ -108,6 +128,8 @@ namespace AdaptorPhysX
         public int TopologyVersion { get; private set; }
         public float LastTopologyMilliseconds { get; private set; }
         public float LastStepMilliseconds { get; private set; }
+        /// <summary>Number of steps scheduled so far; renderers skip frames in which the body did not step.</summary>
+        public int StepCount { get; private set; }
 
         public float CellSize => Grid.CellSize;
 
@@ -127,6 +149,16 @@ namespace AdaptorPhysX
             {
                 CompleteStep();
                 return _bounds[1];
+            }
+        }
+
+        /// <summary>Largest speed of a node with material after the last step (m/s).</summary>
+        public float MaxSpeed
+        {
+            get
+            {
+                CompleteStep();
+                return _bounds[2].x;
             }
         }
 
@@ -156,8 +188,9 @@ namespace AdaptorPhysX
             // Slices of cells across the longest axis, coloured by parity: slices of one colour are
             // two cells apart, so they share no grid point and run in parallel; the cells of a
             // slice are solved in order (Gauss-Seidel within the slice). Two colours keep the
-            // number of dependent jobs per substep low.
-            int axis = grid.Dims.x >= grid.Dims.y && grid.Dims.x >= grid.Dims.z ? 0 : grid.Dims.y >= grid.Dims.z ? 1 : 2;
+            // number of dependent jobs per substep low. Most cells of a slice are solved four at a
+            // time in SIMD lanes (see BuildLaneGroups).
+            int axis = grid.LongestAxis;
             var slices = new SortedDictionary<long, List<int>>();
             for (int c = 0; c < cellCount; c++)
             {
@@ -171,7 +204,8 @@ namespace AdaptorPhysX
             }
             _colorSliceStart = new int[3];
             var sliceCells = new List<int>(cellCount);
-            var sliceRanges = new List<int2>(slices.Count);
+            var sliceGroups = new List<int4>(cellCount / 4);
+            var sliceRanges = new List<int4>(slices.Count);
             int lastColor = -1;
             foreach (KeyValuePair<long, List<int>> slice in slices)
             {
@@ -180,18 +214,42 @@ namespace AdaptorPhysX
                 {
                     _colorSliceStart[++lastColor] = sliceRanges.Count;
                 }
-                sliceRanges.Add(new int2(sliceCells.Count, slice.Value.Count));
-                sliceCells.AddRange(slice.Value);
+                int groupStart = sliceGroups.Count, cellStart = sliceCells.Count;
+                BuildLaneGroups(grid, slice.Value, sliceGroups, sliceCells);
+                sliceRanges.Add(new int4(groupStart, sliceGroups.Count - groupStart, cellStart, sliceCells.Count - cellStart));
             }
             while (lastColor < 2)
             {
                 _colorSliceStart[++lastColor] = sliceRanges.Count;
             }
             _sliceCells = new NativeArray<int>(sliceCells.ToArray(), Allocator.Persistent);
-            _slices = new NativeArray<int2>(sliceRanges.ToArray(), Allocator.Persistent);
+            _sliceGroups = new NativeArray<int4>(sliceGroups.ToArray(), Allocator.Persistent);
+            _slices = new NativeArray<int4>(sliceRanges.ToArray(), Allocator.Persistent);
 
-            float restEdge = grid.CellSize * (1.0f - math.clamp(parameters.PreStrain, 0.0f, 0.49f));
-            Lattice.BuildRestTets(restEdge, out float3x3[] inverseRest, out float[] volumes);
+            Lattice.BuildRestTets(grid.CellSize, out float3x3[] inverseRest, out float[] volumes);
+            _cellRest = new NativeArray<float3x3>(cellCount, Allocator.Persistent);
+            _cellScale = new NativeArray<float>(cellCount, Allocator.Persistent);
+            float bulk = 1.0f - math.clamp(parameters.PreStrain, 0.0f, 0.49f);
+            for (int c = 0; c < cellCount; c++)
+            {
+                // Rest shape X -> S X. The bulk contracts isotropically; the skin contracts only in
+                // the surface plane (S = b n n^T + s (I - n n^T)), as skin tension acts along the
+                // surface. Linear ramp over one cell at the skin boundary.
+                float skin = parameters.SkinThickness > 0.0f
+                    ? math.saturate((parameters.SkinThickness - grid.Depth[c]) / grid.CellSize + 0.5f)
+                    : 0.0f;
+                float3 n = grid.Normal[c];
+                if (math.lengthsq(n) < 0.5f)
+                {
+                    skin = 0.0f;
+                }
+                float tangential = 1.0f - math.clamp(math.lerp(parameters.PreStrain, parameters.SkinPreStrain, skin), 0.0f, 0.49f);
+                float3x3 nn = new float3x3(n * n.x, n * n.y, n * n.z);
+                float3x3 inverse = nn * (1.0f / bulk) + (float3x3.identity - nn) * (1.0f / tangential);
+                float stiffness = math.lerp(1.0f, math.max(parameters.SkinStiffness, 1e-3f), skin);
+                _cellRest[c] = inverse;
+                _cellScale[c] = bulk * tangential * tangential * stiffness;
+            }
             _tetInverseRest = new NativeArray<float3x3>(inverseRest, Allocator.Persistent);
             _tetVolume = new NativeArray<float>(volumes, Allocator.Persistent);
 
@@ -202,7 +260,7 @@ namespace AdaptorPhysX
             Copies = new NativeList<CellCopy>(cellCount, Allocator.Persistent);
             CopyNodes = new NativeList<int>(cellCount * 8, Allocator.Persistent);
 
-            _bounds = new NativeArray<float3>(2, Allocator.Persistent);
+            _bounds = new NativeArray<float3>(3, Allocator.Persistent);
             _bucketStart = new NativeArray<int>(Contacts.BucketCount + 1, Allocator.Persistent);
             FramesStart = new NativeArray<float4x4>(MaxKinematicFrames, Allocator.Persistent);
             FramesEnd = new NativeArray<float4x4>(MaxKinematicFrames, Allocator.Persistent);
@@ -224,9 +282,13 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref GridToCell);
             DisposeIfCreated(ref CellFill);
             DisposeIfCreated(ref _sliceCells);
+            DisposeIfCreated(ref _sliceGroups);
             DisposeIfCreated(ref _slices);
             DisposeIfCreated(ref _tetInverseRest);
             DisposeIfCreated(ref _tetVolume);
+            DisposeIfCreated(ref _cellRest);
+            DisposeIfCreated(ref _tetRotation);
+            DisposeIfCreated(ref _cellScale);
             DisposeIfCreated(ref Severed);
             DisposeIfCreated(ref EdgeT);
             DisposeIfCreated(ref EdgeNormal);
@@ -239,6 +301,36 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref FramesStart);
             DisposeIfCreated(ref FramesEnd);
         }
+
+        /// <summary>
+        /// Splits the cells of a slice into groups of four solved together in SIMD lanes, cell i of
+        /// each quarter of the slice, and single cells. The four cells of a group must share no
+        /// grid point; groups that would are solved as single cells.
+        /// </summary>
+        private static void BuildLaneGroups(VoxelGrid grid, List<int> cells, List<int4> groups, List<int> singles)
+        {
+            int quarter = cells.Count / 4;
+            for (int i = 0; i < quarter; i++)
+            {
+                var g = new int4(cells[i], cells[i + quarter], cells[i + 2 * quarter], cells[i + 3 * quarter]);
+                if (Apart(grid, g.x, g.y) && Apart(grid, g.x, g.z) && Apart(grid, g.x, g.w) &&
+                    Apart(grid, g.y, g.z) && Apart(grid, g.y, g.w) && Apart(grid, g.z, g.w))
+                {
+                    groups.Add(g);
+                    continue;
+                }
+                singles.Add(g.x);
+                singles.Add(g.y);
+                singles.Add(g.z);
+                singles.Add(g.w);
+            }
+            for (int i = 4 * quarter; i < cells.Count; i++)
+            {
+                singles.Add(cells[i]);
+            }
+        }
+
+        private static bool Apart(VoxelGrid grid, int a, int b) => math.cmax(math.abs(grid.Cells[a] - grid.Cells[b])) >= 2;
 
         /// <summary>Advances the body by <paramref name="dt"/> and waits for the result.</summary>
         public void Step(float dt, int substeps, NativeArray<ColliderShape> shapes)
@@ -266,27 +358,28 @@ namespace AdaptorPhysX
             SoftBodyParameters p = Parameters;
             float nu = math.clamp(p.PoissonRatio, 0.0f, 0.49f);
             float mu = p.YoungsModulus / (2.0f * (1.0f + nu));
-            float lambdaLame = p.YoungsModulus * nu / ((1.0f + nu) * (1.0f - 2.0f * nu));
-            // Without the log term of Smith et al. the energy linearises to
-            // shear mu and Lame lambda - mu, hence lambda = lambda_L + mu.
-            float lambda = lambdaLame + mu;
+            // Co-rotational energy mu |F - R|^2 + lambda / 2 (det F - 1)^2 linearises to linear
+            // elasticity with the Lame parameters.
+            float lambda = math.max(p.YoungsModulus * nu / ((1.0f + nu) * (1.0f - 2.0f * nu)), 1e-3f * mu);
 
             var solve = new SolveCellsJob
             {
                 Positions = Positions,
                 Weights = _weights,
                 SliceCells = _sliceCells,
+                SliceGroups = _sliceGroups,
                 Slices = _slices,
                 CellCoord = CellCoord,
                 CellCopyRange = CellCopyRange,
                 Copies = Copies.AsArray(),
                 CopyNodes = CopyNodes.AsArray(),
-                TetCorners = _tables.TetCorners,
                 TetInverseRest = _tetInverseRest,
                 TetVolume = _tetVolume,
+                CellRest = _cellRest,
+                CellScale = _cellScale,
+                TetRotation = _tetRotation,
                 HydrostaticCompliance = 1.0f / (lambda * h * h),
-                DeviatoricCompliance = 1.0f / (mu * h * h),
-                Gamma = 1.0f + mu / lambda,
+                DeviatoricCompliance = 1.0f / (2.0f * mu * h * h),
             };
             var node = new NodeStepJob
             {
@@ -325,7 +418,7 @@ namespace AdaptorPhysX
                 handle = new BuildContactHashJob
                 {
                     Positions = Positions,
-                    NodeReal = NodeReal,
+                    ContactNode = _contactNode,
                     InverseCellSize = 1.0f / searchRadius,
                     BucketStart = _bucketStart,
                     Entries = _bucketEntries,
@@ -334,7 +427,7 @@ namespace AdaptorPhysX
                 {
                     Positions = Positions,
                     RestPositions = RestPositions,
-                    NodeReal = NodeReal,
+                    ContactNode = _contactNode,
                     PieceId = PieceId,
                     BucketStart = _bucketStart,
                     Entries = _bucketEntries,
@@ -378,7 +471,8 @@ namespace AdaptorPhysX
                     handle = solve.Schedule(count, 1, handle);
                 }
             }
-            handle = new BoundsJob { Positions = Positions, Bounds = _bounds }.Schedule(handle);
+            handle = new BoundsJob { Positions = Positions, Velocities = Velocities, NodeReal = NodeReal, Bounds = _bounds }.Schedule(handle);
+            StepCount++;
             _pending = handle;
             _hasPending = true;
             JobHandle.ScheduleBatchedJobs();
@@ -578,6 +672,7 @@ namespace AdaptorPhysX
             var nodeParent = new NativeList<int>(math.max(NodeCount, 16), Allocator.TempJob);
             var nodeRest = new NativeList<float3>(math.max(NodeCount, 16), Allocator.TempJob);
             var nodeMass = new NativeList<float>(math.max(NodeCount, 16), Allocator.TempJob);
+            var copyParent = new NativeList<int>(Copies.Length + 16, Allocator.TempJob);
             float h = Grid.CellSize;
 
             new TopologyJob
@@ -602,6 +697,7 @@ namespace AdaptorPhysX
                 NewRange = newRange,
                 NewCopies = newCopies,
                 NewCopyNodes = newCopyNodes,
+                NewCopyParent = copyParent,
                 NodeParent = nodeParent,
                 NodeRest = nodeRest,
                 NodeMass = nodeMass,
@@ -637,6 +733,22 @@ namespace AdaptorPhysX
                 }.Schedule(count, 256).Complete();
             }
 
+            // Tet rotations follow their copies so the polar decomposition stays warm across cuts.
+            var rotations = new NativeArray<quaternion>(newCopies.Length * Lattice.TetsPerCell, Allocator.Persistent);
+            for (int q = 0; q < copyParent.Length; q++)
+            {
+                int parent = copyParent[q];
+                for (int t = 0; t < Lattice.TetsPerCell; t++)
+                {
+                    rotations[q * Lattice.TetsPerCell + t] = parent >= 0 && _tetRotation.IsCreated
+                        ? _tetRotation[parent * Lattice.TetsPerCell + t]
+                        : quaternion.identity;
+                }
+            }
+            copyParent.Dispose();
+            DisposeIfCreated(ref _tetRotation);
+            _tetRotation = rotations;
+
             DisposeNodes();
             CellCopyRange.Dispose();
             Copies.Dispose();
@@ -661,6 +773,17 @@ namespace AdaptorPhysX
                 NodeReal = NodeReal,
                 PieceId = PieceId,
             }.Run();
+            _contactNode = new NativeArray<byte>(count, Allocator.Persistent);
+            new ContactNodesJob
+            {
+                Copies = Copies.AsArray(),
+                CopyNodes = CopyNodes.AsArray(),
+                CellCopyRange = CellCopyRange,
+                CellFill = CellFill,
+                Severed = Severed,
+                NodeReal = NodeReal,
+                ContactNode = _contactNode,
+            }.Run();
             _contactPartner = new NativeArray<int>(count * Contacts.MaxPerNode, Allocator.Persistent);
             _contactDistance = new NativeArray<float>(count * Contacts.MaxPerNode, Allocator.Persistent);
             _contactCount = new NativeArray<int>(count, Allocator.Persistent);
@@ -670,7 +793,7 @@ namespace AdaptorPhysX
             nodeRest.Dispose();
             nodeMass.Dispose();
 
-            new BoundsJob { Positions = Positions, Bounds = _bounds }.Run();
+            new BoundsJob { Positions = Positions, Velocities = Velocities, NodeReal = NodeReal, Bounds = _bounds }.Run();
             TopologyVersion++;
             LastTopologyMilliseconds = (float)timer.Elapsed.TotalMilliseconds;
         }
@@ -687,6 +810,7 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref _weights);
             DisposeIfCreated(ref NodeReal);
             DisposeIfCreated(ref PieceId);
+            DisposeIfCreated(ref _contactNode);
             DisposeIfCreated(ref _contactPartner);
             DisposeIfCreated(ref _contactDistance);
             DisposeIfCreated(ref _contactCount);

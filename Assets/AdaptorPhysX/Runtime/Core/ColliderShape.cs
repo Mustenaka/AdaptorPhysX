@@ -72,8 +72,10 @@ namespace AdaptorPhysX
                 }
                 default:
                 {
-                    quaternion r = math.normalize(math.slerp(R0, R1, t));
-                    float3 local = math.mul(math.inverse(r), p - a);
+                    // Static boxes skip the interpolation; moving ones use nlerp (small per-frame
+                    // rotations) and the conjugate as inverse of the unit quaternion.
+                    quaternion r = math.all(R0.value == R1.value) ? R0 : math.nlerp(R0, R1, t);
+                    float3 local = math.mul(math.conjugate(r), p - a);
                     float3 q = math.abs(local) - HalfExtents;
                     if (math.cmax(q) > 0.0f)
                     {

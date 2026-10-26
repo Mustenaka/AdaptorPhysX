@@ -41,6 +41,8 @@ namespace AdaptorPhysX
         public NativeArray<int2> NewRange;
         public NativeList<CellCopy> NewCopies;
         public NativeList<int> NewCopyNodes;
+        /// <summary>Old copy each new copy derives from, or -1.</summary>
+        public NativeList<int> NewCopyParent;
         /// <summary>Old node each new node inherits from, or -1 for a fresh node at rest.</summary>
         public NativeList<int> NodeParent;
         public NativeList<float3> NodeRest;
@@ -54,7 +56,8 @@ namespace AdaptorPhysX
             NodeRest.Clear();
             NodeMass.Clear();
 
-            var parentCopy = new NativeList<int>(CellCoord.Length, Allocator.Temp);
+            NewCopyParent.Clear();
+            NativeList<int> parentCopy = NewCopyParent;
             for (int c = 0; c < CellCoord.Length; c++)
             {
                 int severed = Severed[c];

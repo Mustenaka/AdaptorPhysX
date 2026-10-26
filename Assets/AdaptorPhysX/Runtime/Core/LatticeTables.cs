@@ -27,7 +27,8 @@ namespace AdaptorPhysX
         /// Six positively oriented tetrahedra per cell (Kuhn subdivision around the 0-7
         /// diagonal). Every cell uses the same split, so the response has no cell-parity
         /// alternation and face diagonals of neighbouring cells match. The table holds the
-        /// pattern twice (indexed by cell parity) to keep the parity hook.
+        /// pattern twice (indexed by cell parity) to keep the parity hook. SolveCellsJob
+        /// hard-codes the split to keep a cell's corners in registers; change both together.
         /// </summary>
         public static readonly int[] TetCorners =
         {

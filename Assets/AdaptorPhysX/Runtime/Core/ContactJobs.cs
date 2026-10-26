@@ -20,11 +20,48 @@ namespace AdaptorPhysX
             (int)((uint)(c.x * 73856093 ^ c.y * 19349663 ^ c.z * 83492791) & (BucketCount - 1));
     }
 
+    /// <summary>
+    /// Marks the real nodes that can touch another piece or a fold: all but those surrounded by
+    /// eight full, uncut cells, which the contact search skips.
+    /// </summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal struct ContactNodesJob : IJob
+    {
+        [ReadOnly] public NativeArray<CellCopy> Copies;
+        [ReadOnly] public NativeArray<int> CopyNodes;
+        [ReadOnly] public NativeArray<int2> CellCopyRange;
+        [ReadOnly] public NativeArray<float> CellFill;
+        [ReadOnly] public NativeArray<ushort> Severed;
+        [ReadOnly] public NativeArray<byte> NodeReal;
+        public NativeArray<byte> ContactNode;
+
+        public void Execute()
+        {
+            var solid = new NativeArray<byte>(ContactNode.Length, Allocator.Temp);
+            for (int q = 0; q < Copies.Length; q++)
+            {
+                int cell = Copies[q].Cell;
+                if (CellCopyRange[cell].y != 1 || Severed[cell] != 0 || CellFill[cell] < 1.0f)
+                {
+                    continue;
+                }
+                for (int k = 0; k < 8; k++)
+                {
+                    solid[CopyNodes[q * 8 + k]]++;
+                }
+            }
+            for (int i = 0; i < ContactNode.Length; i++)
+            {
+                ContactNode[i] = (byte)(NodeReal[i] != 0 && solid[i] < 8 ? 1 : 0);
+            }
+        }
+    }
+
     [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct BuildContactHashJob : IJob
     {
         [ReadOnly] public NativeArray<float3> Positions;
-        [ReadOnly] public NativeArray<byte> NodeReal;
+        [ReadOnly] public NativeArray<byte> ContactNode;
         public float InverseCellSize;
         /// <summary>BucketCount + 1 prefix offsets.</summary>
         public NativeArray<int> BucketStart;
@@ -38,7 +75,7 @@ namespace AdaptorPhysX
             }
             for (int i = 0; i < Positions.Length; i++)
             {
-                if (NodeReal[i] != 0)
+                if (ContactNode[i] != 0)
                 {
                     BucketStart[Contacts.Bucket((int3)math.floor(Positions[i] * InverseCellSize)) + 1]++;
                 }
@@ -50,7 +87,7 @@ namespace AdaptorPhysX
             var fill = new NativeArray<int>(Contacts.BucketCount, Allocator.Temp);
             for (int i = 0; i < Positions.Length; i++)
             {
-                if (NodeReal[i] == 0)
+                if (ContactNode[i] == 0)
                 {
                     continue;
                 }
@@ -65,7 +102,7 @@ namespace AdaptorPhysX
     {
         [ReadOnly] public NativeArray<float3> Positions;
         [ReadOnly] public NativeArray<float3> RestPositions;
-        [ReadOnly] public NativeArray<byte> NodeReal;
+        [ReadOnly] public NativeArray<byte> ContactNode;
         [ReadOnly] public NativeArray<int> PieceId;
         [ReadOnly] public NativeArray<int> BucketStart;
         [ReadOnly] public NativeArray<int> Entries;
@@ -82,7 +119,7 @@ namespace AdaptorPhysX
         public void Execute(int i)
         {
             int count = 0;
-            if (NodeReal[i] != 0)
+            if (ContactNode[i] != 0)
             {
                 float3 x = Positions[i];
                 int3 c = (int3)math.floor(x * InverseCellSize);

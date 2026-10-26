@@ -32,12 +32,22 @@ namespace AdaptorPhysX
         [Tooltip("Rest-shape contraction applied at Start. Pinned tissue is pre-tensioned and incisions gape.")]
         [Range(0.0f, 0.3f)] public float preStrain;
 
+        [Header("Skin layer")]
+        [Tooltip("Thickness of the stiffer, pre-tensioned skin layer below the surface in metres (0 = none). Applied at Start.")]
+        [Min(0.0f)] public float skinThickness;
+        [Tooltip("Young's modulus of the skin layer in Pa.")]
+        public float skinYoungsModulus = 3.0e5f;
+        [Tooltip("Rest-shape contraction of the skin layer; the bulk keeps preStrain.")]
+        [Range(0.0f, 0.3f)] public float skinPreStrain = 0.15f;
+
         [Header("Solver")]
         [Range(1, 64)] public int substeps = 16;
         [Tooltip("Simulation steps allowed per rendered frame. When a frame takes longer than the fixed " +
                  "time step, extra FixedUpdate calls are skipped (slow motion) instead of piling up.")]
         [Range(1, 8)] public int maxStepsPerFrame = 1;
         public bool useGravity = true;
+        [Tooltip("Stop stepping once the body is at rest, until a collider, pin, grab or cut disturbs it.")]
+        public bool allowSleep = true;
 
         [Header("Collision")]
         public LayerMask collisionLayers = ~0;
@@ -58,6 +68,13 @@ namespace AdaptorPhysX
         public SoftBodySimulation Simulation { get; private set; }
         public SurfaceMesh Surface { get; private set; }
         public bool IsGrabbing { get; private set; }
+        /// <summary>True while the body is at rest and skips its steps.</summary>
+        public bool IsSleeping => _restSteps >= SleepSteps;
+
+        /// <summary>Steps below <see cref="SleepSpeed"/> without disturbance before the body sleeps.</summary>
+        public const int SleepSteps = 30;
+        /// <summary>Node speed (m/s) under which the body counts as at rest.</summary>
+        public const float SleepSpeed = 2e-3f;
 
         private readonly Dictionary<int, ColliderShape> _previousShapes = new Dictionary<int, ColliderShape>();
         private readonly List<ColliderShape> _shapes = new List<ColliderShape>();
@@ -68,6 +85,8 @@ namespace AdaptorPhysX
         private MeshRenderer _renderer;
         private int _stepFrame = -1;
         private int _stepsThisFrame;
+        private int _restSteps;
+        private int _shapeCount;
 
         /// <summary>World-space bounds of the lattice nodes (slightly larger than the rendered surface).</summary>
         public Bounds WorldBounds
@@ -102,6 +121,8 @@ namespace AdaptorPhysX
         }
 
         private void LateUpdate() => UpdateRender();
+
+        private void OnValidate() => WakeUp();
 
         private void OnDestroy() => Release();
 
@@ -192,7 +213,7 @@ namespace AdaptorPhysX
             }
             Simulation.CompleteStep();
             Simulation.Parameters = BuildParameters();
-            GatherColliders();
+            bool disturbed = GatherColliders() || IsGrabbing;
 
             Simulation.FramesStart[SoftBodySimulation.GrabFrame] = float4x4.Translate(_grabTargetPrevious);
             Simulation.FramesEnd[SoftBodySimulation.GrabFrame] = float4x4.Translate(_grabTarget);
@@ -204,9 +225,16 @@ namespace AdaptorPhysX
                     continue;
                 }
                 float4x4 frame = FrameOf(pinColliders[p].transform);
+                disturbed |= !frame.Equals(_pinFrames[p]);
                 Simulation.FramesStart[p + 1] = _pinFrames[p];
                 Simulation.FramesEnd[p + 1] = frame;
                 _pinFrames[p] = frame;
+            }
+
+            _restSteps = disturbed || !allowSleep || Simulation.MaxSpeed > SleepSpeed ? 0 : _restSteps + 1;
+            if (IsSleeping)
+            {
+                return;
             }
 
             // Scheduled only: bodies step in parallel and complete in LateUpdate (or on the next access).
@@ -234,8 +262,16 @@ namespace AdaptorPhysX
         /// <summary>Cuts along the quad swept by a blade edge from (a0,b0) to (a1,b1). Returns severed lattice edges.</summary>
         public int Cut(Vector3 a0, Vector3 b0, Vector3 a1, Vector3 b1)
         {
-            return Simulation == null ? 0 : Simulation.Cut(a0, b0, a1, b1);
+            int severed = Simulation == null ? 0 : Simulation.Cut(a0, b0, a1, b1);
+            if (severed > 0)
+            {
+                WakeUp();
+            }
+            return severed;
         }
+
+        /// <summary>Resumes stepping a sleeping body.</summary>
+        public void WakeUp() => _restSteps = 0;
 
         /// <summary>Grabs the material under the ray within <paramref name="radius"/> (rest space).</summary>
         public bool BeginGrab(Ray ray, float radius, out Vector3 point)
@@ -265,6 +301,7 @@ namespace AdaptorPhysX
         {
             Simulation?.Detach(SoftBodySimulation.GrabFrame);
             IsGrabbing = false;
+            WakeUp();
         }
 
         private SoftBodyParameters BuildParameters() => new SoftBodyParameters
@@ -277,12 +314,17 @@ namespace AdaptorPhysX
             Gravity = useGravity ? (float3)Physics.gravity : float3.zero,
             CollisionMargin = collisionMargin,
             SelfCollision = selfCollision,
+            SkinThickness = skinThickness,
+            SkinStiffness = Mathf.Max(skinYoungsModulus, 1.0f) / Mathf.Max(youngsModulus, 1.0f),
+            SkinPreStrain = skinPreStrain,
         };
 
         private static float4x4 FrameOf(Transform t) => float4x4.TRS(t.position, t.rotation, new float3(1.0f));
 
-        private void GatherColliders()
+        /// <summary>Collects the collider shapes near the body; returns true if any appeared, left or moved.</summary>
+        private bool GatherColliders()
         {
+            bool changed = false;
             _shapes.Clear();
             Bounds bounds = WorldBounds;
             bounds.Expand(2.0f * Simulation.CellSize + 0.05f);
@@ -302,13 +344,23 @@ namespace AdaptorPhysX
                 int id = collider.GetInstanceID();
                 if (_previousShapes.TryGetValue(id, out ColliderShape previous))
                 {
+                    changed |= !previous.A1.Equals(shape.A1) || !previous.B1.Equals(shape.B1) ||
+                               !previous.R1.Equals(shape.R1) || previous.Radius != shape.Radius ||
+                               !previous.HalfExtents.Equals(shape.HalfExtents);
                     shape.A0 = previous.A1;
                     shape.B0 = previous.B1;
                     shape.R0 = previous.R1;
                 }
+                else
+                {
+                    changed = true;
+                }
                 _previousShapes[id] = shape;
                 _shapes.Add(shape);
             }
+            changed |= _shapes.Count != _shapeCount;
+            _shapeCount = _shapes.Count;
+            return changed;
         }
 
         private bool TryMakeShape(Collider collider, out ColliderShape shape)

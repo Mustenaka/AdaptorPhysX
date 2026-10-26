@@ -51,6 +51,8 @@ namespace AdaptorPhysX
         private NativeArray<float3> _outNormals;
         private NativeArray<float3x3> _nodeJacobian;
         private int _version = -1;
+        private int _renderedStep = -1;
+        private float4x4 _renderedMatrix;
 
         /// <summary>Pieces with fewer real nodes are tiny fragments of crossing cuts and are not drawn.</summary>
         public const int MinVisiblePieceNodes = 8;
@@ -106,10 +108,19 @@ namespace AdaptorPhysX
             }
         }
 
-        /// <summary>Rebuilds render topology if the simulation topology changed, then deforms the mesh.</summary>
+        /// <summary>
+        /// Rebuilds render topology if the simulation topology changed, then deforms the mesh.
+        /// Does nothing when the body has not stepped (e.g. sleeps) and the transform is unchanged.
+        /// </summary>
         public void Update(float4x4 worldToLocal)
         {
             _sim.CompleteStep();
+            if (_version == _sim.TopologyVersion && _renderedStep == _sim.StepCount && _renderedMatrix.Equals(worldToLocal))
+            {
+                return;
+            }
+            _renderedStep = _sim.StepCount;
+            _renderedMatrix = worldToLocal;
             if (_version != _sim.TopologyVersion)
             {
                 RebuildTopology();
@@ -727,6 +738,10 @@ namespace AdaptorPhysX
                 int2 range = _range[cell];
                 if (range.y < 2)
                 {
+                    if (_severed[cell] != 0)
+                    {
+                        EmitCrackFaces(b, cell, polygon, clipped);
+                    }
                     continue;
                 }
                 int severed = _severed[cell];
@@ -807,7 +822,7 @@ namespace AdaptorPhysX
                         int first = b.BaseCount + b.Copies.Count;
                         foreach (CutVertex cv in clipped)
                         {
-                            b.Add(q, cv.U, math.normalizesafe(cv.Normal), Vector2.zero, cellMin + cv.U * h);
+                            b.Add(q, cv.U, math.normalizesafe(cv.Normal), new Vector2(-cv.Sdf, 0.0f), cellMin + cv.U * h);
                         }
                         for (int i = 1; i + 1 < clipped.Count; i++)
                         {
@@ -824,6 +839,83 @@ namespace AdaptorPhysX
         /// One plane (n, d) per group of severed edges with parallel Hermite normals. A cell
         /// crossed by two cuts (cross or wedge apex) yields two planes.
         /// </summary>
+        /// <summary>
+        /// Cells crossed by a cut that did not separate them (where a blade stopped) get a
+        /// two-sided face through the Hermite points of each group of parallel severed edges,
+        /// so the floor and ends of a partial incision are closed.
+        /// </summary>
+        private void EmitCrackFaces(Builder b, int cell, List<CutVertex> polygon, List<CutVertex> clipped)
+        {
+            VoxelGrid grid = _sim.Grid;
+            int severed = _severed[cell];
+            int3 coord = _cellCoord[cell];
+            float3 cellMin = CellMin(cell);
+            int copy = _range[cell].x;
+            var used = 0;
+            for (int seed = 0; seed < Lattice.EdgeCount; seed++)
+            {
+                if ((severed & (1 << seed)) == 0 || (used & (1 << seed)) != 0)
+                {
+                    continue;
+                }
+                float3 reference = _edgeNormal[cell * Lattice.EdgeCount + seed];
+                polygon.Clear();
+                float3 normal = float3.zero;
+                for (int e = seed; e < Lattice.EdgeCount; e++)
+                {
+                    if ((severed & (1 << e)) == 0 || (used & (1 << e)) != 0)
+                    {
+                        continue;
+                    }
+                    float3 n = _edgeNormal[cell * Lattice.EdgeCount + e];
+                    float alignment = math.dot(n, reference);
+                    if (math.abs(alignment) < 0.9f)
+                    {
+                        continue;
+                    }
+                    used |= 1 << e;
+                    n = alignment < 0.0f ? -n : n;
+                    normal += n;
+                    int a = Lattice.EdgeCorners[2 * e], c = Lattice.EdgeCorners[2 * e + 1];
+                    float t = _edgeT[cell * Lattice.EdgeCount + e];
+                    float sdfA = grid.Sdf[grid.PointIndex(coord + Lattice.CornerOffset(a))];
+                    float sdfC = grid.Sdf[grid.PointIndex(coord + Lattice.CornerOffset(c))];
+                    polygon.Add(new CutVertex
+                    {
+                        U = math.lerp((float3)Lattice.CornerOffset(a), Lattice.CornerOffset(c), t),
+                        Normal = n,
+                        Sdf = math.lerp(sdfA, sdfC, t),
+                    });
+                }
+                if (polygon.Count < 3)
+                {
+                    continue;
+                }
+                normal = math.normalizesafe(normal);
+                SortAroundNormal(polygon, normal);
+                ClipInside(polygon, clipped);
+                if (clipped.Count < 3)
+                {
+                    continue;
+                }
+                for (int side = 0; side < 2; side++)
+                {
+                    float3 faceNormal = side == 0 ? normal : -normal;
+                    int first = b.BaseCount + b.Copies.Count;
+                    foreach (CutVertex cv in clipped)
+                    {
+                        b.Add(copy, cv.U, faceNormal, new Vector2(-cv.Sdf, 0.0f), cellMin + cv.U * _sim.CellSize);
+                    }
+                    for (int i = 1; i + 1 < clipped.Count; i++)
+                    {
+                        b.Cut.Add(first);
+                        b.Cut.Add(side == 0 ? first + i : first + i + 1);
+                        b.Cut.Add(side == 0 ? first + i + 1 : first + i);
+                    }
+                }
+            }
+        }
+
         private List<float4> FitPlanes(int cell, int severed, float3 cellMin)
         {
             var normals = new List<float3>(2);

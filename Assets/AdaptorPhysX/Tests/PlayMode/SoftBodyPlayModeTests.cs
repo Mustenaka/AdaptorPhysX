@@ -60,5 +60,47 @@ namespace AdaptorPhysX.Tests
             Object.Destroy(floor);
             yield return null;
         }
+
+        [UnityTest]
+        public IEnumerator RestingBodySleepsAndWakesWhenCut()
+        {
+            GameObject floor = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            floor.transform.position = new Vector3(0.0f, -0.05f, 0.0f);
+            floor.transform.localScale = new Vector3(1.0f, 0.1f, 1.0f);
+
+            var bodyObject = new GameObject("Body", typeof(MeshFilter), typeof(MeshRenderer));
+            bodyObject.GetComponent<MeshFilter>().sharedMesh = MeshUtil.CreateBox(new Vector3(0.1f, 0.04f, 0.08f), 8);
+            bodyObject.transform.position = new Vector3(0.0f, 0.025f, 0.0f);
+            var body = bodyObject.AddComponent<ApxSoftBody>();
+            body.resolution = 10;
+            body.substeps = 8;
+
+            for (int i = 0; i < 300 && !(body.IsInitialized && body.IsSleeping); i++)
+            {
+                yield return new WaitForFixedUpdate();
+            }
+            Assert.IsTrue(body.IsSleeping, "a body resting on the floor goes to sleep");
+            int steps = body.Simulation.StepCount;
+            for (int i = 0; i < 10; i++)
+            {
+                yield return new WaitForFixedUpdate();
+            }
+            Assert.AreEqual(steps, body.Simulation.StepCount, "a sleeping body does not step");
+
+            int severed = body.Cut(new Vector3(0.001f, 0.07f, -0.08f), new Vector3(0.001f, -0.01f, -0.08f),
+                new Vector3(0.001f, 0.07f, 0.08f), new Vector3(0.001f, -0.01f, 0.08f));
+            Assert.Greater(severed, 0);
+            Assert.IsFalse(body.IsSleeping);
+            for (int i = 0; i < 5; i++)
+            {
+                yield return new WaitForFixedUpdate();
+            }
+            Assert.Greater(body.Simulation.StepCount, steps);
+            Assert.AreEqual(2, body.Simulation.CountPieces());
+
+            Object.Destroy(bodyObject);
+            Object.Destroy(floor);
+            yield return null;
+        }
     }
 }

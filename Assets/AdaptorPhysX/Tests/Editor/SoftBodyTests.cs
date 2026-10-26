@@ -58,6 +58,21 @@ namespace AdaptorPhysX.Tests
         }
 
         [Test]
+        public void StiffMaterialOnFineLatticeStaysAtRest()
+        {
+            // mu dt^2 / (rho h^2) is about 40 here: far inside the regime where the stable
+            // Neo-Hookean constraint pair diverged on the first substep.
+            var parameters = SoftBodyParameters.Default;
+            parameters.Gravity = float3.zero;
+            parameters.YoungsModulus = 1.0e6f;
+            SoftBodySimulation sim = CreateBox(new float3(Size), parameters, 32);
+            float3[] start = sim.Positions.ToArray();
+            StepFrames(sim, 30);
+            Assert.Less(MaxDisplacement(sim, start), 1e-4f);
+            Assert.Less(MaxSpeed(sim), 1e-3f);
+        }
+
+        [Test]
         public void SelfWeightCompressionMatchesYoungsModulus()
         {
             // A column with a clamped base sagging under its own weight (nu = 0):
@@ -265,6 +280,61 @@ namespace AdaptorPhysX.Tests
             StepFrames(sim, 60);
             AssertFinite(sim);
             Assert.Greater(MaxPairGap(sim), 0.3f * sim.CellSize, "pre-strained incision did not gape");
+        }
+
+        [Test]
+        public void SkinTensionOpensSmallIncisionInSolidTissue()
+        {
+            var parameters = SoftBodyParameters.Default;
+            parameters.Gravity = float3.zero;
+            parameters.SkinThickness = 0.004f;
+            parameters.SkinStiffness = 20.0f;
+            parameters.SkinPreStrain = 0.2f;
+            SoftBodySimulation sim = CreateBox(new float3(0.08f, 0.03f, 0.06f), parameters, 24);
+            // Held in a tray: bottom and side faces fixed, so the skin tension stays in the skin.
+            float3 lo = new float3(float.MaxValue), hi = new float3(float.MinValue);
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                lo = math.min(lo, sim.Positions[i]);
+                hi = math.max(hi, sim.Positions[i]);
+            }
+            var tray = new List<int>();
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                float3 x = sim.Positions[i];
+                if (x.y < lo.y + 1e-4f || x.x < lo.x + 1e-4f || x.x > hi.x - 1e-4f || x.z < lo.z + 1e-4f ||
+                    x.z > hi.z - 1e-4f)
+                {
+                    tray.Add(i);
+                }
+            }
+            sim.Attach(tray, 1, float4x4.identity);
+            StepFrames(sim, 30);
+
+            // 2 cm long, 6 mm deep incision in the middle of the 3 cm thick block.
+            float surface = 0.015f;
+            sim.Cut(new float3(-0.01f, surface + 0.01f, 0.0005f), new float3(-0.01f, surface - 0.006f, 0.0005f),
+                new float3(0.01f, surface + 0.01f, 0.0005f), new float3(0.01f, surface - 0.006f, 0.0005f));
+            Assert.AreEqual(1, sim.CountPieces());
+            StepFrames(sim, 60);
+            AssertFinite(sim);
+            Assert.Greater(MaxPairGap(sim), 0.3f * sim.CellSize, "skin tension did not open the incision");
+
+            // Below the incision the tissue is still solid: no duplicated nodes deeper than the cut.
+            var byRest = new Dictionary<float3, int>();
+            float deepest = float.MaxValue;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                byRest[sim.RestPositions[i]] = byRest.TryGetValue(sim.RestPositions[i], out int c) ? c + 1 : 1;
+            }
+            foreach (KeyValuePair<float3, int> entry in byRest)
+            {
+                if (entry.Value > 1)
+                {
+                    deepest = math.min(deepest, entry.Key.y);
+                }
+            }
+            Assert.Greater(deepest, surface - 0.006f - 2.0f * sim.CellSize, "the incision reaches deeper than the blade");
         }
 
         [Test]

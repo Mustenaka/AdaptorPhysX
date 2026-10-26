@@ -14,15 +14,40 @@ namespace AdaptorPhysX
         public int3 Dims;
         /// <summary>Signed distance at grid points, (Dims+1)^3, x fastest. Negative inside.</summary>
         public float[] Sdf;
+        /// <summary>Occupied cells, listed with the longest axis outermost (see <see cref="LongestAxis"/>).</summary>
         public int3[] Cells;
         /// <summary>Approximate material fraction of each cell in [1/8, 1].</summary>
         public float[] Fill;
+        /// <summary>Depth of each cell centre below the surface (mean of corner SDFs, negated).</summary>
+        public float[] Depth;
+        /// <summary>Outward surface normal at each cell centre (normalised SDF gradient, zero deep inside).</summary>
+        public float3[] Normal;
 
         public int3 PointDims => Dims + 1;
+
+        /// <summary>
+        /// Axis the solver slices the body across. Cells (and hence copies and nodes) are ordered
+        /// slice by slice, so parallel slices write to separate memory instead of sharing cache lines.
+        /// </summary>
+        public int LongestAxis => Dims.x >= Dims.y && Dims.x >= Dims.z ? 0 : Dims.y >= Dims.z ? 1 : 2;
 
         public int PointIndex(int3 p) => p.x + PointDims.x * (p.y + PointDims.y * p.z);
 
         public float3 PointPosition(int3 p) => Origin + (float3)p * CellSize;
+
+        /// <summary>Trilinear SDF at a rest-space point (clamped to the grid).</summary>
+        public float SampleSdf(float3 p)
+        {
+            float3 g = math.clamp((p - Origin) / CellSize, 0.0f, (float3)Dims - 1e-4f);
+            int3 c = (int3)math.floor(g);
+            float3 u = g - c;
+            float value = 0.0f;
+            for (int k = 0; k < 8; k++)
+            {
+                value += Geometry.TrilinearWeight(k, u) * Sdf[PointIndex(c + Lattice.CornerOffset(k))];
+            }
+            return value;
+        }
     }
 
     public static class Voxelizer
@@ -88,14 +113,21 @@ namespace AdaptorPhysX
 
             var cells = new List<int3>();
             var fill = new List<float>();
+            var depth = new List<float>();
+            var normal = new List<float3>();
             var corner = new float[8];
-            for (int z = 0; z < grid.Dims.z; z++)
+            int axis = grid.LongestAxis, axis1 = (axis + 1) % 3, axis2 = (axis + 2) % 3;
+            for (int slice = 0; slice < grid.Dims[axis]; slice++)
             {
-                for (int y = 0; y < grid.Dims.y; y++)
+                for (int row = 0; row < grid.Dims[axis2]; row++)
                 {
-                    for (int x = 0; x < grid.Dims.x; x++)
+                    for (int column = 0; column < grid.Dims[axis1]; column++)
                     {
-                        var c = new int3(x, y, z);
+                        int3 c = default;
+                        c[axis] = slice;
+                        c[axis1] = column;
+                        c[axis2] = row;
+                        int x = c.x, y = c.y, z = c.z;
                         bool anyInside = false;
                         for (int k = 0; k < 8; k++)
                         {
@@ -109,11 +141,25 @@ namespace AdaptorPhysX
                         }
                         cells.Add(c);
                         fill.Add(EstimateFill(corner));
+                        float mean = 0.0f;
+                        foreach (float value in corner)
+                        {
+                            mean += value;
+                        }
+                        depth.Add(-mean / 8.0f);
+                        float3 gradient = float3.zero;
+                        for (int k = 0; k < 8; k++)
+                        {
+                            gradient += Geometry.TrilinearGradient(k, new float3(0.5f)) * corner[k];
+                        }
+                        normal.Add(math.normalizesafe(gradient));
                     }
                 }
             }
             grid.Cells = cells.ToArray();
             grid.Fill = fill.ToArray();
+            grid.Depth = depth.ToArray();
+            grid.Normal = normal.ToArray();
             return grid;
         }
 
