@@ -72,6 +72,8 @@ namespace AdaptorPhysX
         public NativeArray<int3> CellCoord;
         public NativeArray<int> GridToCell;
         public NativeArray<float> CellFill;
+        /// <summary>Rest signed distance to the surface at grid points, (Dims+1)^3, x fastest. Negative inside.</summary>
+        public NativeArray<float> PointSdf;
         private NativeArray<int> _sliceCells;
         private NativeArray<int4> _sliceGroups;
         /// <summary>Per slice: lane groups (start, count) and single cells (start, count).</summary>
@@ -174,6 +176,7 @@ namespace AdaptorPhysX
             int cellCount = grid.Cells.Length;
             CellCoord = new NativeArray<int3>(grid.Cells, Allocator.Persistent);
             CellFill = new NativeArray<float>(grid.Fill, Allocator.Persistent);
+            PointSdf = new NativeArray<float>(grid.Sdf, Allocator.Persistent);
             GridToCell = new NativeArray<int>(grid.Dims.x * grid.Dims.y * grid.Dims.z, Allocator.Persistent);
             for (int i = 0; i < GridToCell.Length; i++)
             {
@@ -281,6 +284,7 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref CellCoord);
             DisposeIfCreated(ref GridToCell);
             DisposeIfCreated(ref CellFill);
+            DisposeIfCreated(ref PointSdf);
             DisposeIfCreated(ref _sliceCells);
             DisposeIfCreated(ref _sliceGroups);
             DisposeIfCreated(ref _slices);
@@ -497,6 +501,7 @@ namespace AdaptorPhysX
         public int Cut(float3 a0, float3 b0, float3 a1, float3 b1)
         {
             CompleteStep();
+            float3 sweptA0 = a0, sweptB0 = b0;
             // Overlap consecutive sweeps along the motion so edges of tissue that moves
             // relative to the blade between two steps are not skipped.
             float3 motion = 0.5f * ((a1 + b1) - (a0 + b0));
@@ -516,12 +521,14 @@ namespace AdaptorPhysX
                 Positions = Positions,
                 CellCoord = CellCoord,
                 GridToCell = GridToCell,
+                PointSdf = PointSdf,
                 CellCopyRange = CellCopyRange,
                 Copies = Copies.AsArray(),
                 CopyNodes = CopyNodes.AsArray(),
                 EdgeCorners = _tables.EdgeCorners,
                 Dims = Grid.Dims,
                 A0 = a0, B0 = b0, A1 = a1, B1 = b1,
+                SweptA0 = sweptA0, SweptB0 = sweptB0,
                 Severed = Severed,
                 EdgeT = EdgeT,
                 EdgeNormal = EdgeNormal,

@@ -213,6 +213,26 @@ namespace AdaptorPhysX.Tests
         }
 
         [Test]
+        public void BladeLeavingThroughTheSurfaceSeparatesBeforeReachingTheOuterNodes()
+        {
+            // The lowest node layer lies half a cell below the bottom face (y = -0.05). A blade tip
+            // between the two has cut all the material; a tip above the face leaves some uncut.
+            SoftBodySimulation through = CreateBox(new float3(Size), gravity: false);
+            float bottomNodes = float.MaxValue;
+            for (int i = 0; i < through.NodeCount; i++)
+            {
+                bottomNodes = math.min(bottomNodes, through.Positions[i].y);
+            }
+            Assert.Less(bottomNodes, -0.5f * Size - 0.4f * through.CellSize);
+            CutPlaneX(through, 0.0f, -0.2f, 0.2f, yBottom: -0.5f * Size - 0.2f * through.CellSize);
+            Assert.AreEqual(2, through.CountPieces(), "blade through the bottom face did not separate");
+
+            SoftBodySimulation partial = CreateBox(new float3(Size), gravity: false);
+            CutPlaneX(partial, 0.0f, -0.2f, 0.2f, yBottom: -0.5f * Size + 0.2f * partial.CellSize);
+            Assert.AreEqual(1, partial.CountPieces(), "blade above the bottom face cut through");
+        }
+
+        [Test]
         public void StrokeOfManySmallSweepsCutsThrough()
         {
             var parameters = SoftBodyParameters.Default;
