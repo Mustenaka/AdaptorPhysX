@@ -7,7 +7,7 @@ using UnityEngine;
 namespace AdaptorPhysX.Samples.Editor
 {
     /// <summary>
-    /// Runs the standard scenarios (ROADMAP S1-S5) on the demo scene in edit mode with a
+    /// Runs the standard scenarios (ROADMAP S1-S6) on the demo scene in edit mode with a
     /// scripted scalpel and forceps, and writes a PNG per stage. Batch use:
     /// Unity -batchmode -projectPath . -executeMethod AdaptorPhysX.Samples.Editor.SurgeryDemoCapture.CaptureBatch -apxCaptureDir &lt;dir&gt;
     /// </summary>
@@ -134,6 +134,18 @@ namespace AdaptorPhysX.Samples.Editor
             Run(30);
             Log("S3 cross + re-cut");
             Shot("S3_block_cross_recut", new Vector3(-0.2f, 0.26f, -0.1f), new Vector3(-0.2f, 0.03f, 0.0f));
+            // The pieces still touch and hide the cuts: move the three back pieces away, one grab at a time.
+            Drag(block, new Vector3(-0.155f, 0.053f, 0.025f), new Vector3(-0.13f, 0.08f, 0.055f), 40, 0.01f);
+            Release(block);
+            Run(30);
+            Drag(block, new Vector3(-0.185f, 0.053f, 0.025f), new Vector3(-0.185f, 0.08f, 0.055f), 40, 0.01f);
+            Release(block);
+            Run(30);
+            Drag(block, new Vector3(-0.26f, 0.053f, 0.025f), new Vector3(-0.26f, 0.08f, 0.055f), 40, 0.01f);
+            Release(block);
+            Run(40);
+            Log("S3 pieces apart");
+            Shot("S3b_block_pieces_apart", new Vector3(-0.2f, 0.26f, -0.1f), new Vector3(-0.2f, 0.03f, 0.01f));
 
             // S2: partial incision into the pre-tensioned flap, about half its thickness deep.
             float flapTop = SurfaceHeight(flap, new Vector3(0.0f, 0.3f, 0.0f));
