@@ -324,11 +324,12 @@ namespace AdaptorPhysX.Tests
         }
 
         [Test]
-        [Ignore("TODO BUG-8: the pushed body tips forward on the floor and the pusher's lower edge goes more than a cell into it")]
         public void PinnedBodyPushesAnotherWithoutPassingThrough()
         {
-            Squeeze contact = RunSqueeze(true, 0.6f, false, 36, 0);
-            Squeeze unopposed = RunSqueeze(false, 0.6f, false, 36, 0);
+            // ECO-1 acceptance: the pushed body slides on a frictionless floor. With friction see
+            // PinnedBodyPushesAnotherAlongAFloorWithFriction (BUG-8).
+            Squeeze contact = RunSqueeze(true, 0.0f, false, 36, 0);
+            Squeeze unopposed = RunSqueeze(false, 0.0f, false, 36, 0);
             float h = contact.Cell;
             TestContext.WriteLine($"pushed body moved {contact.Moved * 1000:0.00} mm, deepest node {contact.Deepest * 1000:0.00} mm " +
                                   $"(cell {h * 1000:0.0} mm); without contact moved {unopposed.Moved * 1000:0.00} mm, " +
@@ -340,13 +341,15 @@ namespace AdaptorPhysX.Tests
         }
 
         [Test]
-        public void PinnedBodyPushesAnotherAlongAFrictionlessFloor()
+        [Ignore("TODO BUG-8: on a floor with friction 0.6 the pushed body hardly slides, tips forward, and the pusher goes more than a cell into it")]
+        public void PinnedBodyPushesAnotherAlongAFloorWithFriction()
         {
-            Squeeze push = RunSqueeze(true, 0.0f, false, 36, 0);
+            Squeeze push = RunSqueeze(true, 0.6f, false, 36, 0);
             float h = push.Cell;
-            TestContext.WriteLine($"pushed body moved {push.Moved * 1000:0.00} mm, deepest node {push.Deepest * 1000:0.00} mm (cell {h * 1000:0.0} mm)");
+            TestContext.WriteLine($"pushed body moved {push.Moved * 1000:0.00} mm, deepest node {push.Deepest * 1000:0.00} mm " +
+                                  $"(cell {h * 1000:0.0} mm), back face tilt {push.Tilt * 1000:0.0} mm");
             Assert.LessOrEqual(push.Deepest, h, $"a node went {push.Deepest * 1000:0.00} mm into the other body (cell {h * 1000:0.0} mm)");
-            Assert.Greater(push.Moved, 0.04f, $"the pushed body moved {push.Moved * 1000:0.00} mm");
+            Assert.Greater(push.Moved, h, $"the pushed body moved {push.Moved * 1000:0.00} mm");
         }
 
         [Test]
@@ -374,29 +377,38 @@ namespace AdaptorPhysX.Tests
             public float HoldGrowth;
             /// <summary>Fastest node of either body in the last 30 frames.</summary>
             public float MaxSpeed;
+            /// <summary>
+            /// How much further the top of the pushed body's back face moved along the push than its bottom
+            /// (0 when it slides, large when it tips over).
+            /// </summary>
+            public float Tilt;
             public float Cell;
         }
 
         /// <summary>
-        /// A 4 cm cube (resolution 8) with its rear half pinned is pushed at 0.1 m/s for <paramref name="pushFrames"/>
-        /// into a 6 cm cube (resolution 12) resting on the floor, then holds for <paramref name="holdFrames"/>. Both
-        /// lattices have 5 mm cells on the same grid; the facing faces start one cell apart, so the outer nodes of
-        /// both faces start at x = 0. <paramref name="pinFarEnd"/> pins the last 12 mm of the pushed body.
+        /// A 4 cm cube (resolution 8) with its rear half pinned, its centre 35 mm above the floor, is pushed at 0.1 m/s
+        /// for <paramref name="pushFrames"/> into a 6 cm cube (resolution 12) resting on the floor, then holds for
+        /// <paramref name="holdFrames"/>. Both lattices have 5 mm cells on the same grid; the facing faces start one
+        /// cell apart, so the outer nodes of both faces start at x = 0. <paramref name="pinFarEnd"/> pins the last
+        /// 6 mm of the pushed body.
         /// </summary>
         private Squeeze RunSqueeze(bool contact, float friction, bool pinFarEnd, int pushFrames, int holdFrames)
         {
+            const float pusherHeight = 0.035f, pushedLength = 0.06f;
             GameObject floor = Primitive(PrimitiveType.Cube);
             floor.transform.position = new Vector3(0.0f, -0.05f, 0.0f);
             floor.transform.localScale = new Vector3(0.5f, 0.1f, 0.5f);
-            ApxSoftBody pusher = CreateBody("Pusher", new Vector3(0.04f, 0.04f, 0.04f), new Vector3(-0.0225f, 0.035f, 0.0f), 8);
-            ApxSoftBody pushed = CreateBody("Pushed", new Vector3(0.06f, 0.06f, 0.06f), new Vector3(0.0325f, 0.03f, 0.0f), 12);
-            Collider pin = Trigger(new Vector3(-0.0325f, 0.035f, 0.0f), new Vector3(0.025f, 0.06f, 0.06f));
+            ApxSoftBody pusher = CreateBody("Pusher", new Vector3(0.04f, 0.04f, 0.04f), new Vector3(-0.0225f, pusherHeight, 0.0f), 8);
+            int resolution = Mathf.RoundToInt(pushedLength / 0.005f);
+            ApxSoftBody pushed = CreateBody("Pushed", new Vector3(pushedLength, 0.06f, 0.06f),
+                new Vector3(0.0025f + 0.5f * pushedLength, 0.03f, 0.0f), resolution);
+            Collider pin = Trigger(new Vector3(-0.0325f, pusherHeight, 0.0f), new Vector3(0.025f, 0.06f, 0.06f));
             pusher.pinColliders = new[] { pin };
             if (pinFarEnd)
             {
-                pushed.pinColliders = new[] { Trigger(new Vector3(0.0625f, 0.03f, 0.0f), new Vector3(0.012f, 0.08f, 0.08f)) };
+                pushed.pinColliders = new[] { Trigger(new Vector3(0.0025f + pushedLength, 0.03f, 0.0f), new Vector3(0.012f, 0.08f, 0.08f)) };
             }
-            pushed.collisionMargin = -LatticeOffset(12, 0.06f);
+            pushed.collisionMargin = -LatticeOffset(resolution, pushedLength);
             pushed.friction = friction;
             pusher.collideWithBodies = contact;
             pushed.collideWithBodies = contact;
@@ -438,6 +450,7 @@ namespace AdaptorPhysX.Tests
             AssertFinite(pusher.Simulation);
             AssertFinite(pushed.Simulation);
             result.Moved = CenterOfMass(pushed.Simulation).x - start;
+            result.Tilt = BackFaceTilt(pushed.Simulation);
             Release(pusher);
             Release(pushed);
             Object.DestroyImmediate(floor);
@@ -775,6 +788,41 @@ namespace AdaptorPhysX.Tests
                 }
             }
             return sum / count;
+        }
+
+        /// <summary>Displacement along x of the top row of the -x face less that of its bottom row.</summary>
+        private static float BackFaceTilt(SoftBodySimulation sim)
+        {
+            float back = float.MaxValue, bottom = float.MaxValue, top = float.MinValue;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                float3 r = sim.RestPositions[i];
+                back = math.min(back, r.x);
+                bottom = math.min(bottom, r.y);
+                top = math.max(top, r.y);
+            }
+            float topMove = 0.0f, bottomMove = 0.0f;
+            int topCount = 0, bottomCount = 0;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                float3 r = sim.RestPositions[i];
+                if (r.x > back + 1e-5f)
+                {
+                    continue;
+                }
+                float move = sim.Positions[i].x - math.transform(sim.RestToWorld, r).x;
+                if (r.y > top - 1e-5f)
+                {
+                    topMove += move;
+                    topCount++;
+                }
+                else if (r.y < bottom + 1e-5f)
+                {
+                    bottomMove += move;
+                    bottomCount++;
+                }
+            }
+            return topMove / math.max(topCount, 1) - bottomMove / math.max(bottomCount, 1);
         }
 
         private static float3 CenterOfMass(SoftBodySimulation sim)
