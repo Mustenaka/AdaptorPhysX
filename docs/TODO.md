@@ -242,7 +242,7 @@ public sealed class ApxHapticBridge
 | ENG-1 | 以 UPM 包发布 | 插件在 `Assets/AdaptorPhysX`，没有 `package.json`、版本号与 CHANGELOG；示例在 `Assets/Samples`，不是包内的 `Samples~` | 未开始 | 另一个空工程用 git URL（`?path=`）引用包后编译通过，示例可从 Package Manager 导入，包内 EditMode 测试可运行 |
 | ENG-2 | 自动运行测试 | EditMode 与 PlayMode 测试只在本机 batchmode 或编辑器中手动运行（README）；没有 CI | 未开始 | 推送后自动运行 EditMode 与 PlayMode 测试并保存结果文件；运行环境的配置（含 Unity 许可证）写入 README |
 | ENG-3 | 基准测试基线 | 判断改动是否改变仿真结果时比较 16 组 4 个阶段的 `positionsHash`；结果文件在 `Benchmarks/Results/`（不提交），对照值只存在于本机上一次运行的文件中；哈希只在同一机器、同一构建下可比 | 未开始 | 基线文件（例如 `Benchmarks/baseline.json`：每组 4 个阶段的 `positionsHash`、块数、断棱数，以及机器与构建信息）入库；基准测试运行后与基线比较，列出不一致的组 |
-| ENG-4 | 标准场景截图与里程碑验收 | `docs/images` 中 S1–S6 的截图来自 `1ef1a09`（2026-10-26），之后 BUG-1、BUG-4、BUG-6、BUG-7 修改了切割、皮肤渲染与求解器初始状态；S8–S11 来自 `1e35fa0`，早于 BUG-8 的同步子步（`2aec0fe`）。本地 `Captures/`（不提交）中最新的截图（2026-10-27 01:27 与 02:06）同样早于 BUG-6 合入（`20c1e5e`）与 `2aec0fe`。ROADMAP 标准场景表的“当前结果”列未按这些修复重新核对；M1、M2 自 2026-10-20 起为“已完成，待人工验收”，按 ROADMAP 决策 5 以截图为准 | 未开始 | 用当前提交重新截取 S1–S6、S8–S11，更新 `docs/images` 与 ROADMAP“当前结果”列；M1、M2 的人工验收结果记入 ROADMAP |
+| ENG-4 | 标准场景截图与里程碑验收 | 此前 `docs/images` 中 S1–S6 的截图来自 `1ef1a09`（2026-10-26），早于 BUG-1、BUG-4、BUG-6、BUG-7；S8–S11 来自 `1e35fa0`，早于 BUG-8 的同步子步（`2aec0fe`）。2026-10-27 按 `7389533` 在 batchmode 中重新截取 S1–S6、S8–S11 并更新 `docs/images`：S3 原截图中各块仍贴在一起，看不出切口，截图工具在 S3 之后拉开后侧三块，新增 S3b（5 块分离，切面完整）。与此前的截图相比，S1–S6 除背景中组织块的位置外差别在几千像素以内，S8 中肝叶位置略有变化，S10、S11 逐像素相同；ROADMAP“当前结果”各项仍成立（S8 补充两个物体之后都进入休眠）。S3b 中皮肤边缘与切面交界处有 1–2 像素的台阶（DESIGN 第 7 节，每个体素一个拟合平面）。未完成：M1、M2 的人工验收（ROADMAP 决策 5） | 部分完成 | 用当前提交重新截取 S1–S6、S8–S11，更新 `docs/images` 与 ROADMAP“当前结果”列；M1、M2 的人工验收结果记入 ROADMAP |
 
 ## 7. 建议顺序
 
@@ -285,4 +285,5 @@ public sealed class ApxHapticBridge
 | 2026-10-27 | `28b6782` | HAP-4 已完成：每步为接触中的碰撞体发布局部线性力模型，K = −k N（接触法向张量乘沿运动方向的差分刚度）；节点 job 累加接触法向张量（`ApxWrench.ContactNormals`），`SoftBodySimulation` 增加 `SimulatedTime`、`ShapeMeanPosition`。新增 EditMode 测试 2 个；基准测试 16 组 4 个阶段的 `positionsHash` 与修改前一致 |
 | 2026-10-27 | `0ba4a57` | 复核 HAP-4 与上一次 TODO 补充：HAP-4 的验收改为已采用的 K 的求法并写明测试条件，限制补上体素 5 mm 时的误差；BUG-8 修改前后基准测试 16 组 4 个阶段（rest、drop、cut、afterCut）的 `positionsHash` 与 `20c1e5e` 一致（此前只对比了 rest、afterCut） |
 | 2026-10-27 | `d9fa515` | 文件行号改以 `0ba4a57` 为准：HAP-2、HAP-4 之后移动的 MED-4、SUT-1、CFG-7 中的行号；CFG-6 的已有派生量补充 `SimulatedTime` |
-| 2026-10-27 | — | 补充核对中发现但未列出的缺口：新增 BUG-10（开放网格初始化时没有提示）、ECO-9（整体移动与 Transform 变化）、MED-18（切下组织块的管理）与第 6 节发布与工程（ENG-1 至 ENG-4：UPM 包、自动运行测试、基准测试基线、标准场景截图与里程碑验收）；CFG-7 补充钉住区域最多 31 个、超出部分没有提示；建议顺序改为第 7 节 |
+| 2026-10-27 | `0012562` | 补充核对中发现但未列出的缺口：新增 BUG-10（开放网格初始化时没有提示）、ECO-9（整体移动与 Transform 变化）、MED-18（切下组织块的管理）与第 6 节发布与工程（ENG-1 至 ENG-4：UPM 包、自动运行测试、基准测试基线、标准场景截图与里程碑验收）；CFG-7 补充钉住区域最多 31 个、超出部分没有提示；建议顺序改为第 7 节 |
+| 2026-10-27 | — | ENG-4 部分完成：按 `7389533` 在 batchmode 中重新截取 S1–S6、S8–S11，更新 `docs/images`、README 与 ROADMAP“当前结果”列；截图工具新增 S3b（拉开后侧三块）；M1、M2 的人工验收未完成 |

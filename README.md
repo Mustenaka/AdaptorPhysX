@@ -9,9 +9,9 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 |---|---|---|---|
 | ![S1](docs/images/S1b_block_pulled.png) | ![S2](docs/images/S2_flap_incision.png) | ![S4](docs/images/S4_flap_retraction_close.png) | ![S5](docs/images/S5b_liver_wedge_lifted.png) |
 
-| 实体组织上的小切口 | 牵开切口，露出真皮与脂肪 |
-|---|---|
-| ![S6a](docs/images/S6a_pad_incision.png) | ![S6b](docs/images/S6b_pad_retracted.png) |
+| 十字切与再次切割后拉开的 5 块 | 实体组织上的小切口 | 牵开切口，露出真皮与脂肪 |
+|---|---|---|
+| ![S3b](docs/images/S3b_block_pieces_apart.png) | ![S6a](docs/images/S6a_pad_incision.png) | ![S6b](docs/images/S6b_pad_retracted.png) |
 
 | 软体之间的接触 | 钢球（Rigidbody）落在组织上 | 环形器械（距离场）压入 | 粘附的平板提起组织 |
 |---|---|---|---|
