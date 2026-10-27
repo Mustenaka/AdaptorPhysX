@@ -107,7 +107,7 @@ SUT-5 不模拟缝线，可以在缝针与缝线之前实现，用于验证切�
 | 编号 | 内容 | 现状 | 状态 | 验收 |
 |---|---|---|---|---|
 | HAP-1 | 碰撞体受力：器械（Collider）受到的力、力矩、接触中心 | 已实现（DESIGN 9.2 节）：节点修正的冲量按 256 个节点一块累加、步末按固定顺序求和；`ApxSoftBody.TryGetColliderWrench`、`ColliderWrenches`、`ApxHaptics.TrySumColliderWrench`、`SoftBodySimulation.TryGetShapeWrench`。力矩参考点为碰撞体形状的参考点（球、盒、距离场为中心，胶囊为第一个端点），与下方草案中的 Transform 位置不同。`ColliderForceEqualsTheWeightOfARestingBody`：−9.790 N，重量 9.810 N（偏差 0.2%） | 已完成 | 节点 i 对碰撞体 s 的位置修正 Δx（法向投影加摩擦）换算为力 `m_i Δx / h²`（h 为子步长），对节点求和取反；力矩相对碰撞体 Transform 位置。静止物体放在 Box 碰撞体上，碰撞体受力等于总重量（误差 < 2%） |
-| HAP-2 | 运动学帧受力：抓取帧、钉住区域的支座反力 | 没有。运动学节点在求解中逆质量为 0（`SolverJobs.cs:281`），作用在它们上的约束力不计算 | 未开始 | 两种候选方法：在 `SolveCellsJob` 中累加约束对运动学节点的 `λ∇C / h²`；或在步末对运动学节点计算弹性力 `−∂E/∂x`。按下面两项测试选择：用抓取提起整个物体静止后，抓取受力等于总重量（误差 < 2%）；两端钉住的物体静止时，钉住反力之和等于总重量 |
+| HAP-2 | 运动学帧受力：抓取帧、钉住区域的支座反力 | 已实现（DESIGN 9.2 节）：`SolveCellsJob` 累加约束对运动学节点的 `∇C λ`（按（切片, 帧）求部分和，步末按切片序号求和，不使用原子操作），一步的力为约束力的子步平均加上帧上节点自身的重量；`SoftBodySimulation.TryGetFrameWrench`、`ApxSoftBody.TryGetGrabWrench`、`TryGetPinWrench`（草案中的 `GrabWrench`、`GetPinWrench` 改为与 HAP-1 一致的 Try 形式）。力矩相对帧在步末的原点（抓取目标、钉住碰撞体位置）。`GrabForceEqualsTheWeightOfALiftedBody`：−9.779 N，重量 9.810 N（偏差 0.3%；被抓取的 39 个节点重 0.383 N，不计入时偏差 4.2%）；`PinForcesCarryTheWeightOfAPinnedBody`：两端合计 −1.436 N，重量 1.440 N（偏差 0.3%）。步末弹性力 `−∂E/∂x` 的方法（试验，未采用）：同一抓取场景在分辨率 8、16、24 时偏差 +0.8%、+5.8%、+24.4%，约束力均为 −0.3%。不计入：被抓取组织随帧加速的惯性力；块间与物体间接触对运动学节点的反作用。没有运动学节点时基准测试 16 组的 `positionsHash` 不变 | 已完成 | 两种候选方法：在 `SolveCellsJob` 中累加约束对运动学节点的 `λ∇C / h²`；或在步末对运动学节点计算弹性力 `−∂E/∂x`。按下面两项测试选择：用抓取提起整个物体静止后，抓取受力等于总重量（误差 < 2%）；两端钉住的物体静止时，钉住反力之和等于总重量 |
 | HAP-3 | 力的物理校验测试 | 没有 | 未开始 | EditMode 测试：自重（HAP-1、HAP-2 中的两项）；力平衡（器械力 + 钉住反力 + 重力 = 0，物体静止时）；球形压头压入组织块，力随深度单调增加，小深度下与 Hertz 接触解比较（容差 30%，与 `SelfWeightCompressionMatchesYoungsModulus` 同级）；相同输入时力逐位一致 |
 | HAP-4 | 局部线性力模型：供 1 kHz 线程在两次物理步之间计算力 | 没有 | 未开始 | 每步发布 `F(x) = F0 + K (x − x0)`，K 为 3×3 刚度（N/m）。K 的计算方法待定，候选：各接触节点法向与等效刚度的和 `Σ k n nᵀ`；相邻两步的有限差分（秩一更新）。验收：压头匀速压入时，用模型预测下一步的力，相对误差 < 10% |
 | HAP-5 | 虚拟耦合（纯计算） | 没有 | 未开始 | `F = k_c (x_proxy − x_device) + b_c (v_proxy − v_device)`，带力上限；参数由调用方按设备给出。单元测试：脚本设备沿闭合轨迹往返时，设备对用户做的净功不为正（无能量注入） |
@@ -124,7 +124,7 @@ public struct ApxWrench
 {
     public float3 Force;            // N
     public float3 Torque;           // N·m，相对 Origin
-    public float3 Origin;           // 力矩参考点：碰撞体 Transform 位置，或运动学帧原点
+    public float3 Origin;           // 力矩参考点：碰撞体形状的参考点（HAP-1），或运动学帧原点（HAP-2）
     public float3 ContactCentroid;  // 按力大小加权的接触点
     public int ContactNodes;
 }
@@ -133,15 +133,15 @@ public partial class ApxSoftBody
 {
     // HAP-1：上一步中该碰撞体受到的力；本步未接触时返回 false
     public bool TryGetColliderWrench(Collider collider, out ApxWrench wrench);
-    // HAP-2：抓取帧与钉住区域（pinColliders 的下标）受到的力
-    public ApxWrench GrabWrench { get; }
-    public ApxWrench GetPinWrench(int pinIndex);
+    // HAP-2：抓取帧与钉住区域（pinColliders 的下标）受到的力；未抓取、区域没有节点时返回 false
+    public bool TryGetGrabWrench(out ApxWrench wrench);
+    public bool TryGetPinWrench(int pinIndex, out ApxWrench wrench);
 }
 
 public static class ApxHaptics
 {
-    // 所有 ApxSoftBody 对同一碰撞体的力之和
-    public static ApxWrench SumColliderWrench(Collider collider);
+    // 所有 ApxSoftBody 对同一碰撞体的力之和；没有物体接触该碰撞体时返回 false
+    public static bool TrySumColliderWrench(Collider collider, out ApxWrench sum);
 }
 
 // HAP-4：局部线性力模型，每个物理步发布一次
@@ -234,7 +234,7 @@ public sealed class ApxHapticBridge
 | 2 | 切割与接触缺陷（BUG-1、BUG-2、BUG-4、BUG-6），之后 BUG-3 | 部分完成（BUG-1、BUG-4、BUG-5、BUG-6、BUG-7 已完成；BUG-2、BUG-3 原因已确认，修复需改动求解器） |
 | 3 | 参数元数据、生效时机、MCP 工具（CFG-1、CFG-2、CFG-5、CFG-6、CFG-8；同时处理 BUG-5） | 部分完成（CFG-2 已完成） |
 | 4 | 跨物体碰撞、MeshCollider 与 SDF 器械、局部重建（ECO-1、ECO-2、PERF-5、PERF-6） | 部分完成（ECO-1、ECO-2 已完成，摩擦地面上的推动见 BUG-8；同时完成 ECO-3、ECO-6、ECO-8，ECO-7 部分完成） |
-| 5 | 力反馈计算接口（HAP-1 至 HAP-7，按编号顺序） | 部分完成（HAP-1 已完成） |
+| 5 | 力反馈计算接口（HAP-1 至 HAP-7，按编号顺序） | 部分完成（HAP-1、HAP-2 已完成） |
 | 6 | 体素材料标签 → 非线性与粘弹性材料 → 撕裂（MED-5、MED-1、MED-2、MED-6） | 未开始 |
 | 7 | 缝合：SUT-1、SUT-5、SUT-9 先行；SUT-2 至 SUT-4、SUT-6 依赖穿刺（MED-9）与缝线（ECO-5） | 未开始 |
 
@@ -260,4 +260,5 @@ public sealed class ApxHapticBridge
 | 2026-10-27 | `2aec0fe` | BUG-8 部分完成：相互接触的物体同步推进子步（`SubstepGroup`，每个子步求解后刷新对方副本），本步不推进的对方作为静止障碍；物体间接触另用补全深处的格点 SDF（`ContactSdfJob`）。新增 `SqueezedBodiesKeepTheirContactUnderASustainedLoad`、`PinnedBodyPushesAnotherAlongAFrictionlessFloor`；地面摩擦下的推动仍穿透（被推物体倾倒，受力集中在推动体底边），ECO-1 验收测试保持 `[Ignore]` |
 | 2026-10-27 | `8180ec3` | BUG-8：试过反作用传递与按自身移动放宽推出上限，均使静态挤压出现 0.7–1.2 m/s 的抖动，摩擦推动仍超过 1h（最深 7.5 mm），未采用；记录结果，ECO-1 验收场景待定 |
 | 2026-10-27 | `8180ec3` | ECO-1 已完成：验收改为被推物体在无摩擦地面上平移（`PinnedBodyPushesAnotherWithoutPassingThrough`，最深节点 4.33 mm，前移 75.5 mm）；摩擦地面场景改为 `PinnedBodyPushesAnotherAlongAFloorWithFriction`（`[Ignore]`，BUG-8），并记录降低推动高度、加长被推物体后仍穿透的结果。删去 `PinnedBodyPushesAnotherAlongAFrictionlessFloor`（与新的验收测试相同） |
-| 2026-10-27 | — | 补全变更记录中的提交号；PERF-4 改为部分完成（batchmode 已运行，Player 与 Quest 未测） |
+| 2026-10-27 | `3fd3216` | 补全变更记录中的提交号；PERF-4 改为部分完成（batchmode 已运行，Player 与 Quest 未测） |
+| 2026-10-27 | — | HAP-2 已完成：约束对运动学节点的力在求解中按（切片, 帧）累加，加上帧上节点自身的重量；`TryGetFrameWrench`、`TryGetGrabWrench`、`TryGetPinWrench`，接口草案改为已实现的签名（含 HAP-1 的 `TrySumColliderWrench`）。新增 EditMode 测试 2 个；基准测试 16 组 4 个阶段的 `positionsHash` 与修改前一致 |

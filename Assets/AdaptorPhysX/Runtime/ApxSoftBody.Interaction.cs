@@ -48,6 +48,30 @@ namespace AdaptorPhysX
             }
         }
 
+        /// <summary>
+        /// Force and torque the tissue exerted on the grab in the last step (HAP-2): the elastic forces on the
+        /// grabbed nodes plus their weight, with the torque about the grab target. False when not grabbing
+        /// or before the first step of the grab.
+        /// </summary>
+        public bool TryGetGrabWrench(out ApxWrench wrench)
+        {
+            wrench = default;
+            return IsGrabbing && Simulation != null && Simulation.TryGetFrameWrench(SoftBodySimulation.GrabFrame, out wrench);
+        }
+
+        /// <summary>
+        /// Force and torque the tissue exerted on pin region <c>pinColliders[pinIndex]</c> in the last step
+        /// (HAP-2), with the torque about the pin collider's position. False when the region holds no nodes.
+        /// A sleeping body keeps the forces of its last step.
+        /// </summary>
+        public bool TryGetPinWrench(int pinIndex, out ApxWrench wrench)
+        {
+            wrench = default;
+            return Simulation != null && pinIndex >= 0 && pinIndex < pinColliders.Length &&
+                   pinIndex + 1 < SoftBodySimulation.MaxKinematicFrames &&
+                   Simulation.TryGetFrameWrench(pinIndex + 1, out wrench);
+        }
+
         private void CollectWrenches()
         {
             if (Simulation == null)

@@ -8,12 +8,14 @@ namespace AdaptorPhysX
     /// <summary>
     /// Momentum the colliders gave the nodes during a step, summed per block of nodes so that the
     /// node job needs no atomics; <see cref="ReduceImpulseJob"/> adds the blocks in a fixed order.
+    /// Also the momentum the kinematic frames gave the tissue through the constraints on their nodes,
+    /// summed per slice of cells by the constraint solve.
     /// </summary>
     public struct ColliderImpulse
     {
         /// <summary>Sum of m dx / h over nodes and substeps (N s), on the tissue.</summary>
         public float3 Linear;
-        /// <summary>Sum of r x (m dx / h) about the shape's reference point (N m s).</summary>
+        /// <summary>Sum of r x (m dx / h) about the shape's (or frame's) reference point (N m s).</summary>
         public float3 Angular;
         /// <summary>Contact points weighted by |dx|, and the sum of the weights.</summary>
         public float3 Centroid;
@@ -58,6 +60,39 @@ namespace AdaptorPhysX
                     sum += Partial[b];
                 }
                 Total[s] = sum;
+            }
+        }
+    }
+
+    /// <summary>Nodes, mass and first mass moment (in frame coordinates) of each kinematic frame.</summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal struct KinematicFramesJob : IJob
+    {
+        [ReadOnly] public NativeArray<int> KinematicId;
+        [ReadOnly] public NativeArray<float3> KinematicLocal;
+        [ReadOnly] public NativeArray<float> InverseMass;
+        /// <summary>Per frame: sum of m x (xyz, frame coordinates) and of m (w), at the density the masses were built with.</summary>
+        public NativeArray<float4> Mass;
+        public NativeArray<int> Nodes;
+
+        public void Execute()
+        {
+            for (int f = 0; f < Mass.Length; f++)
+            {
+                Mass[f] = float4.zero;
+                Nodes[f] = 0;
+            }
+            for (int i = 0; i < KinematicId.Length; i++)
+            {
+                int f = KinematicId[i];
+                if (f < 0)
+                {
+                    continue;
+                }
+                float w = InverseMass[i];
+                float m = w > 0.0f ? 1.0f / w : 0.0f;
+                Mass[f] += new float4(m * KinematicLocal[i], m);
+                Nodes[f]++;
             }
         }
     }

@@ -496,6 +496,7 @@ namespace AdaptorPhysX
             {
                 UpdateCellRest();
             }
+            ConfigureFrames(ref solve, h);
             JobHandle handle = new EffectiveMassJob
             {
                 InverseMass = InverseMass,
@@ -718,6 +719,7 @@ namespace AdaptorPhysX
                 KinematicId[n] = frame;
                 KinematicLocal[n] = math.transform(worldToFrame, Positions[n]);
             }
+            KinematicFramesChanged(frame);
         }
 
         public void Detach(int frame)
@@ -730,6 +732,7 @@ namespace AdaptorPhysX
                     KinematicId[i] = -1;
                 }
             }
+            KinematicFramesChanged(frame);
         }
 
         /// <summary>Node closest to the ray within <paramref name="maxDistance"/>, preferring the nearest along the ray.</summary>
@@ -978,6 +981,8 @@ namespace AdaptorPhysX
             nodeRest.Dispose();
             nodeMass.Dispose();
             RebuildInteractionNodes();
+            // Copies of kinematic nodes stay kinematic; the frames' masses are shared among them.
+            KinematicFramesChanged(-1);
 
             new BoundsJob { Positions = Positions, Velocities = Velocities, NodeReal = NodeReal, Bounds = _bounds }.Run();
             TopologyVersion++;

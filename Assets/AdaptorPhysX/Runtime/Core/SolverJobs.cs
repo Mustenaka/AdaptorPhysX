@@ -317,6 +317,12 @@ namespace AdaptorPhysX
 
         public static Lanes3 Cross(Lanes3 a, Lanes3 b) =>
             new Lanes3(a.Y * b.Z - a.Z * b.Y, a.Z * b.X - a.X * b.Z, a.X * b.Y - a.Y * b.X);
+
+        /// <summary>b where c is set, a elsewhere.</summary>
+        public static Lanes3 Select(Lanes3 a, Lanes3 b, bool4 c) =>
+            new Lanes3(math.select(a.X, b.X, c), math.select(a.Y, b.Y, c), math.select(a.Z, b.Z, c));
+
+        public float3 Lane(int i) => new float3(X[i], Y[i], Z[i]);
     }
 
     /// <summary>Four 3x3 matrices (columns C0..C2), one per SIMD lane.</summary>
@@ -403,9 +409,23 @@ namespace AdaptorPhysX
         public float HydrostaticCompliance;
         public float DeviatoricCompliance;
 
+        /// <summary>
+        /// Forces on the kinematic frames (HAP-2): the impulse grad C lambda / dt the constraints exert on
+        /// each kinematic node (weight 0, so it does not move) is summed per (slice, frame). A slice is
+        /// solved by one thread in a fixed order, so the sums need no atomics.
+        /// </summary>
+        public bool AccumulateFrames;
+        [ReadOnly] public NativeArray<int> KinematicId;
+        /// <summary>Torque reference point of each frame.</summary>
+        [ReadOnly] public NativeArray<float3> FrameOrigins;
+        /// <summary>Slices * MaxKinematicFrames sums of the momentum the frames gave the tissue.</summary>
+        [NativeDisableParallelForRestriction] public NativeArray<ColliderImpulse> FrameImpulses;
+        public float InverseDt;
+
         public void Execute(int index)
         {
-            int4 slice = Slices[SliceOffset + index];
+            int sliceIndex = SliceOffset + index;
+            int4 slice = Slices[sliceIndex];
             for (int g = slice.x; g < slice.x + slice.y; g++)
             {
                 int4 cells = SliceGroups[g];
@@ -413,32 +433,59 @@ namespace AdaptorPhysX
                     CellCopyRange[cells.z].y, CellCopyRange[cells.w].y);
                 if (math.all(copies == 1))
                 {
-                    SolveGroup(cells);
+                    SolveGroup(cells, sliceIndex);
                     continue;
                 }
                 // A cut cell has several copies: solve the four cells one by one.
-                SolveCell(cells.x);
-                SolveCell(cells.y);
-                SolveCell(cells.z);
-                SolveCell(cells.w);
+                SolveCell(cells.x, sliceIndex);
+                SolveCell(cells.y, sliceIndex);
+                SolveCell(cells.z, sliceIndex);
+                SolveCell(cells.w, sliceIndex);
             }
             for (int c = slice.z; c < slice.z + slice.w; c++)
             {
-                SolveCell(SliceCells[c]);
+                SolveCell(SliceCells[c], sliceIndex);
             }
         }
 
-        private void SolveCell(int cell)
+        private void SolveCell(int cell, int slice)
         {
             int2 range = CellCopyRange[cell];
             for (int q = range.x; q < range.x + range.y; q++)
             {
-                SolveCopy(cell, q);
+                SolveCopy(cell, q, slice);
             }
         }
 
+        /// <summary>
+        /// Adds the constraint impulse <paramref name="d"/> / dt on a corner of weight <paramref name="w"/>
+        /// to its frame, if it is kinematic.
+        /// </summary>
+        private void AddFrameImpulse(int node, float w, float3 x, float3 d, int slice)
+        {
+            int frame = KinematicId[node];
+            if (frame < 0 || w != 0.0f)
+            {
+                return;
+            }
+            // The frame gives the tissue the opposite of what the constraints exert on its node.
+            float3 impulse = -d * InverseDt;
+            int index = slice * SoftBodySimulation.MaxKinematicFrames + frame;
+            ColliderImpulse sum = FrameImpulses[index];
+            sum.Add(x, FrameOrigins[frame], impulse, math.length(impulse));
+            FrameImpulses[index] = sum;
+        }
+
+        private void AddFrameImpulses(int4 n, float4 w, Lanes3 x, Lanes3 d, int slice)
+        {
+            AddFrameImpulse(n.x, w.x, x.Lane(0), d.Lane(0), slice);
+            AddFrameImpulse(n.y, w.y, x.Lane(1), d.Lane(1), slice);
+            AddFrameImpulse(n.z, w.z, x.Lane(2), d.Lane(2), slice);
+            AddFrameImpulse(n.w, w.w, x.Lane(3), d.Lane(3), slice);
+        }
+
         /// <summary>The six tetrahedra of four uncut cells without a shared node, one cell per lane.</summary>
-        private void SolveGroup(int4 cells)
+        private void SolveGroup(int4 cells, int slice)
         {
             int4 copy = new int4(CellCopyRange[cells.x].x, CellCopyRange[cells.y].x,
                 CellCopyRange[cells.z].x, CellCopyRange[cells.w].x);
@@ -459,13 +506,18 @@ namespace AdaptorPhysX
                 CellScale[cells.x] * Copies[copy.x].Weight, CellScale[cells.y] * Copies[copy.y].Weight,
                 CellScale[cells.z] * Copies[copy.z].Weight, CellScale[cells.w] * Copies[copy.w].Weight);
             int4 r = copy * Lattice.TetsPerCell;
+            // Constraint impulses on the corners of zero weight, summed over the six tetrahedra.
+            bool frames = AccumulateFrames && math.any((w0 == 0.0f) | (w1 == 0.0f) | (w2 == 0.0f) | (w3 == 0.0f) |
+                                                       (w4 == 0.0f) | (w5 == 0.0f) | (w6 == 0.0f) | (w7 == 0.0f));
+            Lanes3 d0 = default, d1 = default, d2 = default, d3 = default;
+            Lanes3 d4 = default, d5 = default, d6 = default, d7 = default;
 
-            SolveTets(ref x0, ref x1, ref x3, ref x7, w0, w1, w3, w7, 0, restScale, volumeScale, r);
-            SolveTets(ref x0, ref x1, ref x7, ref x5, w0, w1, w7, w5, 1, restScale, volumeScale, r + 1);
-            SolveTets(ref x0, ref x2, ref x7, ref x3, w0, w2, w7, w3, 2, restScale, volumeScale, r + 2);
-            SolveTets(ref x0, ref x2, ref x6, ref x7, w0, w2, w6, w7, 3, restScale, volumeScale, r + 3);
-            SolveTets(ref x0, ref x4, ref x5, ref x7, w0, w4, w5, w7, 4, restScale, volumeScale, r + 4);
-            SolveTets(ref x0, ref x4, ref x7, ref x6, w0, w4, w7, w6, 5, restScale, volumeScale, r + 5);
+            SolveTets(ref x0, ref x1, ref x3, ref x7, w0, w1, w3, w7, 0, restScale, volumeScale, r, frames, ref d0, ref d1, ref d3, ref d7);
+            SolveTets(ref x0, ref x1, ref x7, ref x5, w0, w1, w7, w5, 1, restScale, volumeScale, r + 1, frames, ref d0, ref d1, ref d7, ref d5);
+            SolveTets(ref x0, ref x2, ref x7, ref x3, w0, w2, w7, w3, 2, restScale, volumeScale, r + 2, frames, ref d0, ref d2, ref d7, ref d3);
+            SolveTets(ref x0, ref x2, ref x6, ref x7, w0, w2, w6, w7, 3, restScale, volumeScale, r + 3, frames, ref d0, ref d2, ref d6, ref d7);
+            SolveTets(ref x0, ref x4, ref x5, ref x7, w0, w4, w5, w7, 4, restScale, volumeScale, r + 4, frames, ref d0, ref d4, ref d5, ref d7);
+            SolveTets(ref x0, ref x4, ref x7, ref x6, w0, w4, w7, w6, 5, restScale, volumeScale, r + 5, frames, ref d0, ref d4, ref d7, ref d6);
 
             Store(n0, x0);
             Store(n1, x1);
@@ -475,6 +527,17 @@ namespace AdaptorPhysX
             Store(n5, x5);
             Store(n6, x6);
             Store(n7, x7);
+            if (frames)
+            {
+                AddFrameImpulses(n0, w0, x0, d0, slice);
+                AddFrameImpulses(n1, w1, x1, d1, slice);
+                AddFrameImpulses(n2, w2, x2, d2, slice);
+                AddFrameImpulses(n3, w3, x3, d3, slice);
+                AddFrameImpulses(n4, w4, x4, d4, slice);
+                AddFrameImpulses(n5, w5, x5, d5, slice);
+                AddFrameImpulses(n6, w6, x6, d6, slice);
+                AddFrameImpulses(n7, w7, x7, d7, slice);
+            }
         }
 
         private int4 Corners(int4 b, int k) =>
@@ -496,9 +559,13 @@ namespace AdaptorPhysX
             Positions[n.w] = new float3(v.X.w, v.Y.w, v.Z.w);
         }
 
-        /// <summary>Lane form of <see cref="SolveTet"/>: the same constraints, branches turned into selects.</summary>
+        /// <summary>
+        /// Lane form of <see cref="SolveTet"/>: the same constraints, branches turned into selects. With
+        /// <paramref name="frames"/>, grad C lambda of the corners of zero weight is added to d0..d3.
+        /// </summary>
         private void SolveTets(ref Lanes3 x0, ref Lanes3 x1, ref Lanes3 x2, ref Lanes3 x3,
-            float4 w0, float4 w1, float4 w2, float4 w3, int tet, LaneMatrix restScale, float4 volumeScale, int4 rotationIndex)
+            float4 w0, float4 w1, float4 w2, float4 w3, int tet, LaneMatrix restScale, float4 volumeScale, int4 rotationIndex,
+            bool frames, ref Lanes3 d0, ref Lanes3 d1, ref Lanes3 d2, ref Lanes3 d3)
         {
             LaneMatrix inverseRest = LaneMatrix.Mul(TetInverseRest[tet], restScale);
             float4 volume = TetVolume[tet] * volumeScale;
@@ -558,10 +625,23 @@ namespace AdaptorPhysX
             float4 dH = (-cH * a22 + cD2 * a12) * inverseDet;
             float4 dD = (-cD2 * a11 + cH * a12) * inverseDet;
 
-            x0 += (gH0 * dH + gD0 * dD) * w0;
-            x1 += (gH.C0 * dH + gD.C0 * dD) * w1;
-            x2 += (gH.C1 * dH + gD.C1 * dD) * w2;
-            x3 += (gH.C2 * dH + gD.C2 * dD) * w3;
+            Lanes3 g0 = gH0 * dH + gD0 * dD;
+            Lanes3 g1 = gH.C0 * dH + gD.C0 * dD;
+            Lanes3 g2 = gH.C1 * dH + gD.C1 * dD;
+            Lanes3 g3 = gH.C2 * dH + gD.C2 * dD;
+            x0 += g0 * w0;
+            x1 += g1 * w1;
+            x2 += g2 * w2;
+            x3 += g3 * w3;
+            if (frames)
+            {
+                // As in the scalar path, a tetrahedron without a free corner exerts nothing.
+                bool4 free = w0 + w1 + w2 + w3 > 0.0f;
+                d0 = Lanes3.Select(d0, d0 + g0, free & (w0 == 0.0f));
+                d1 = Lanes3.Select(d1, d1 + g1, free & (w1 == 0.0f));
+                d2 = Lanes3.Select(d2, d2 + g2, free & (w2 == 0.0f));
+                d3 = Lanes3.Select(d3, d3 + g3, free & (w3 == 0.0f));
+            }
         }
 
         /// <summary>
@@ -569,7 +649,7 @@ namespace AdaptorPhysX
         /// registers and written back once: consecutive tetrahedra share the 0-7 diagonal, and
         /// passing their positions through memory stalls on store-to-load forwarding.
         /// </summary>
-        private void SolveCopy(int cell, int copy)
+        private void SolveCopy(int cell, int copy, int slice)
         {
             int b = copy * Lattice.CornerCount;
             int n0 = CopyNodes[b], n1 = CopyNodes[b + 1], n2 = CopyNodes[b + 2], n3 = CopyNodes[b + 3];
@@ -584,14 +664,18 @@ namespace AdaptorPhysX
             float3x3 restScale = CellRest[cell];
             float volumeScale = CellScale[cell] * Copies[copy].Weight;
             int r = copy * Lattice.TetsPerCell;
+            bool frames = AccumulateFrames && (w0 == 0.0f || w1 == 0.0f || w2 == 0.0f || w3 == 0.0f ||
+                                               w4 == 0.0f || w5 == 0.0f || w6 == 0.0f || w7 == 0.0f);
+            float3 d0 = float3.zero, d1 = float3.zero, d2 = float3.zero, d3 = float3.zero;
+            float3 d4 = float3.zero, d5 = float3.zero, d6 = float3.zero, d7 = float3.zero;
 
             // Kuhn split around the 0-7 diagonal, as in Lattice.TetCorners (the same for both parities).
-            SolveTet(ref x0, ref x1, ref x3, ref x7, w0, w1, w3, w7, 0, restScale, volumeScale, r);
-            SolveTet(ref x0, ref x1, ref x7, ref x5, w0, w1, w7, w5, 1, restScale, volumeScale, r + 1);
-            SolveTet(ref x0, ref x2, ref x7, ref x3, w0, w2, w7, w3, 2, restScale, volumeScale, r + 2);
-            SolveTet(ref x0, ref x2, ref x6, ref x7, w0, w2, w6, w7, 3, restScale, volumeScale, r + 3);
-            SolveTet(ref x0, ref x4, ref x5, ref x7, w0, w4, w5, w7, 4, restScale, volumeScale, r + 4);
-            SolveTet(ref x0, ref x4, ref x7, ref x6, w0, w4, w7, w6, 5, restScale, volumeScale, r + 5);
+            SolveTet(ref x0, ref x1, ref x3, ref x7, w0, w1, w3, w7, 0, restScale, volumeScale, r, frames, ref d0, ref d1, ref d3, ref d7);
+            SolveTet(ref x0, ref x1, ref x7, ref x5, w0, w1, w7, w5, 1, restScale, volumeScale, r + 1, frames, ref d0, ref d1, ref d7, ref d5);
+            SolveTet(ref x0, ref x2, ref x7, ref x3, w0, w2, w7, w3, 2, restScale, volumeScale, r + 2, frames, ref d0, ref d2, ref d7, ref d3);
+            SolveTet(ref x0, ref x2, ref x6, ref x7, w0, w2, w6, w7, 3, restScale, volumeScale, r + 3, frames, ref d0, ref d2, ref d6, ref d7);
+            SolveTet(ref x0, ref x4, ref x5, ref x7, w0, w4, w5, w7, 4, restScale, volumeScale, r + 4, frames, ref d0, ref d4, ref d5, ref d7);
+            SolveTet(ref x0, ref x4, ref x7, ref x6, w0, w4, w7, w6, 5, restScale, volumeScale, r + 5, frames, ref d0, ref d4, ref d7, ref d6);
 
             Positions[n0] = x0;
             Positions[n1] = x1;
@@ -601,10 +685,26 @@ namespace AdaptorPhysX
             Positions[n5] = x5;
             Positions[n6] = x6;
             Positions[n7] = x7;
+            if (frames)
+            {
+                AddFrameImpulse(n0, w0, x0, d0, slice);
+                AddFrameImpulse(n1, w1, x1, d1, slice);
+                AddFrameImpulse(n2, w2, x2, d2, slice);
+                AddFrameImpulse(n3, w3, x3, d3, slice);
+                AddFrameImpulse(n4, w4, x4, d4, slice);
+                AddFrameImpulse(n5, w5, x5, d5, slice);
+                AddFrameImpulse(n6, w6, x6, d6, slice);
+                AddFrameImpulse(n7, w7, x7, d7, slice);
+            }
         }
 
+        /// <summary>
+        /// One tetrahedron. With <paramref name="frames"/>, grad C lambda of the corners of zero weight
+        /// is added to d0..d3.
+        /// </summary>
         private void SolveTet(ref float3 x0, ref float3 x1, ref float3 x2, ref float3 x3,
-            float w0, float w1, float w2, float w3, int tet, float3x3 restScale, float volumeScale, int rotationIndex)
+            float w0, float w1, float w2, float w3, int tet, float3x3 restScale, float volumeScale, int rotationIndex,
+            bool frames, ref float3 d0, ref float3 d1, ref float3 d2, ref float3 d3)
         {
             if (w0 + w1 + w2 + w3 <= 0.0f)
             {
@@ -679,10 +779,21 @@ namespace AdaptorPhysX
             float dH = (-cH * a22 + cD2 * a12) * inverseDet;
             float dD = (-cD2 * a11 + cH * a12) * inverseDet;
 
-            x0 += w0 * (gH0 * dH + gD0 * dD);
-            x1 += w1 * (gH.c0 * dH + gD.c0 * dD);
-            x2 += w2 * (gH.c1 * dH + gD.c1 * dD);
-            x3 += w3 * (gH.c2 * dH + gD.c2 * dD);
+            float3 g0 = gH0 * dH + gD0 * dD;
+            float3 g1 = gH.c0 * dH + gD.c0 * dD;
+            float3 g2 = gH.c1 * dH + gD.c1 * dD;
+            float3 g3 = gH.c2 * dH + gD.c2 * dD;
+            x0 += w0 * g0;
+            x1 += w1 * g1;
+            x2 += w2 * g2;
+            x3 += w3 * g3;
+            if (frames)
+            {
+                d0 += w0 == 0.0f ? g0 : float3.zero;
+                d1 += w1 == 0.0f ? g1 : float3.zero;
+                d2 += w2 == 0.0f ? g2 : float3.zero;
+                d3 += w3 == 0.0f ? g3 : float3.zero;
+            }
         }
     }
 }

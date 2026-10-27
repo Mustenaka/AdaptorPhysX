@@ -29,8 +29,9 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
   （真皮、脂肪、肌肉）。
 - 接触：Unity Sphere/Capsule/Box 碰撞体（含摩擦，子步内插值位姿）；MeshCollider 与任意形状的器械
   （有符号距离场，运行时或在编辑器中烘焙）；切下的块之间、折叠的组织之间、不同 `ApxSoftBody` 之间的接触。
-- 器械与刚体：碰撞体受到的力、力矩与接触中心（`TryGetColliderWrench`）；与非运动学 Rigidbody 的双向耦合
-  （组织托住、推开刚体）；器械表面粘附（stickiness）。
+- 器械与刚体：碰撞体受到的力、力矩与接触中心（`TryGetColliderWrench`），抓取与钉住区域受到的力
+  （`TryGetGrabWrench`、`TryGetPinWrench`）；与非运动学 Rigidbody 的双向耦合（组织托住、推开刚体）；
+  器械表面粘附（stickiness）。
 - 材料：可选塑性（超过屈服应变的形变按速率计入静止形状）。
 - 状态快照（含切割拓扑）与 blueprint 资产（预先体素化，Start 不再体素化）。
 - 交互：手术刀（`ApxScalpel`）、钉住区域、镊子抓取（不跨越切口）。
@@ -80,6 +81,8 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 5. 刀具对象添加 `ApxScalpel`，用 `edgeStart` / `edgeEnd` 定义刀刃，`cutting` 打开时运动即切割。
    自己调用 `ApxSoftBody.Cut` 时，同一次连续切割的各次调用传入相同的非 0 `stroke`，组织在切割过程中移动时也能分开。
 6. 抓取：`ApxSoftBody.BeginGrab(ray, radius, out point)` → `MoveGrab(target)` → `EndGrab()`。
+   抓取受到的力（组织作用在抓取上，含被抓取部分的重量）：`TryGetGrabWrench(out ApxWrench)`；
+   钉住区域受到的力：`TryGetPinWrench(pinIndex, out ApxWrench)`，`pinIndex` 为 `pinColliders` 的下标。
 7. `allowSleep`（默认开启）：物体静止后停止步进，碰撞体移动、切割、抓取时恢复。直接修改节点数据后调用 `WakeUp()`。
 8. 器械：
    - MeshCollider 直接可用（网格需 Read/Write，运行时按网格烘焙距离场）。复杂器械可新建 `ApxDistanceField` 资产

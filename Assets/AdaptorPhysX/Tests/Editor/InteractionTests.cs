@@ -11,7 +11,7 @@ namespace AdaptorPhysX.Tests
     /// <summary>
     /// Contact with other bodies and instruments: distance-field colliders, collider forces,
     /// rigid-body coupling, body-body contact, adhesion, plasticity, state snapshots and blueprints
-    /// (TODO ECO-1 to ECO-3, ECO-6 to ECO-8, HAP-1). Component tests run in a preview scene with its
+    /// (TODO ECO-1 to ECO-3, ECO-6 to ECO-8, HAP-1, HAP-2). Component tests run in a preview scene with its
     /// own physics scene, so the scene open in the editor neither takes part nor changes.
     /// </summary>
     public sealed class InteractionTests
@@ -210,6 +210,83 @@ namespace AdaptorPhysX.Tests
             Assert.Less(math.length(wrench.Force.xz), 0.02f * weight, $"force {wrench.Force}");
             Assert.Greater(wrench.ContactNodes, 0.0f);
             Assert.Less(math.abs(wrench.ContactCentroid.y), 0.005f, $"contact centroid {wrench.ContactCentroid}");
+        }
+
+        [Test]
+        public void GrabForceEqualsTheWeightOfALiftedBody()
+        {
+            // A 10 cm cube resting on the floor is grabbed at the top, lifted 40 mm and held: the grab
+            // carries the whole weight, the floor none.
+            GameObject floor = InScene(new GameObject("Floor"));
+            floor.transform.position = new Vector3(0.0f, -0.1f, 0.0f);
+            floor.transform.localScale = new Vector3(0.6f, 0.2f, 0.6f);
+            Collider floorCollider = floor.AddComponent<BoxCollider>();
+            ApxSoftBody body = CreateBody("Lifted", new Vector3(Size, Size, Size), new Vector3(0.0f, 0.5f * Size + 0.002f, 0.0f), 8);
+            body.damping = 3.0f;
+            Physics.SyncTransforms();
+            body.Initialize();
+            for (int f = 0; f < 60; f++)
+            {
+                body.Simulate(Dt);
+                body.UpdateRender();
+            }
+            Assert.IsTrue(body.BeginGrab(new Ray(new Vector3(0.0f, 1.0f, 0.0f), Vector3.down), 0.03f, out Vector3 point));
+            Assert.IsFalse(body.TryGetGrabWrench(out _), "no grab force before the first step of the grab");
+            for (int f = 0; f < 300; f++)
+            {
+                body.MoveGrab(point + Vector3.up * (0.04f * math.saturate(f / 60.0f)));
+                body.Simulate(Dt);
+                body.UpdateRender();
+            }
+            AssertFinite(body.Simulation);
+            Assert.IsTrue(body.TryGetGrabWrench(out ApxWrench grab));
+            Assert.IsFalse(body.TryGetColliderWrench(floorCollider, out _), "the lifted body still touches the floor");
+            SoftBodySimulation sim = body.Simulation;
+            float weight = sim.TotalMass * 9.81f;
+            float held = 0.0f;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                held += sim.KinematicId[i] == SoftBodySimulation.GrabFrame && sim.InverseMass[i] > 0.0f ? 9.81f / sim.InverseMass[i] : 0.0f;
+            }
+            TestContext.WriteLine($"grab force {grab.Force} N, weight {weight:0.0000} N, held nodes {grab.ContactNodes} " +
+                                  $"(weight {held:0.0000} N), torque {grab.Torque} N m, max speed {sim.MaxSpeed:0.0000} m/s");
+            Assert.AreEqual(-weight, grab.Force.y, 0.02f * weight, $"grab force {grab.Force}, weight {weight:0.000} N");
+            Assert.Less(math.length(grab.Force.xz), 0.02f * weight, $"grab force {grab.Force}");
+            body.EndGrab();
+            Assert.IsFalse(body.TryGetGrabWrench(out _), "no grab force after the grab ended");
+        }
+
+        [Test]
+        public void PinForcesCarryTheWeightOfAPinnedBody()
+        {
+            // A slab held at both ends by pin colliders: the two pin forces add up to its weight and,
+            // by symmetry, are equal.
+            ApxSoftBody slab = CreateBody("Slab", new Vector3(0.14f, 0.02f, 0.06f), Vector3.zero, 10);
+            slab.youngsModulus = 2.0e4f;
+            slab.damping = 3.0f;
+            slab.pinColliders = new[]
+            {
+                Trigger(new Vector3(-0.07f, 0.0f, 0.0f), new Vector3(0.02f, 0.1f, 0.1f)),
+                Trigger(new Vector3(0.07f, 0.0f, 0.0f), new Vector3(0.02f, 0.1f, 0.1f)),
+            };
+            Physics.SyncTransforms();
+            slab.Initialize();
+            for (int f = 0; f < 240; f++)
+            {
+                slab.Simulate(Dt);
+                slab.UpdateRender();
+            }
+            AssertFinite(slab.Simulation);
+            Assert.IsTrue(slab.TryGetPinWrench(0, out ApxWrench left));
+            Assert.IsTrue(slab.TryGetPinWrench(1, out ApxWrench right));
+            Assert.IsFalse(slab.TryGetPinWrench(2, out _));
+            float weight = slab.Simulation.TotalMass * 9.81f;
+            float3 sum = left.Force + right.Force;
+            TestContext.WriteLine($"pin forces {left.Force} + {right.Force} = {sum} N, weight {weight:0.0000} N, " +
+                                  $"pinned nodes {left.ContactNodes} + {right.ContactNodes}, sleeping {slab.IsSleeping}");
+            Assert.AreEqual(-weight, sum.y, 0.02f * weight, $"pin forces {sum}, weight {weight:0.000} N");
+            Assert.Less(math.length(sum.xz), 0.02f * weight, $"pin forces {sum}");
+            Assert.AreEqual(left.Force.y, right.Force.y, 0.05f * weight, $"pin forces {left.Force}, {right.Force}");
         }
 
         [Test]

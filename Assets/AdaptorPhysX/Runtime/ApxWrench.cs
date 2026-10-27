@@ -10,11 +10,15 @@ namespace AdaptorPhysX
         public float3 Force;
         /// <summary>N m, about <see cref="Origin"/>.</summary>
         public float3 Torque;
-        /// <summary>Torque reference point: the collider's transform position at the end of the step.</summary>
+        /// <summary>
+        /// Torque reference point at the end of the step: the collider shape's reference point (centre of a
+        /// sphere, box or distance field, first end of a capsule), or the origin of a kinematic frame (grab
+        /// target, pin collider position).
+        /// </summary>
         public float3 Origin;
-        /// <summary>Contact point weighted by the size of the node corrections.</summary>
+        /// <summary>Contact point weighted by the size of the node corrections (colliders) or constraint forces (frames).</summary>
         public float3 ContactCentroid;
-        /// <summary>Nodes in contact, averaged over the substeps.</summary>
+        /// <summary>Nodes in contact, averaged over the substeps; for a kinematic frame, the nodes it holds.</summary>
         public float ContactNodes;
 
         /// <summary>Torque about another point.</summary>

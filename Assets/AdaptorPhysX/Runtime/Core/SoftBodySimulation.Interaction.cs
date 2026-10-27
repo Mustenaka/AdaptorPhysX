@@ -26,6 +26,21 @@ namespace AdaptorPhysX
         private float _impulseDt;
         private int _impulseSubsteps;
 
+        // Forces on the kinematic frames (HAP-2): constraint impulses per (slice, frame) and their sums.
+        private NativeArray<ColliderImpulse> _framePartial;
+        private NativeArray<ColliderImpulse> _frameTotal;
+        private NativeArray<float3> _frameOrigins;
+        /// <summary>Per frame: nodes, and mass and first mass moment in frame coordinates (see KinematicFramesJob).</summary>
+        private NativeArray<int> _frameNodes;
+        private NativeArray<float4> _frameMass;
+        /// <summary>The kinematic nodes changed since _frameNodes and _frameMass were counted.</summary>
+        private bool _framesDirty = true;
+        private bool _framesActive;
+        /// <summary>Per frame: its nodes in the last step (0 when it took no part), and their weight and its torque about the origin.</summary>
+        private readonly int[] _frameStepNodes = new int[MaxKinematicFrames];
+        private readonly float3[] _frameWeight = new float3[MaxKinematicFrames];
+        private readonly float3[] _frameWeightTorque = new float3[MaxKinematicFrames];
+
         // Dynamic rigid bodies of the colliders (two-way coupling) and the shapes' start poses.
         private NativeArray<RigidBodyState> _rigidBodies;
         private NativeArray<ColliderShape> _shapeStart;
@@ -109,6 +124,10 @@ namespace AdaptorPhysX
             _noInts = new NativeArray<int>(1, Allocator.Persistent);
             _noImpulses = new NativeArray<ColliderImpulse>(1, Allocator.Persistent);
             _impulseTotal = new NativeArray<ColliderImpulse>(0, Allocator.Persistent);
+            _frameTotal = new NativeArray<ColliderImpulse>(MaxKinematicFrames, Allocator.Persistent);
+            _frameOrigins = new NativeArray<float3>(MaxKinematicFrames, Allocator.Persistent);
+            _frameNodes = new NativeArray<int>(MaxKinematicFrames, Allocator.Persistent);
+            _frameMass = new NativeArray<float4>(MaxKinematicFrames, Allocator.Persistent);
             _partnerCells = new NativeList<PartnerCell>(0, Allocator.Persistent);
             _partnerCorner = new NativeList<float3>(0, Allocator.Persistent);
             _partnerVelocity = new NativeList<float3>(0, Allocator.Persistent);
@@ -125,6 +144,11 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref _noImpulses);
             DisposeIfCreated(ref _impulsePartial);
             DisposeIfCreated(ref _impulseTotal);
+            DisposeIfCreated(ref _framePartial);
+            DisposeIfCreated(ref _frameTotal);
+            DisposeIfCreated(ref _frameOrigins);
+            DisposeIfCreated(ref _frameNodes);
+            DisposeIfCreated(ref _frameMass);
             DisposeIfCreated(ref _rigidBodies);
             DisposeIfCreated(ref _shapeStart);
             DisposeIfCreated(ref _shapeConsumed);
@@ -358,6 +382,86 @@ namespace AdaptorPhysX
         }
 
         /// <summary>
+        /// Sets up the forces on the kinematic frames for a step (HAP-2): the constraint solve sums the
+        /// constraint impulses on the kinematic nodes per (slice, frame); their own weight, which no
+        /// constraint carries, is added from the frame's mass when the force is read.
+        /// </summary>
+        private void ConfigureFrames(ref SolveCellsJob solve, float h)
+        {
+            if (_framesDirty)
+            {
+                new KinematicFramesJob
+                {
+                    KinematicId = KinematicId,
+                    KinematicLocal = KinematicLocal,
+                    InverseMass = InverseMass,
+                    Mass = _frameMass,
+                    Nodes = _frameNodes,
+                }.Run();
+                _framesActive = false;
+                for (int f = 0; f < MaxKinematicFrames; f++)
+                {
+                    _framesActive |= _frameNodes[f] > 0;
+                }
+                _framesDirty = false;
+            }
+            solve.AccumulateFrames = _framesActive;
+            solve.KinematicId = KinematicId;
+            solve.FrameOrigins = _frameOrigins;
+            solve.InverseDt = 1.0f / h;
+            if (!_framesActive)
+            {
+                solve.FrameImpulses = _noImpulses;
+                System.Array.Clear(_frameStepNodes, 0, MaxKinematicFrames);
+                return;
+            }
+            int length = _slices.Length * MaxKinematicFrames;
+            if (!_framePartial.IsCreated || _framePartial.Length != length)
+            {
+                DisposeIfCreated(ref _framePartial);
+                _framePartial = new NativeArray<ColliderImpulse>(length, Allocator.Persistent);
+            }
+            else
+            {
+                unsafe
+                {
+                    Unity.Collections.LowLevel.Unsafe.UnsafeUtility.MemClear(
+                        Unity.Collections.LowLevel.Unsafe.NativeArrayUnsafeUtility.GetUnsafePtr(_framePartial),
+                        (long)_framePartial.Length * Unity.Collections.LowLevel.Unsafe.UnsafeUtility.SizeOf<ColliderImpulse>());
+                }
+            }
+            solve.FrameImpulses = _framePartial;
+
+            // Torques about each frame's origin at the end of the step. The nodes follow the frame
+            // rigidly, x = M l + o, so their weight m g has the torque (M sum m l) x g.
+            float massScale = math.max(Parameters.Density, 1e-6f) / _massDensity;
+            float3 gravity = Parameters.Gravity;
+            for (int f = 0; f < MaxKinematicFrames; f++)
+            {
+                _frameStepNodes[f] = _frameNodes[f];
+                float4x4 end = FramesEnd[f];
+                _frameOrigins[f] = end.c3.xyz;
+                float4 mass = _frameMass[f] * massScale;
+                _frameWeight[f] = mass.w * gravity;
+                var linear = new float3x3(end.c0.xyz, end.c1.xyz, end.c2.xyz);
+                _frameWeightTorque[f] = math.cross(math.mul(linear, mass.xyz), gravity);
+            }
+        }
+
+        /// <summary>
+        /// The nodes of kinematic frame <paramref name="frame"/> (all frames for -1) changed: their mass is
+        /// counted again before the next step, and the frame reports no force until then.
+        /// </summary>
+        private void KinematicFramesChanged(int frame)
+        {
+            _framesDirty = true;
+            if (frame >= 0 && frame < MaxKinematicFrames)
+            {
+                _frameStepNodes[frame] = 0;
+            }
+        }
+
+        /// <summary>
         /// After the node job of substep <paramref name="substep"/>: the dynamic rigid bodies take the
         /// opposite of the momentum their colliders gave the nodes and move to the next substep's pose.
         /// </summary>
@@ -403,6 +507,10 @@ namespace AdaptorPhysX
             if (_shapes.Length > 0)
             {
                 handle = new ReduceImpulseJob { Partial = _impulsePartial, Total = _impulseTotal }.Schedule(handle);
+            }
+            if (_step.Solve.AccumulateFrames)
+            {
+                handle = new ReduceImpulseJob { Partial = _framePartial, Total = _frameTotal }.Schedule(handle);
             }
             SoftBodyParameters p = Parameters;
             if (p.PlasticCreep > 0.0f || (_cellPlastic.IsCreated && p.PlasticRecovery > 0.0f))
@@ -460,6 +568,34 @@ namespace AdaptorPhysX
                 Origin = origin,
                 ContactCentroid = total.Weight > 0.0f ? total.Centroid / total.Weight : origin,
                 ContactNodes = total.Contacts / math.max(_impulseSubsteps, 1),
+            };
+            return true;
+        }
+
+        /// <summary>
+        /// Force and torque the tissue exerted on kinematic frame <paramref name="frame"/> (grab: 0, pins: 1..)
+        /// in the last step, averaged over the step (HAP-2): the constraint forces on the frame's nodes plus
+        /// their weight, with the torque about the frame's origin at the end of the step. The contact centroid
+        /// is weighted by the constraint forces; ContactNodes is the number of nodes of the frame. False when
+        /// the frame held no nodes in the last step, or they changed since.
+        /// </summary>
+        public bool TryGetFrameWrench(int frame, out ApxWrench wrench)
+        {
+            CompleteStep();
+            wrench = default;
+            if (frame < 0 || frame >= MaxKinematicFrames || _frameStepNodes[frame] == 0 || _impulseDt <= 0.0f)
+            {
+                return false;
+            }
+            ColliderImpulse total = _frameTotal[frame];
+            float3 origin = _frameOrigins[frame];
+            wrench = new ApxWrench
+            {
+                Force = -total.Linear / _impulseDt + _frameWeight[frame],
+                Torque = -total.Angular / _impulseDt + _frameWeightTorque[frame],
+                Origin = origin,
+                ContactCentroid = total.Weight > 0.0f ? total.Centroid / total.Weight : origin,
+                ContactNodes = _frameStepNodes[frame],
             };
             return true;
         }
@@ -692,6 +828,8 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref _impulsePartial);
             RebuildInteractionNodes();
             _stuck.CopyFrom(state.Stuck);
+            KinematicFramesChanged(-1);
+            System.Array.Clear(_frameStepNodes, 0, MaxKinematicFrames);
             TopologyVersion++;
         }
     }
