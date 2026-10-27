@@ -218,7 +218,7 @@ public sealed class ApxHapticBridge
 | PERF-1 | 基准测试框架 | `AdaptorPhysX/Run Benchmarks`、`ApxBenchmark.RunBatch`，网格 box、liver、bunny、dragon，分辨率 16/32/48/64，JSON 输出（DESIGN 第 8 节），结果见 DESIGN 6.1 节 | 已完成 | — |
 | PERF-2 | 基准矩阵的其余维度 | 未覆盖：分辨率 96/128（`resolution` 可由代码设置，Inspector 范围为 4–64）；子步 8/32（`-apxSubsteps` 已支持，未运行）；抓取状态；Armadillo、Thingi10K、真实器官分割网格 | 部分完成 | 上述维度各有一组结果 |
 | PERF-3 | 指标缺口 | Native 内存只有 Unity 总分配量的差值（编辑器中为近似值）；托管分配为 Mono 堆增长量，期间发生 GC 时记为 -1；首次 JIT 耗时在预热中，未单独记录 | 部分完成 | 记录仿真与表面网格的 Native 内存；首次切割帧耗时单独记录 |
-| PERF-4 | batchmode、Player（IL2CPP）与 ARM 数据 | 6.1 节数据来自交互式编辑器（Debug、Jobs Debugger 开启）。batchmode 入口未实际运行过 | 未开始 | batchmode 运行一次；Windows Player（IL2CPP、Release）与 Quest 各一组结果 |
+| PERF-4 | batchmode、Player（IL2CPP）与 ARM 数据 | 6.1 节数据来自交互式编辑器（Debug、Jobs Debugger 开启）。batchmode 已运行（`ApxBenchmark.RunBatch`，2026-10-27，16 组，结果文件在 `Benchmarks/Results/`，不提交）；Windows Player（IL2CPP）与 Quest 未测 | 部分完成 | batchmode 运行一次；Windows Player（IL2CPP、Release）与 Quest 各一组结果 |
 | PERF-5 | 仿真拓扑局部重建 | 每个切割帧全量重建：1428 个体素 1.2 ms，77220 个体素 51 ms（6.1 节） | 未开始 | 77220 个体素时切割帧扫掠小于 5 ms；属于 M3 |
 | PERF-6 | 表面更新与渲染拓扑重建 | 龙（43.5 万顶点）每帧表面更新 8–11 ms，切割帧表面重建 p95 200–460 ms；box、liver、bunny 分辨率 64 时 p95 约 160 ms | 未开始 | 切割帧表面重建 p95 小于 16 ms；顶点在 GPU 上写入（M4） |
 | PERF-7 | 初始化耗时 | box 64 的 4.78 s 中表面细分 3.67 s（`MeshUtil.Subdivide`，托管 List）；龙 64 的 3.93 s 中体素化 2.43 s（`InsideParityJob` 每行遍历全部三角形）。使用 ECO-7 的 blueprint 时两项均跳过；不使用 blueprint 时仍为上述耗时 | 部分完成 | 两项各降低一个数量级；或由 ECO-7 的 blueprint 缓存替代 |
@@ -246,7 +246,7 @@ public sealed class ApxHapticBridge
 |---|---|---|
 | 2026-10-26 | `17fde10` | 基准测试框架（PERF-1）；基准测试与代码检查发现 BUG-1 至 BUG-5 |
 | 2026-10-26 | `7ee1147` | 建立本文件 |
-| 2026-10-26 | — | 新增 3.3 节缝合（SUT-1 至 SUT-9）；力反馈改为计算接口范围（3.4 节，HAP-1 至 HAP-7 与接口草案），替代原 MED-11、MED-12 |
+| 2026-10-26 | `2bc9975` | 新增 3.3 节缝合（SUT-1 至 SUT-9）；力反馈改为计算接口范围（3.4 节，HAP-1 至 HAP-7 与接口草案），替代原 MED-11、MED-12 |
 | 2026-10-26 | `8eda481` | BUG-4 已完成：端点在刀面上的棱按有符号距离归到刀面正侧；新增 EditMode 测试；基准测试 `positionsHash` 与修复前一致 |
 | 2026-10-26 | `db3ad63` | 演示：刀刃深度从刀下组织表面算起，拖动时随表面高度变化。新增 BUG-6；BUG-1 补充证据 |
 | 2026-10-26 | `44aa786` | BUG-2 原因已确认，记录求解顺序与镜像剖分实验（未采用）；新增并完成 BUG-7（旋转放置的物体变形）；BUG-1 补充证据 |
@@ -258,5 +258,6 @@ public sealed class ApxHapticBridge
 | 2026-10-27 | `2aec0fe` | ECO-2 已完成：新增 `MeshColliderAndFieldAssetFloorsHoldTheBodyLikeABoxCollider`（MeshCollider 与 `ApxDistanceField` 资产地面，最低节点高度与 Box 碰撞体之差 0.000 mm）。新增 ECO-1 相向挤压测试 `PinnedBodyPushesAnotherWithoutPassingThrough`，未通过，标为 `[Ignore]`；新增 BUG-8（持续挤压时软体之间相互穿透）。运行时代码未改动 |
 | 2026-10-27 | `2aec0fe` | BUG-8 原因已确认：步内对方副本不更新、按份额推出与每子步 0.25h 的上限，使持续载荷下的残余重叠随载荷增大；越过 SDF 精确带或位于对方 SDF 中轴（梯度为 0）的节点不再被检测。`PinnedBodyPushesAnotherWithoutPassingThrough` 的穿入深度改为按物体间接触的定义计算（原几何深度在角节点上偏大）。运行时代码未改动 |
 | 2026-10-27 | `2aec0fe` | BUG-8 部分完成：相互接触的物体同步推进子步（`SubstepGroup`，每个子步求解后刷新对方副本），本步不推进的对方作为静止障碍；物体间接触另用补全深处的格点 SDF（`ContactSdfJob`）。新增 `SqueezedBodiesKeepTheirContactUnderASustainedLoad`、`PinnedBodyPushesAnotherAlongAFrictionlessFloor`；地面摩擦下的推动仍穿透（被推物体倾倒，受力集中在推动体底边），ECO-1 验收测试保持 `[Ignore]` |
-| 2026-10-27 | — | BUG-8：试过反作用传递与按自身移动放宽推出上限，均使静态挤压出现 0.7–1.2 m/s 的抖动，摩擦推动仍超过 1h（最深 7.5 mm），未采用；记录结果，ECO-1 验收场景待定 |
-| 2026-10-27 | — | ECO-1 已完成：验收改为被推物体在无摩擦地面上平移（`PinnedBodyPushesAnotherWithoutPassingThrough`，最深节点 4.33 mm，前移 75.5 mm）；摩擦地面场景改为 `PinnedBodyPushesAnotherAlongAFloorWithFriction`（`[Ignore]`，BUG-8），并记录降低推动高度、加长被推物体后仍穿透的结果。删去 `PinnedBodyPushesAnotherAlongAFrictionlessFloor`（与新的验收测试相同） |
+| 2026-10-27 | `8180ec3` | BUG-8：试过反作用传递与按自身移动放宽推出上限，均使静态挤压出现 0.7–1.2 m/s 的抖动，摩擦推动仍超过 1h（最深 7.5 mm），未采用；记录结果，ECO-1 验收场景待定 |
+| 2026-10-27 | `8180ec3` | ECO-1 已完成：验收改为被推物体在无摩擦地面上平移（`PinnedBodyPushesAnotherWithoutPassingThrough`，最深节点 4.33 mm，前移 75.5 mm）；摩擦地面场景改为 `PinnedBodyPushesAnotherAlongAFloorWithFriction`（`[Ignore]`，BUG-8），并记录降低推动高度、加长被推物体后仍穿透的结果。删去 `PinnedBodyPushesAnotherAlongAFrictionlessFloor`（与新的验收测试相同） |
+| 2026-10-27 | — | 补全变更记录中的提交号；PERF-4 改为部分完成（batchmode 已运行，Player 与 Quest 未测） |
