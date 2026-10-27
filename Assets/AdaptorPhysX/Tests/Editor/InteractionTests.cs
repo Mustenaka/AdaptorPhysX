@@ -11,7 +11,7 @@ namespace AdaptorPhysX.Tests
     /// <summary>
     /// Contact with other bodies and instruments: distance-field colliders, collider forces,
     /// rigid-body coupling, body-body contact, adhesion, plasticity, state snapshots and blueprints
-    /// (TODO ECO-1 to ECO-3, ECO-6 to ECO-8, HAP-1, HAP-2). Component tests run in a preview scene with its
+    /// (TODO ECO-1 to ECO-3, ECO-6 to ECO-8, HAP-1 to HAP-3). Component tests run in a preview scene with its
     /// own physics scene, so the scene open in the editor neither takes part nor changes.
     /// </summary>
     public sealed class InteractionTests
@@ -288,6 +288,235 @@ namespace AdaptorPhysX.Tests
             Assert.Less(math.length(sum.xz), 0.02f * weight, $"pin forces {sum}");
             Assert.AreEqual(left.Force.y, right.Force.y, 0.05f * weight, $"pin forces {left.Force}, {right.Force}");
         }
+
+        [Test]
+        public void InstrumentAndPinForcesBalanceTheWeight()
+        {
+            // A slab held at both ends, pressed off-centre by a ball; at rest the forces the tissue exerts on the
+            // ball and the pins add up to its weight, and their torques to the torque of its weight.
+            ApxSoftBody slab = CreateBody("Slab", new Vector3(0.14f, 0.02f, 0.06f), Vector3.zero, 10);
+            slab.youngsModulus = 2.0e4f;
+            slab.damping = 3.0f;
+            slab.pinColliders = new[]
+            {
+                Trigger(new Vector3(-0.07f, 0.0f, 0.0f), new Vector3(0.02f, 0.1f, 0.1f)),
+                Trigger(new Vector3(0.07f, 0.0f, 0.0f), new Vector3(0.02f, 0.1f, 0.1f)),
+            };
+            GameObject ball = Primitive(PrimitiveType.Sphere);
+            ball.transform.localScale = new Vector3(0.02f, 0.02f, 0.02f);
+            ball.transform.position = new Vector3(0.03f, 0.3f, 0.0f);
+            Physics.SyncTransforms();
+            slab.Initialize();
+            for (int f = 0; f < 60; f++)
+            {
+                slab.Simulate(Dt);
+                slab.UpdateRender();
+            }
+            // From 1 mm above the top nodes under the ball down to 5 mm below them in 30 frames, then held.
+            float top = float.MinValue;
+            for (int i = 0; i < slab.Simulation.NodeCount; i++)
+            {
+                float3 x = slab.Simulation.Positions[i];
+                top = math.abs(x.x - 0.03f) < 0.01f && math.abs(x.z) < 0.01f ? math.max(top, x.y) : top;
+            }
+            for (int f = 0; f < 210; f++)
+            {
+                float depth = 0.006f * math.saturate(f / 30.0f);
+                ball.transform.position = new Vector3(0.03f, top + 0.011f - depth, 0.0f);
+                Physics.SyncTransforms();
+                slab.Simulate(Dt);
+                slab.UpdateRender();
+            }
+            SoftBodySimulation sim = slab.Simulation;
+            AssertFinite(sim);
+            Assert.IsTrue(slab.TryGetColliderWrench(ball.GetComponent<Collider>(), out ApxWrench instrument));
+            Assert.IsTrue(slab.TryGetPinWrench(0, out ApxWrench left));
+            Assert.IsTrue(slab.TryGetPinWrench(1, out ApxWrench right));
+            float mass = sim.TotalMass;
+            float3 gravity = new float3(0.0f, -9.81f, 0.0f);
+            float3 force = instrument.Force + left.Force + right.Force;
+            float3 instrumentTorque = instrument.TorqueAbout(float3.zero);
+            float3 leftTorque = left.TorqueAbout(float3.zero), rightTorque = right.TorqueAbout(float3.zero);
+            float3 torque = instrumentTorque + leftTorque + rightTorque;
+            float3 weightTorque = math.cross(CenterOfMass(sim), mass * gravity);
+            float scale = mass * 9.81f + math.length(instrument.Force);
+            float torqueScale = math.length(instrumentTorque) + math.length(leftTorque) + math.length(rightTorque);
+            TestContext.WriteLine($"instrument {instrument.Force} N, pins {left.Force} + {right.Force} N, sum {force} N, " +
+                                  $"weight {mass * gravity} N; torques about the origin {instrumentTorque} + {leftTorque} + {rightTorque} = {torque} N m, " +
+                                  $"of the weight {weightTorque} N m; " +
+                                  $"max speed {sim.MaxSpeed:0.0000} m/s");
+            Assert.Greater(instrument.Force.y, 0.1f * mass * 9.81f, $"the ball barely presses ({instrument.Force})");
+            Assert.Less(math.length(force - mass * gravity), 0.02f * scale, $"force sum {force}, weight {mass * gravity}");
+            Assert.Less(math.length(torque - weightTorque), 0.02f * torqueScale, $"torque sum {torque}, weight {weightTorque}");
+        }
+
+        [Test]
+        public void IndenterForceGrowsWithDepthAndMatchesHertz()
+        {
+            // A frictionless 2 cm ball pressed into an 8 x 4 x 8 cm block with a clamped base (no gravity), 2.5 mm
+            // cells. Hertz: F = 4/3 E / (1 - nu^2) sqrt(R) d^1.5 for a half-space; the block is 6 contact radii deep
+            // at 2 mm. One solver iteration per substep makes the lattice softer than E unless mu h^2 / (rho dx^2)
+            // is small (DESIGN 9.2): here 0.011, with E = 3 kPa and 64 substeps.
+            var parameters = SoftBodyParameters.Default;
+            parameters.YoungsModulus = 3.0e3f;
+            parameters.PoissonRatio = 0.45f;
+            parameters.Damping = 20.0f;
+            const float radius = 0.02f;
+            float[] depths = { 0.5e-3f, 1.0e-3f, 2.0e-3f, 3.0e-3f };
+            float[] forces = Indent(parameters, new float3(0.08f, 0.04f, 0.08f), 32, 64, radius, depths, out float[] clamp);
+            for (int k = 0; k < depths.Length; k++)
+            {
+                float hertz = Hertz(parameters.YoungsModulus, parameters.PoissonRatio, radius, depths[k]);
+                TestContext.WriteLine($"depth {depths[k] * 1000:0.0} mm: force {forces[k] * 1000:0.000} mN, Hertz {hertz * 1000:0.000} mN " +
+                                      $"(ratio {forces[k] / hertz:0.000}), clamp {clamp[k] * 1000:0.000} mN");
+            }
+            for (int k = 0; k < depths.Length; k++)
+            {
+                if (k > 0)
+                {
+                    Assert.Greater(forces[k], forces[k - 1], $"force at {depths[k] * 1000:0.0} mm");
+                }
+                if (depths[k] <= 2.0e-3f)
+                {
+                    float hertz = Hertz(parameters.YoungsModulus, parameters.PoissonRatio, radius, depths[k]);
+                    Assert.AreEqual(hertz, forces[k], 0.3f * hertz, $"force at {depths[k] * 1000:0.0} mm");
+                }
+            }
+        }
+
+        [Test]
+        public void SameInputsGiveBitIdenticalForces()
+        {
+            // Floor, a pressing ball, a pinned side and a moving grab: every wrench of two runs is equal bit for bit.
+            List<uint> Run()
+            {
+                SoftBodySimulation sim = CreateBox(new float3(Size), SoftBodyParameters.Default, 12, 0.002f + LatticeOffset(12));
+                NativeArray<ColliderShape> shapes = Track(new NativeArray<ColliderShape>(2, Allocator.Persistent));
+                NativeArray<float> fields = Track(new NativeArray<float>(1, Allocator.Persistent));
+                shapes[0] = FloorShape();
+                var side = new List<int>();
+                float minX = float.MaxValue;
+                for (int i = 0; i < sim.NodeCount; i++)
+                {
+                    minX = math.min(minX, sim.Positions[i].x);
+                }
+                for (int i = 0; i < sim.NodeCount; i++)
+                {
+                    if (sim.Positions[i].x < minX + 1e-4f)
+                    {
+                        side.Add(i);
+                    }
+                }
+                sim.Attach(side, 1, float4x4.Translate(new float3(minX, 0.05f, 0.0f)));
+                int node = sim.PickNode(new float3(0.02f, 1.0f, 0.0f), new float3(0.0f, -1.0f, 0.0f), sim.CellSize);
+                float3 grab = sim.Positions[node];
+                sim.Attach(sim.ConnectedNodes(node, 0.02f), SoftBodySimulation.GrabFrame, float4x4.Translate(grab));
+                var bits = new List<uint>();
+                float3 ball = new float3(-0.02f, 0.13f, 0.0f);
+                for (int f = 0; f < 60; f++)
+                {
+                    float3 target = grab + new float3(0.0f, 0.02f, 0.01f) * math.saturate(f / 30.0f);
+                    sim.FramesStart[SoftBodySimulation.GrabFrame] = sim.FramesEnd[SoftBodySimulation.GrabFrame];
+                    sim.FramesEnd[SoftBodySimulation.GrabFrame] = float4x4.Translate(target);
+                    float3 next = new float3(-0.02f, 0.13f - 0.0003f * f, 0.0f);
+                    ColliderShape sphere = ColliderShape.Sphere(next, 0.02f, 0.6f);
+                    sphere.A0 = ball;
+                    ball = next;
+                    shapes[1] = sphere;
+                    sim.Step(Dt, Substeps, shapes, fields);
+                    for (int s = 0; s < 2; s++)
+                    {
+                        if (sim.TryGetShapeWrench(s, out ApxWrench w))
+                        {
+                            AddBits(bits, w);
+                        }
+                    }
+                    for (int frame = 0; frame < 2; frame++)
+                    {
+                        Assert.IsTrue(sim.TryGetFrameWrench(frame, out ApxWrench w), $"frame {frame}");
+                        AddBits(bits, w);
+                    }
+                }
+                Assert.IsTrue(sim.TryGetShapeWrench(1, out _), "the ball never touched the body");
+                return bits;
+            }
+
+            List<uint> first = Run();
+            List<uint> second = Run();
+            Assert.AreEqual(first.Count, second.Count);
+            for (int i = 0; i < first.Count; i++)
+            {
+                Assert.AreEqual(first[i], second[i], $"value {i} differs");
+            }
+        }
+
+        private static void AddBits(List<uint> bits, ApxWrench w)
+        {
+            foreach (float3 v in new[] { w.Force, w.Torque, w.Origin, w.ContactCentroid })
+            {
+                bits.Add(math.asuint(v.x));
+                bits.Add(math.asuint(v.y));
+                bits.Add(math.asuint(v.z));
+            }
+            bits.Add(math.asuint(w.ContactNodes));
+        }
+
+        /// <summary>
+        /// Presses a frictionless sphere into the middle of the top face of a block with a clamped base (frame 1,
+        /// no gravity), to each of <paramref name="depths"/> in turn below the top lattice nodes, 60 steps each.
+        /// Returns the force on the sphere at each depth and the force on the clamp in <paramref name="clampForces"/>
+        /// (y components).
+        /// </summary>
+        private float[] Indent(SoftBodyParameters parameters, float3 size, int resolution, int substeps, float radius,
+            float[] depths, out float[] clampForces)
+        {
+            parameters.Gravity = float3.zero;
+            SoftBodySimulation sim = CreateBox(size, parameters, resolution, 0.0f);
+            float bottom = float.MaxValue, top = float.MinValue;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                bottom = math.min(bottom, sim.Positions[i].y);
+                top = math.max(top, sim.Positions[i].y);
+            }
+            var clamped = new List<int>();
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                if (sim.Positions[i].y < bottom + 1e-5f)
+                {
+                    clamped.Add(i);
+                }
+            }
+            sim.Attach(clamped, 1, float4x4.identity);
+            NativeArray<ColliderShape> shapes = Track(new NativeArray<ColliderShape>(1, Allocator.Persistent));
+            NativeArray<float> fields = Track(new NativeArray<float>(1, Allocator.Persistent));
+            var forces = new float[depths.Length];
+            clampForces = new float[depths.Length];
+            float3 previous = new float3(0.0f, top + radius, 0.0f);
+            float depth = 0.0f;
+            for (int k = 0; k < depths.Length; k++)
+            {
+                for (int f = 0; f < 60; f++)
+                {
+                    float3 center = new float3(0.0f, top + radius - math.lerp(depth, depths[k], math.saturate((f + 1) / 20.0f)), 0.0f);
+                    ColliderShape sphere = ColliderShape.Sphere(center, radius, 0.0f);
+                    sphere.A0 = previous;
+                    previous = center;
+                    shapes[0] = sphere;
+                    sim.Step(Dt, substeps, shapes, fields);
+                }
+                depth = depths[k];
+                AssertFinite(sim);
+                Assert.IsTrue(sim.TryGetShapeWrench(0, out ApxWrench indenter), $"no contact at {depth * 1000:0.0} mm");
+                Assert.IsTrue(sim.TryGetFrameWrench(1, out ApxWrench clamp));
+                forces[k] = indenter.Force.y;
+                clampForces[k] = clamp.Force.y;
+            }
+            return forces;
+        }
+
+        /// <summary>Hertz contact of a rigid sphere on an elastic half-space: F = 4/3 E / (1 - nu^2) sqrt(R) d^1.5.</summary>
+        private static float Hertz(float youngsModulus, float poissonRatio, float radius, float depth) =>
+            4.0f / 3.0f * youngsModulus / (1.0f - poissonRatio * poissonRatio) * math.sqrt(radius) * math.pow(depth, 1.5f);
 
         [Test]
         public void RigidBodyRestsOnPinnedTissueAndBendsIt()
