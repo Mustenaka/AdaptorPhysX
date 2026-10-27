@@ -3,7 +3,7 @@
 本文件列出与 Obi 生态、医疗仿真需求相比尚缺的功能，以及基准测试与代码检查中发现的缺陷，并逐项对照当前实现。
 每个条目有固定编号，新对话中直接引用编号（例如“处理 BUG-2”）。
 
-- 对照基准：提交 `17fde10`（2026-10-26），分支 `dev/softbody`。文件行号以 `20c1e5e` 为准。
+- 对照基准：提交 `17fde10`（2026-10-26），分支 `dev/softbody`。文件行号以 `0ba4a57` 为准。
 - 里程碑编号（M1–M5）见 `docs/ROADMAP.md`；算法与数据结构见 `docs/DESIGN.md`。
 
 ## 状态定义
@@ -64,7 +64,7 @@
 | MED-1 | 应变硬化（J 形应力-应变曲线） | co-rotational 线弹性，小应变线性化（DESIGN 第 3 节） | 未开始 | 单轴拉伸曲线与所选本构模型的解析解一致 |
 | MED-2 | 粘弹性（应力松弛、蠕变） | 没有 | 未开始 | 恒定应变下应力随时间衰减，衰减时间常数可配置 |
 | MED-3 | 各向异性（肌纤维方向） | 没有 | 未开始 | 沿纤维方向与垂直方向的刚度比可配置并可测量 |
-| MED-4 | 阻尼模型 | 全局速度阻尼（`SolverJobs.cs:157`），刚体运动也被衰减 | 未开始 | 自由下落与匀速平移不受阻尼影响 |
+| MED-4 | 阻尼模型 | 全局速度阻尼（`SolverJobs.cs:163`），刚体运动也被衰减 | 未开始 | 自由下落与匀速平移不受阻尼影响 |
 | MED-5 | 多材料与体素材料标签 | 两层：皮肤层与主体（DESIGN 第 3 节）。M5 列出脂肪、肌肉不同材料 | 部分完成 | 每个体素一个材料 ID；从 CT/MRI 分割标签（NIfTI）读取材料 ID |
 | MED-6 | 超阈值撕裂 | 没有（M5） | 未开始 | 应变超过阈值时断棱，撕裂沿受力方向扩展 |
 
@@ -85,7 +85,7 @@ SUT-5 不模拟缝线，可以在缝针与缝线之前实现，用于验证切�
 
 | 编号 | 需求 | 现状 | 状态 | 验收 |
 |---|---|---|---|---|
-| SUT-1 | 材料点锚定 | 抓取与钉住通过节点列表绑定到运动学帧（`Attach`，`SoftBodySimulation.cs:633`；最多 32 帧，`MaxKinematicFrames`，`SoftBodySimulation.cs:71`）；没有嵌入在体素副本内的材料点 | 未开始 | 材料点由（体素副本，局部坐标）定义，位置按三线性插值计算；切割后随副本继承；可作为穿刺点、缝线锚点、力反馈接触点使用 |
+| SUT-1 | 材料点锚定 | 抓取与钉住通过节点列表绑定到运动学帧（`Attach`，`SoftBodySimulation.cs:714`；最多 32 帧，`MaxKinematicFrames`，`SoftBodySimulation.cs:71`）；没有嵌入在体素副本内的材料点 | 未开始 | 材料点由（体素副本，局部坐标）定义，位置按三线性插值计算；切割后随副本继承；可作为穿刺点、缝线锚点、力反馈接触点使用 |
 | SUT-2 | 缝针穿刺 | 没有（直针穿刺见 MED-9） | 未开始 | 弧形缝针沿轨迹刺入并穿出组织，不产生切口；进针力超过阈值才刺入；针与组织之间有摩擦；记录进针点与出针点（SUT-1 材料点） |
 | SUT-3 | 缝线 | 没有。绳的仿真已冻结（ECO-5，ROADMAP 决策 3） | 未开始 | 缝线可弯曲、长度近似不变，与组织、器械和自身碰撞。开始前需修改 ROADMAP 决策 3 |
 | SUT-4 | 缝线穿过组织 | 没有 | 未开始 | 缝线在穿刺通道内滑动，带摩擦；收紧缝线时切口两侧对合 |
@@ -211,8 +211,8 @@ public sealed class ApxHapticBridge
 | CFG-3 | 从元数据生成 JSON Schema 与参数文档 | 没有 | 未开始 | 生成的 schema 覆盖 CFG-1 的全部参数 |
 | CFG-4 | 材料预设（JSON，附文献出处），组件引用预设并局部覆盖 | 没有 | 未开始 | liver、skin、fat 三个预设；预设文件可文本比较 |
 | CFG-5 | `GetParams` / `SetParams` 接口 | 没有 | 未开始 | `SetParams` 返回每个参数的结果：已生效、需重建、超出范围 |
-| CFG-6 | 只读派生量 | 已有：`CellSize`、`LastStepMilliseconds`、`LastTopologyMilliseconds`、`LastInitializeTimings`、`TotalMass`。缺：子步 dt、稳定性数 μΔt²/(ρh²)（DESIGN 第 3 节） | 部分完成 | 派生量可通过 CFG-5 的接口读取 |
-| CFG-7 | 硬编码常量改为参数 | `SleepSteps`、`SleepSpeed`（`ApxSoftBody.cs:108`、`110`）；接触搜索半径 1.8h、最小距离 0.8h（`SoftBodySimulation.cs:475`、`494`、`495`）；扫掠延伸 0.5h / 0.1h（`SoftBodySimulation.cs:583`）；`ContactInterval`（`SoftBodySimulation.cs:74`）；`MaxKinematicFrames`（`SoftBodySimulation.cs:71`）；碰撞体查询数组长度 64（`ApxSoftBody._overlap`，周围碰撞体超过 64 个时 `OverlapBox` 截断，没有提示）；物体之间的接触：候选副本数 12（`BodyContacts.MaxCandidates`）、每子步推出上限 0.25h、参与接触的节点静止 SDF 下限 −0.25h、梯度长度下限 0.5（DESIGN 9.4 节）；MeshCollider 运行时烘焙的距离场分辨率（`ApxColliderMaterial.DefaultFieldResolution`） | 未开始 | 常量带 CFG-1 元数据，默认值不变时 `positionsHash` 不变；碰撞体数超过查询上限时输出警告 |
+| CFG-6 | 只读派生量 | 已有：`CellSize`、`LastStepMilliseconds`、`LastTopologyMilliseconds`、`LastInitializeTimings`、`TotalMass`、`SimulatedTime`（HAP-4）。缺：子步 dt、稳定性数 μΔt²/(ρh²)（DESIGN 第 3 节） | 部分完成 | 派生量可通过 CFG-5 的接口读取 |
+| CFG-7 | 硬编码常量改为参数 | `SleepSteps`、`SleepSpeed`（`ApxSoftBody.cs:108`、`110`）；接触搜索半径 1.8h、最小距离 0.8h（`SoftBodySimulation.cs:514`、`533`、`534`）；扫掠延伸 0.5h / 0.1h（`SoftBodySimulation.cs:664`）；`ContactInterval`（`SoftBodySimulation.cs:74`）；`MaxKinematicFrames`（`SoftBodySimulation.cs:71`）；碰撞体查询数组长度 64（`ApxSoftBody._overlap`，周围碰撞体超过 64 个时 `OverlapBox` 截断，没有提示）；物体之间的接触：候选副本数 12（`BodyContacts.MaxCandidates`）、每子步推出上限 0.25h、参与接触的节点静止 SDF 下限 −0.25h、梯度长度下限 0.5（DESIGN 9.4 节）；MeshCollider 运行时烘焙的距离场分辨率（`ApxColliderMaterial.DefaultFieldResolution`） | 未开始 | 常量带 CFG-1 元数据，默认值不变时 `positionsHash` 不变；碰撞体数超过查询上限时输出警告 |
 | CFG-8 | unity-mcp 自定义工具：`apx_get_params`、`apx_set_params`、`apx_run_scenario`、`apx_benchmark` | 基准测试可通过 MCP 的代码执行调用 `ApxBenchmark.ScheduleKeepingScenes`；没有自定义工具 | 未开始 | 四个工具可用；长时间任务异步执行并可查询结果 |
 | CFG-9 | 文本描述的实验场景（刀路、参数、期望指标），batchmode 运行并输出 JSON | 基准测试输出 JSON，场景固定在代码中；标准场景截图工具（S1–S6、交互场景 S8–S11）只输出 PNG 与日志 | 部分完成 | 场景文件定义刀路与期望指标；S1–S6、S8–S11 输出 JSON 指标 |
 | CFG-10 | 闭环调参示例 | 没有。依赖的 HAP-1、HAP-3 已完成；HAP-3 的压痕结果显示默认参数下 lattice 比名义杨氏模量软（DESIGN 9.2 节），调参以仿真得到的力—位移曲线为准 | 未开始 | 调整材料参数，使压痕的力-位移曲线与给定文献数据的误差小于设定值 |
@@ -271,4 +271,5 @@ public sealed class ApxHapticBridge
 | 2026-10-27 | `0defc6c` | HAP-3 已完成：新增 EditMode 测试 3 个（力平衡、球形压头与 Hertz 解比较、力逐位一致）；记录 lattice 刚度随 μΔt²/(ρh²) 降低、单精度坐标舍入对 mN 级力的影响；CFG-10 的依赖已完成。运行时代码未改动 |
 | 2026-10-27 | `a9984ae` | 补充核对中发现但未列出的缺口：新增 BUG-9（刀刃前方的表面外棱不断开）、MED-17（器械接触的位置与细器械）；MED-10 补充只有一个抓取帧、帧只有平移；CFG-7 补充碰撞体查询上限 64 与物体间接触的常量；CFG-9 补充交互场景 S8–S11；ECO-8 补充快照不含碰撞体位姿与刚体状态；HAP-1 的验收改为与实现一致的力矩参考点 |
 | 2026-10-27 | `28b6782` | HAP-4 已完成：每步为接触中的碰撞体发布局部线性力模型，K = −k N（接触法向张量乘沿运动方向的差分刚度）；节点 job 累加接触法向张量（`ApxWrench.ContactNormals`），`SoftBodySimulation` 增加 `SimulatedTime`、`ShapeMeanPosition`。新增 EditMode 测试 2 个；基准测试 16 组 4 个阶段的 `positionsHash` 与修改前一致 |
-| 2026-10-27 | — | 复核 HAP-4 与上一次 TODO 补充：HAP-4 的验收改为已采用的 K 的求法并写明测试条件，限制补上体素 5 mm 时的误差；BUG-8 修改前后基准测试 16 组 4 个阶段（rest、drop、cut、afterCut）的 `positionsHash` 与 `20c1e5e` 一致（此前只对比了 rest、afterCut） |
+| 2026-10-27 | `0ba4a57` | 复核 HAP-4 与上一次 TODO 补充：HAP-4 的验收改为已采用的 K 的求法并写明测试条件，限制补上体素 5 mm 时的误差；BUG-8 修改前后基准测试 16 组 4 个阶段（rest、drop、cut、afterCut）的 `positionsHash` 与 `20c1e5e` 一致（此前只对比了 rest、afterCut） |
+| 2026-10-27 | — | 文件行号改以 `0ba4a57` 为准：HAP-2、HAP-4 之后移动的 MED-4、SUT-1、CFG-7 中的行号；CFG-6 的已有派生量补充 `SimulatedTime` |
