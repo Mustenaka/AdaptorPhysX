@@ -149,6 +149,8 @@ namespace AdaptorPhysX
         private int _stroke;
         private float _strokeTravel;
         private float3 _strokeNormal;
+        /// <summary>Direction the blade moved in the previous sweep of the stroke, zero at its start.</summary>
+        private float3 _strokeMotion;
         private NativeArray<float> _weights;
         private NativeArray<quaternion> _tetRotation;
         /// <summary>Real nodes not enclosed by full uncut cells; only these take part in contacts.</summary>
@@ -653,25 +655,35 @@ namespace AdaptorPhysX
                 }
                 _strokeTravel = 0.0f;
                 _strokeNormal = float3.zero;
+                _strokeMotion = float3.zero;
             }
             _stroke = stroke;
-            float3 sweptA0 = a0, sweptB0 = b0;
-            // Overlap consecutive sweeps along the motion so edges of tissue that moves
-            // relative to the blade between two steps are not skipped.
+            // Overlap consecutive sweeps so edges of tissue that moves relative to the blade between
+            // two steps are not skipped: each step also sweeps a tail quad 0.5h back along the
+            // previous step's motion (along its own at the start of a stroke), i.e. over the end of
+            // the previous step's path, and reaches 0.1h ahead. Extending this step's quad backwards
+            // instead leaves the path wherever it turns, and cuts and labels tissue the blade has
+            // not passed (TODO BUG-12).
             float3 motion = 0.5f * ((a1 + b1) - (a0 + b0));
             float travel = math.length(motion);
+            float3 tailA = a0, tailB = b0;
             if (travel > 1e-7f)
             {
                 float3 dir = motion / travel;
-                float back = 0.5f * CellSize, front = 0.1f * CellSize;
-                a0 -= dir * back;
-                b0 -= dir * back;
+                float3 back = 0.5f * CellSize * (math.lengthsq(_strokeMotion) > 0.0f ? _strokeMotion : dir);
+                float front = 0.1f * CellSize;
+                tailA = a0 - back;
+                tailB = b0 - back;
                 a1 += dir * front;
                 b1 += dir * front;
+                _strokeMotion = dir;
             }
             _strokeTravel += travel;
             // The blade normal flips when the stroke reverses; the labels keep the stroke's orientation.
+            // The tail lies on the previous step's quad and takes its orientation.
             float3 normal = math.normalizesafe(math.cross(b0 - a0, b1 - a0) + math.cross(b1 - a0, a1 - a0));
+            float3 tailNormal = math.normalizesafe(math.cross(tailB - tailA, b0 - tailA) + math.cross(b0 - tailA, a0 - tailA));
+            float tailOrientation = math.dot(tailNormal, _strokeNormal) < 0.0f ? -1.0f : 1.0f;
             float orientation = math.dot(normal, _strokeNormal) < 0.0f ? -1.0f : 1.0f;
             if (math.lengthsq(normal) > 0.5f)
             {
@@ -689,8 +701,7 @@ namespace AdaptorPhysX
                 CopyNodes = CopyNodes.AsArray(),
                 EdgeCorners = _tables.EdgeCorners,
                 Dims = Grid.Dims,
-                A0 = a0, B0 = b0, A1 = a1, B1 = b1,
-                SweptA0 = sweptA0, SweptB0 = sweptB0,
+                TailA = tailA, TailB = tailB, A0 = a0, B0 = b0, A1 = a1, B1 = b1,
                 StrokeSide = StrokeSide,
                 StrokeTravel = StrokeTravel,
                 StrokeDistance = StrokeDistance,
@@ -700,6 +711,7 @@ namespace AdaptorPhysX
                 // Wide enough that a node next to a labelled one is labelled too while the tissue moves.
                 Band = 3.0f * CellSize,
                 Orientation = orientation,
+                TailOrientation = tailOrientation,
                 Severed = Severed,
                 EdgeT = EdgeT,
                 EdgeNormal = EdgeNormal,

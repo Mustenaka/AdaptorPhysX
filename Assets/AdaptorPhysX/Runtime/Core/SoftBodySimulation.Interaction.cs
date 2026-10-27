@@ -784,6 +784,7 @@ namespace AdaptorPhysX
                 Stroke = _stroke,
                 StrokeTravelSum = _strokeTravel,
                 StrokeNormal = _strokeNormal,
+                StrokeMotion = _strokeMotion,
                 Bounds = _bounds.ToArray(),
             };
         }
@@ -847,6 +848,7 @@ namespace AdaptorPhysX
             _stroke = state.Stroke;
             _strokeTravel = state.StrokeTravelSum;
             _strokeNormal = state.StrokeNormal;
+            _strokeMotion = state.StrokeMotion;
             _bounds.CopyFrom(state.Bounds);
             DisposeIfCreated(ref _impulsePartial);
             RebuildInteractionNodes();
@@ -894,6 +896,7 @@ namespace AdaptorPhysX
         public int Stroke;
         public float StrokeTravelSum;
         public float3 StrokeNormal;
+        public float3 StrokeMotion;
         public float3[] Bounds;
 
         public int NodeCount => Positions.Length;

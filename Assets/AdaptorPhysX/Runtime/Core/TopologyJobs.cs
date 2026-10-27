@@ -301,13 +301,13 @@ namespace AdaptorPhysX
     }
 
     /// <summary>
-    /// Severs every intact lattice edge crossed by the swept blade quad
-    /// (a0,b0,b1,a1), and the edges outside the surface beyond the tip or heel of a
-    /// blade that has left the material through it (<see cref="OutsideCrossing"/>), and records
-    /// Hermite data (edge parameter and rest-space normal) on all cells sharing the edge.
-    /// Within a stroke, nodes are labelled with the side of the blade they were on when the
-    /// blade passed them, and an edge whose ends both carry a label is severed exactly when
-    /// the labels differ.
+    /// Severs every intact lattice edge crossed by the swept blade surface: the quad of this step
+    /// (a0,b0,b1,a1) and the tail quad re-sweeping the end of the previous step's path; the edges
+    /// outside the surface beyond the tip or heel of a blade that has left the material through it
+    /// (<see cref="OutsideCrossing"/>); and records Hermite data (edge parameter and rest-space
+    /// normal) on all cells sharing the edge. Within a stroke, nodes are labelled with the side of
+    /// the blade they were on when the blade passed them, and an edge whose ends both carry a label
+    /// is severed exactly when the labels differ.
     /// </summary>
     [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct CutJob : IJob
@@ -324,9 +324,12 @@ namespace AdaptorPhysX
         [ReadOnly] public NativeArray<int> CopyNodes;
         [ReadOnly] public NativeArray<int> EdgeCorners;
         public int3 Dims;
-        public float3 A0, B0, A1, B1;
-        /// <summary>Previous blade position without the overlap with the previous sweep.</summary>
-        public float3 SweptA0, SweptB0;
+        /// <summary>
+        /// Blade edge (heel A, tip B) at the start of the tail, at the previous step and at this step.
+        /// The tail quad (TailA, TailB) to (A0, B0) lies on the previous step's path, the quad
+        /// (A0, B0) to (A1, B1) is this step's; each has its own plane.
+        /// </summary>
+        public float3 TailA, TailB, A0, B0, A1, B1;
 
         /// <summary>
         /// Per node: side of the blade when the current stroke passed it (+1, -1, or 0 for not
@@ -343,23 +346,35 @@ namespace AdaptorPhysX
         public float Band;
         /// <summary>+1 or -1: orientation of this sweep's blade normal relative to the stroke, so the labels keep their meaning when the blade reverses.</summary>
         public float Orientation;
+        /// <summary>The same for the tail quad.</summary>
+        public float TailOrientation;
 
         public NativeArray<ushort> Severed;
         public NativeArray<float> EdgeT;
         public NativeArray<float3> EdgeNormal;
         public NativeArray<int> SeveredCount;
 
+        /// <summary>Normals of the swept triangles (see <see cref="Triangle"/>), not normalized.</summary>
+        private float3 _n0, _n1, _n2, _n3;
+        private float3 _tailNormal, _bladeNormal;
+        /// <summary>Direction the blade moves in this step.</summary>
+        private float3 _motion;
+
         public void Execute()
         {
-            float3 lo = math.min(math.min(A0, B0), math.min(A1, B1));
-            float3 hi = math.max(math.max(A0, B0), math.max(A1, B1));
-            float3 n1 = math.cross(B0 - A0, B1 - A0);
-            float3 n2 = math.cross(B1 - A0, A1 - A0);
-            float3 bladeNormal = math.normalizesafe(n1 + n2);
-            if (math.lengthsq(bladeNormal) < 0.5f)
+            _n0 = math.cross(TailB - TailA, B0 - TailA);
+            _n1 = math.cross(B0 - TailA, A0 - TailA);
+            _n2 = math.cross(B0 - A0, B1 - A0);
+            _n3 = math.cross(B1 - A0, A1 - A0);
+            _bladeNormal = math.normalizesafe(_n2 + _n3);
+            if (math.lengthsq(_bladeNormal) < 0.5f)
             {
                 return;
             }
+            _tailNormal = math.normalizesafe(_n0 + _n1, _bladeNormal);
+            _motion = math.normalizesafe((A1 + B1) - (A0 + B0));
+            float3 lo = math.min(math.min(math.min(TailA, TailB), math.min(A0, B0)), math.min(A1, B1));
+            float3 hi = math.max(math.max(math.max(TailA, TailB), math.max(A0, B0)), math.max(A1, B1));
 
             // Label the nodes near the blade first, then test the edges of the same cells: an edge whose
             // ends were labelled in different sweeps may have moved off the blade by now.
@@ -388,7 +403,7 @@ namespace AdaptorPhysX
                     {
                         if (((mask >> k) & 1) != 0)
                         {
-                            Label(CopyNodes[q * 8 + k], n1, n2);
+                            Label(CopyNodes[q * 8 + k]);
                         }
                     }
                 }
@@ -400,7 +415,7 @@ namespace AdaptorPhysX
             {
                 int c = cut[i];
                 int2 range = CellCopyRange[c];
-                LabelBetweenSides(c, range, bladeNormal);
+                LabelBetweenSides(c, range);
                 for (int e = 0; e < Lattice.EdgeCount; e++)
                 {
                     if ((Severed[c] & (1 << e)) != 0)
@@ -425,10 +440,14 @@ namespace AdaptorPhysX
                     float3 p = Positions[np];
                     float3 r = Positions[nr];
                     int sp = Side(np), sr = Side(nr);
-                    float t = Crossing(p, r, A0, B0, B1, n1);
-                    if (t < 0.0f)
+                    // This step's quad first, then the tail.
+                    float t = -1.0f;
+                    int crossed = -1;
+                    for (int j = 2; j < 2 + TriangleCount && t < 0.0f; j++)
                     {
-                        t = Crossing(p, r, A0, B1, A1, n2);
+                        crossed = j % TriangleCount;
+                        Triangle(crossed, out float3 ta, out float3 tb, out float3 tc, out float3 tn);
+                        t = Crossing(p, r, ta, tb, tc, tn);
                     }
                     if (sp != 0 && sr != 0)
                     {
@@ -440,18 +459,23 @@ namespace AdaptorPhysX
                         {
                             continue;
                         }
-                        t = t < 0.0f ? LabelCrossing(np, nr) : t;
+                        if (t < 0.0f)
+                        {
+                            t = LabelCrossing(np, nr);
+                            crossed = Nearest(math.lerp(p, r, t));
+                        }
                     }
                     else if (t < 0.0f)
                     {
-                        t = OutsideCrossing(c, k0, k1, p, r, n1, n2);
+                        t = OutsideCrossing(c, k0, k1, p, r);
+                        crossed = 2;
                     }
                     if (t < 0.0f)
                     {
                         continue;
                     }
                     t = math.clamp(t, 0.05f, 0.95f);
-                    float3 restNormal = RestNormal(owner, k0, k1, t, bladeNormal);
+                    float3 restNormal = RestNormal(owner, k0, k1, t, crossed < 2 ? _tailNormal : _bladeNormal);
                     SeverShared(c, e, t, restNormal);
                     severedCount++;
                 }
@@ -462,12 +486,13 @@ namespace AdaptorPhysX
 
         /// <summary>
         /// Labels, by its current side, an unlabelled node joined by intact edges of the cell to nodes
-        /// of both labels. Tissue the blade drags along can leave such a node outside the band
-        /// whenever its projection lies on the quad; through it the two sides would stay joined.
-        /// Nodes next to one label only stay unlabelled, so a partial incision does not grow past
-        /// the blade.
+        /// of both labels. Tissue the blade drags along can leave such a node outside the band, or
+        /// where it does not project onto the swept surface; through it the two sides would stay
+        /// joined. Nodes next to one label only stay unlabelled, so a partial incision does not grow
+        /// past the blade. A node ahead of the blade waits until the blade passes it: the plane of
+        /// this sweep does not tell its side where the path turns before reaching it.
         /// </summary>
-        private void LabelBetweenSides(int cell, int2 range, float3 bladeNormal)
+        private void LabelBetweenSides(int cell, int2 range)
         {
             int severed = Severed[cell];
             for (int q = range.x; q < range.x + range.y; q++)
@@ -493,13 +518,18 @@ namespace AdaptorPhysX
                         plus |= side > 0;
                         minus |= side < 0;
                     }
-                    if (plus && minus)
+                    float3 x = Positions[node];
+                    if (!plus || !minus || math.dot(x - 0.5f * (A1 + B1), _motion) > 0.0f)
                     {
-                        float d = math.dot(Positions[node] - A0, bladeNormal) * Orientation;
-                        StrokeSide[node] = (sbyte)(d >= 0.0f ? 1 : -1);
-                        StrokeTravel[node] = Travel;
-                        StrokeDistance[node] = d;
+                        continue;
                     }
+                    if (!ProjectedDistance(x, out float d))
+                    {
+                        d = SignedDistance(x, Nearest(x));
+                    }
+                    StrokeSide[node] = (sbyte)(d >= 0.0f ? 1 : -1);
+                    StrokeTravel[node] = Travel;
+                    StrokeDistance[node] = d;
                 }
             }
         }
@@ -508,32 +538,99 @@ namespace AdaptorPhysX
         private int Side(int node) =>
             StrokeSide[node] != 0 && Travel - StrokeTravel[node] <= LabelTravel ? StrokeSide[node] : 0;
 
-        /// <summary>Labels a node within <see cref="Band"/> of the blade whose projection lies on the swept quad.</summary>
-        private void Label(int node, float3 n1, float3 n2)
+        /// <summary>
+        /// Labels a node within <see cref="Band"/> of the blade whose projection lies on the swept
+        /// surface, by the nearest triangle it projects onto. Where the path turns, the planes of the
+        /// tail and of this step's quad can put a node on different sides; the nearer one is the
+        /// side of the path.
+        /// </summary>
+        private void Label(int node)
         {
             if (Side(node) != 0)
             {
                 return;
             }
-            float3 x = Positions[node];
-            for (int half = 0; half < 2; half++)
+            if (ProjectedDistance(Positions[node], out float d) && math.abs(d) <= Band)
             {
-                float3 n = half == 0 ? n1 : n2;
-                float length = math.length(n);
-                if (length <= 0.0f || !Geometry.PointInTriangle(x, A0, half == 0 ? B0 : B1, half == 0 ? B1 : A1, n))
+                // An end on the blade counts as the positive side, as in Crossing.
+                StrokeSide[node] = (sbyte)(d >= 0.0f ? 1 : -1);
+                StrokeTravel[node] = Travel;
+                StrokeDistance[node] = d;
+            }
+        }
+
+        private const int TriangleCount = 4;
+
+        /// <summary>Swept triangle i: 0 and 1 make the tail quad, 2 and 3 this step's quad.</summary>
+        private void Triangle(int i, out float3 a, out float3 b, out float3 c, out float3 n)
+        {
+            switch (i)
+            {
+                case 0:
+                    a = TailA; b = TailB; c = B0; n = _n0;
+                    break;
+                case 1:
+                    a = TailA; b = B0; c = A0; n = _n1;
+                    break;
+                case 2:
+                    a = A0; b = B0; c = B1; n = _n2;
+                    break;
+                default:
+                    a = A0; b = B1; c = A1; n = _n3;
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Signed distance of x from the plane of the nearest swept triangle that x projects onto;
+        /// false when it projects onto none.
+        /// </summary>
+        private bool ProjectedDistance(float3 x, out float d)
+        {
+            d = float.MaxValue;
+            bool found = false;
+            for (int i = 0; i < TriangleCount; i++)
+            {
+                Triangle(i, out float3 a, out float3 b, out float3 c, out float3 n);
+                if (math.lengthsq(n) <= 0.0f || !Geometry.PointInTriangle(x, a, b, c, n))
                 {
                     continue;
                 }
-                float d = math.dot(x - A0, n) / length * Orientation;
-                if (math.abs(d) <= Band)
-                {
-                    // An end on the blade counts as the positive side, as in Crossing.
-                    StrokeSide[node] = (sbyte)(d >= 0.0f ? 1 : -1);
-                    StrokeTravel[node] = Travel;
-                    StrokeDistance[node] = d;
-                }
-                return;
+                float di = SignedDistance(x, i);
+                d = math.abs(di) < math.abs(d) ? di : d;
+                found = true;
             }
+            return found;
+        }
+
+        /// <summary>Distance of x from the plane of swept triangle i, signed by the stroke's orientation.</summary>
+        private float SignedDistance(float3 x, int i)
+        {
+            Triangle(i, out float3 a, out _, out _, out float3 n);
+            float length = math.length(n);
+            return length > 0.0f ? math.dot(x - a, n) / length * (i < 2 ? TailOrientation : Orientation) : 0.0f;
+        }
+
+        /// <summary>The swept triangle nearest to x.</summary>
+        private int Nearest(float3 x)
+        {
+            int nearest = 2;
+            float best = float.MaxValue;
+            for (int i = 0; i < TriangleCount; i++)
+            {
+                Triangle(i, out float3 a, out float3 b, out float3 c, out float3 n);
+                if (math.lengthsq(n) <= 0.0f)
+                {
+                    continue;
+                }
+                float distance = math.distancesq(x, Geometry.ClosestPointOnTriangle(x, a, b, c));
+                if (distance < best)
+                {
+                    best = distance;
+                    nearest = i;
+                }
+            }
+            return nearest;
         }
 
         /// <summary>
@@ -583,7 +680,7 @@ namespace AdaptorPhysX
         /// cells lie up to about one cell outside the surface, and the cell splits only when these
         /// edges are severed too.
         /// </summary>
-        private float OutsideCrossing(int cell, int k0, int k1, float3 p, float3 r, float3 n1, float3 n2)
+        private float OutsideCrossing(int cell, int k0, int k1, float3 p, float3 r)
         {
             int3 pointDims = Dims + 1;
             int3 g0 = CellCoord[cell] + Lattice.CornerOffset(k0);
@@ -594,6 +691,7 @@ namespace AdaptorPhysX
             {
                 return -1.0f;
             }
+            float3 n1 = _n2, n2 = _n3;
             for (int half = 0; half < 2; half++)
             {
                 float3 n = half == 0 ? n1 : n2;
@@ -604,11 +702,11 @@ namespace AdaptorPhysX
                 }
                 float s = dp / (dp - dr);
                 float3 x = math.lerp(p, r, s);
-                // Only beyond the tip or heel, and only in the part swept in this step (without the
-                // overlap with the previous sweep). Tissue that moves across the plane between two
-                // steps would otherwise be cut on both sides and leave single-node fragments.
+                // Only beyond the tip or heel, and only in the part swept in this step (this step's
+                // quad, without the tail). Tissue that moves across the plane between two steps would
+                // otherwise be cut on both sides and leave single-node fragments.
                 float3 normal = n1 + n2;
-                if (math.dot(math.cross(SweptB0 - SweptA0, x - SweptA0), normal) < 0.0f ||
+                if (math.dot(math.cross(B0 - A0, x - A0), normal) < 0.0f ||
                     math.dot(math.cross(B1 - A1, x - A1), normal) > 0.0f)
                 {
                     continue;
