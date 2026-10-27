@@ -243,6 +243,7 @@ public sealed class ApxHapticBridge
 | ENG-2 | 自动运行测试 | EditMode 与 PlayMode 测试只在本机 batchmode 或编辑器中手动运行（README）；没有 CI | 未开始 | 推送后自动运行 EditMode 与 PlayMode 测试并保存结果文件；运行环境的配置（含 Unity 许可证）写入 README |
 | ENG-3 | 基准测试基线 | 判断改动是否改变仿真结果时比较 16 组 4 个阶段的 `positionsHash`；结果文件在 `Benchmarks/Results/`（不提交），对照值只存在于本机上一次运行的文件中；哈希只在同一机器、同一构建下可比 | 未开始 | 基线文件（例如 `Benchmarks/baseline.json`：每组 4 个阶段的 `positionsHash`、块数、断棱数，以及机器与构建信息）入库；基准测试运行后与基线比较，列出不一致的组 |
 | ENG-4 | 标准场景截图与里程碑验收 | 此前 `docs/images` 中 S1–S6 的截图来自 `1ef1a09`（2026-10-26），早于 BUG-1、BUG-4、BUG-6、BUG-7；S8–S11 来自 `1e35fa0`，早于 BUG-8 的同步子步（`2aec0fe`）。2026-10-27 按 `7389533` 在 batchmode 中重新截取 S1–S6、S8–S11 并更新 `docs/images`：S3 原截图中各块仍贴在一起，看不出切口，截图工具在 S3 之后拉开后侧三块，新增 S3b（5 块分离，切面完整）。与此前的截图相比，S1–S6 除背景中组织块的位置外差别在几千像素以内，S8 中肝叶位置略有变化，S10、S11 逐像素相同；ROADMAP“当前结果”各项仍成立（S8 补充两个物体之后都进入休眠）。S3b 中皮肤边缘与切面交界处有 1–2 像素的台阶（DESIGN 第 7 节，每个体素一个拟合平面）。未完成：M1、M2 的人工验收（ROADMAP 决策 5） | 部分完成 | 用当前提交重新截取 S1–S6、S8–S11，更新 `docs/images` 与 ROADMAP“当前结果”列；M1、M2 的人工验收结果记入 ROADMAP |
+| ENG-5 | 交互工具与调试显示 | 已实现（DESIGN 第 10 节，程序集 `AdaptorPhysX.Tools`，参照 Obi 的粒子渲染组件与 blueprint 编辑器的显示模式）：相机绕中心点旋转、平移、向指针缩放、框选与预设视角（`ApxCameraRig`）；手术刀的航向、侧倾、前倾与竖直深度可调，按下后移动 3 mm 才起刀、航向取刀路方向，可在组织旁起刀，Shift 沿航向直线切割（`ApxScalpelTool`，`ApxBladePose`）；镊子滚轮提起、Shift 松开后保持（`ApxForcepsTool`）；测量点随节点移动（`ApxMeasureTool`）；调试图层：网格、包围盒、lattice、节点、断棱与切口张开量、受力箭头与数值、刀刃与扫掠面，节点按块、运动学帧或速度着色，X-ray 与隐藏表面（`ApxDebugView`）；暂停与单步；面板显示工具状态、按键与各物体统计。两个演示场景改用这些工具（删除 `SurgeryDemoController`），标准场景截图与修改前逐像素相同，截图工具新增 D1–D3。EditMode 测试 6 个（`ToolTests`）。限制：刀的参考方向为世界竖直轴，不按表面法线；镊子只有平移（MED-10）；只支持旧输入系统；单步为一帧的固定步；交互手感未经人工试用 | 已完成 | 相机旋转、平移、缩放与预设视角；刀刃朝向可调，切割按该朝向进行；调试图层在 Game 与 Scene 视图中可见；EditMode 测试覆盖刀刃几何、相机数学、三种工具与 lattice、断棱图层 |
 
 ## 7. 建议顺序
 
@@ -286,4 +287,5 @@ public sealed class ApxHapticBridge
 | 2026-10-27 | `0ba4a57` | 复核 HAP-4 与上一次 TODO 补充：HAP-4 的验收改为已采用的 K 的求法并写明测试条件，限制补上体素 5 mm 时的误差；BUG-8 修改前后基准测试 16 组 4 个阶段（rest、drop、cut、afterCut）的 `positionsHash` 与 `20c1e5e` 一致（此前只对比了 rest、afterCut） |
 | 2026-10-27 | `d9fa515` | 文件行号改以 `0ba4a57` 为准：HAP-2、HAP-4 之后移动的 MED-4、SUT-1、CFG-7 中的行号；CFG-6 的已有派生量补充 `SimulatedTime` |
 | 2026-10-27 | `0012562` | 补充核对中发现但未列出的缺口：新增 BUG-10（开放网格初始化时没有提示）、ECO-9（整体移动与 Transform 变化）、MED-18（切下组织块的管理）与第 6 节发布与工程（ENG-1 至 ENG-4：UPM 包、自动运行测试、基准测试基线、标准场景截图与里程碑验收）；CFG-7 补充钉住区域最多 31 个、超出部分没有提示；建议顺序改为第 7 节 |
-| 2026-10-27 | — | ENG-4 部分完成：按 `7389533` 在 batchmode 中重新截取 S1–S6、S8–S11，更新 `docs/images`、README 与 ROADMAP“当前结果”列；截图工具新增 S3b（拉开后侧三块）；M1、M2 的人工验收未完成 |
+| 2026-10-27 | `e5fb16e` | ENG-4 部分完成：按 `7389533` 在 batchmode 中重新截取 S1–S6、S8–S11，更新 `docs/images`、README 与 ROADMAP“当前结果”列；截图工具新增 S3b（拉开后侧三块）；M1、M2 的人工验收未完成 |
+| 2026-10-27 | — | ENG-5 已完成：交互工具模块（相机、可调朝向的手术刀、镊子、测量、调试显示、暂停与单步），两个演示场景改用；`ApxScalpel` 增加本刀路断棱数与上一次扫掠（只用于显示）；新增 EditMode 测试 6 个；截图工具新增 D1–D3 |

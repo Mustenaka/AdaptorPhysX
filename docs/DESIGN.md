@@ -520,3 +520,80 @@
   `lossyScale` 匹配。匹配时 `Initialize` 跳过细分与体素化；不匹配时输出警告并重新体素化。
 - `BlueprintGivesTheSameSimulationWithoutVoxelizing`：使用 blueprint 时体素化耗时为 0，20 步后的节点位置与不使用时逐位一致。
 - 检视面板的“Bake Blueprint”按钮生成或更新资产；`ApxDistanceField` 资产的检视面板有“Bake”按钮。
+
+## 10. 交互工具与调试显示（`Assets/AdaptorPhysX/Tools/`，TODO ENG-5）
+
+程序集 `AdaptorPhysX.Tools`，引用运行时程序集，运行时程序集不引用它。两个演示场景由场景生成器调用
+`ApxToolbox.CreateDefault` 加入下列组件。
+
+| 组件 | 内容 |
+|---|---|
+| `ApxToolbox` | 读取输入（旧输入系统），切换工具（键 1–9），把指针状态 `ApxToolInput` 交给当前工具；调试图层、暂停与单步的按键；IMGUI 面板 |
+| `ApxCameraRig` | 绕中心点旋转、平移、向指针缩放、框选、预设视角，状态为 `ApxOrbit` |
+| `ApxScalpelTool` | 按 `ApxBladePose` 设置 `ApxScalpel` 的位置与刀刃 |
+| `ApxForcepsTool` | 抓取（`BeginGrab`、`MoveGrab`、`EndGrab`），夹持时滚轮提起，Shift 松开后保持 |
+| `ApxMeasureTool` | 两个节点之间的距离，随组织移动 |
+| `ApxDebugView` | 调试图层（10.3 节） |
+
+- 工具不直接读取输入，只接收 `ApxToolInput`（指针射线、视线方向、左键按下/按住/松开、滚轮、修饰键、未缩放的帧时间），
+  EditMode 测试用脚本输入驱动工具。
+- 拾取（`ApxToolUtil`）：`PickSurface` 取射线一个体素范围内、离射线起点最近的实节点（`PickNode`，与原演示相同）；
+  `PickBeside`：射线与物体包围盒顶面所在水平面的交点在包围盒水平外扩 3 cm 以内时，作为组织旁的起刀点。
+
+### 10.1 相机
+
+- `ApxOrbit`：中心点、偏航、俯仰、距离，相机位置为中心点减去视线方向乘以距离。
+- 平移：像素位移乘以中心点处一个像素的世界长度 2 d tan(fov/2) / H，过中心点、垂直于视线的平面上的点跟随指针。
+- 缩放：距离乘以 (1 − 0.12)^滚轮步数，中心点向目标点按同一比例移动，相机沿相机—目标点连线移动，目标点在屏幕上的位置不变。
+  目标点为指针下的组织节点；没有组织时为过中心点、垂直于视线的平面与指针射线的交点。
+- 输入改变目标视角，显示的视角按时间常数 0.05 s 指数逼近，距离在对数空间插值。
+- 框选：中心点取指针下的节点，距离使该物体包围盒的外接球（放大 1.1 倍）落在竖直视场内。
+
+### 10.2 刀具
+
+- `ApxBladePose`：`heading` 绕世界竖直轴（0 为 +z，90 为 +x），`tilt` 绕切割方向侧倾（正值刀尖偏向切割方向右侧），
+  `rake` 为刀刃在刀面内前倾（正值刀尖在前），`depth` 为刀尖在表面点以下的竖直距离，`clearance` 为刀跟在表面点以上的竖直距离。
+  旋转 R = Yaw(heading) Roll(tilt) Pitch(−rake)，刀刃方向 R (0, −1, 0) 的竖直分量为 cos(tilt) cos(rake)，
+  刀尖 = 表面点 + 刀刃方向 × depth / cos(tilt) cos(rake)，侧倾与前倾不改变切入深度。tilt、rake 限制在 ±70°。
+- 起刀：按下后指针在水平面上移动 3 mm 才开始切割，航向取这段移动的方向，刀在按下点以该航向放下，下一帧开始扫掠。
+  按下即切割时，航向在第一段移动中转向，刀刃绕表面点转动，扫过一个扇面。
+- 航向跟随：指针每移动 2 mm 更新一次目标航向，转速不超过 240°/s。Shift：刀的位置投影到过起刀点、沿当前航向的直线上。
+- 高度：刀在过当前高度的水平面上移动；刀下有组织时高度取刀下最高实节点（与原演示相同），离开组织后保持。
+- 组织旁起刀：起刀高度为该物体包围盒顶面，刀刃从侧面进入。只能在组织上起刀时，起刀侧最外层的棱不与扫掠面相交
+  （与 TODO BUG-9 同类），全切不能分开；从组织旁起刀的全切得到两块（`ScalpelToolStartsAlongTheStrokeAndCutsWithItsLean`）。
+- 刀的位姿写入 `ApxScalpel`：Transform 位置为表面点、旋转为 R，`edgeStart`、`edgeEnd` 为刀跟、刀尖的局部坐标；
+  扫掠与切割仍由 `ApxScalpel.Sweep` 完成。`ApxScalpel` 增加 `StrokeSeveredEdges`（本刀路断棱数）与 `GetLastSweep`
+  （上一次扫掠的四边形），只用于显示，切割结果不变。
+
+### 10.3 调试显示
+
+设计参照 Obi：调试显示是与求解无关、可单独添加的组件（Obi 的 `ObiParticleRenderer` 可挂在任意 actor 上）；显示内容按模式
+切换（Obi softbody blueprint 编辑器的 Particles、Voxels、Mesh 属性颜色梯度、约束网络、Normals 显示模式）；接触按状态着色
+（Obi 文档的接触示例中预测接触为绿色、实际接触为红色）。
+
+| 图层（`ApxDebugLayers`） | 数据 |
+|---|---|
+| Grid | 1 cm 网格，每 10 cm 一条亮线；x 轴红、z 轴蓝、y 轴绿。细线按视线到网格平面的距离淡出（0.2 m 以内完整，0.6 m 以外不画），远处的细线不会叠成一片亮面 |
+| Bounds | `WorldBounds`，橙色为运行、灰色为休眠 |
+| Lattice | 每个副本中两端都是实角点、未断开的棱，按节点对去重；顶点直接取 `Positions`，拓扑版本变化时重建索引 |
+| Nodes | 实节点，十字标记 |
+| Cuts | 每条断棱（按两端格点去重）在两侧副本中的交点（按 `EdgeT` 插值），两点距离小于 3h 时连线，即切口张开量；两侧为同一副本（半切切口的端部）时为品红十字 |
+| Forces | `ColliderWrenches` 红、`TryGetGrabWrench` 黄、`TryGetPinWrench` 蓝；箭头起点为接触中心，长度 0.05 m/N，最长 0.15 m；Play 模式下在 Game 视图中标注大小 |
+| Blades | 各 `ApxScalpel` 的刀刃轮廓（切割时红色，否则青色）与上一次扫掠的四边形 |
+
+- 节点颜色（`ApxNodeColoring`）：块编号（色相按黄金比例递增）、运动学帧（自由浅灰、抓取黄、钉住蓝）、速度（蓝到红，
+  `speedRange` 为红色对应的速度）、单色。
+- `xray`：lattice、节点与断棱绘制在表面之上；`hideSurfaces`：关闭各物体的 MeshRenderer，关闭该选项或组件时恢复。
+- 绘制：`OnRenderObject` 中用 `Hidden/Internal-Colored` 材质与 `Graphics.DrawMeshNow` 绘制线网格，每个相机（Game 视图、
+  Scene 视图与截图工具的 `Camera.Render`）都会绘制；`[ExecuteAlways]`，编辑模式下 Scene 视图可见。只支持内置渲染管线（TODO MED-15）。
+- 截图工具在拍摄标准场景前关闭调试显示，标准场景截图与加入工具之前逐像素相同；另输出 D1（S3 之后的 lattice 与断棱，表面隐藏）、
+  D2（S10、S11 压入时的受力与包围盒）、D3（航向 +x、侧倾 30°、前倾 20°、深 10 mm 的刀刃）。
+
+### 10.4 测试与限制
+
+- `ToolTests`：刀刃几何（各种航向、侧倾、前倾下刀尖竖直深度不变，侧倾与前倾的方向）；相机缩放时目标点方向不变、平移时
+  中心点平面上的点跟随指针；手术刀从组织旁起刀，移动 1 mm 时不切割，沿 +x 拖过 10 cm 立方体后航向为 90°、刀刃与竖直方向
+  成 20°，全切为两块；镊子五次滚轮提起 10 mm，物体顶部随之上移，Shift 松开后保持；测量点随节点移动，切割后仍在原位置；
+  调试显示切割后没有跨越两块的 lattice 棱，断棱数等于刀面经过的格线数。
+- 限制：刀的参考方向为世界竖直轴，不按组织表面法线；镊子只有平移（TODO MED-10）；只支持旧输入系统；单步推进一帧的固定步
+  （60 fps 时通常为 1 步）；暂停时 `Time.timeScale = 0`，Rigidbody 一同停止；面板为英文 IMGUI；交互手感尚未人工试用。

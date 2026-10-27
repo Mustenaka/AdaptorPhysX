@@ -17,6 +17,10 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 |---|---|---|---|
 | ![S8](docs/images/S8_bodies_stacked.png) | ![S9](docs/images/S9_ball_on_tissue.png) | ![S10](docs/images/S10a_ring_pressed.png) | ![S11c](docs/images/S11c_paddle_lifting.png) |
 
+| 调试显示：lattice 按块着色与断棱 | 受力与包围盒 | 侧倾 30°、前倾 20° 的刀刃 |
+|---|---|---|
+| ![D1](docs/images/D1_block_lattice_cuts.png) | ![D2](docs/images/D2_contact_forces.png) | ![D3](docs/images/D3_blade_pose.png) |
+
 - 体积表示：稀疏六面体 lattice，每个体素按 Kuhn 剖分拆为 6 个四面体。
 - 材料模型：co-rotational XPBD（偏量项 `‖F − R‖` 与体积项 `det F − 1` 联立求解），参数为杨氏模量与泊松比。
   可选皮肤层：表面以下一定厚度内刚度更高，并带沿表面方向的预应力，小切口在张力下张开。
@@ -35,6 +39,8 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 - 材料：可选塑性（超过屈服应变的形变按速率计入静止形状）。
 - 状态快照（含切割拓扑）与 blueprint 资产（预先体素化，Start 不再体素化）。
 - 交互：手术刀（`ApxScalpel`）、钉住区域、镊子抓取（不跨越切口）。
+- 交互工具与调试显示（`AdaptorPhysX.Tools`）：相机旋转、平移、向指针缩放；手术刀的航向、侧倾、前倾与深度可调；
+  镊子抓取与提起；测量；参考网格、lattice、节点、断棱、受力与刀刃扫掠面的调试显示；暂停与单步。
 
 ## 环境
 
@@ -50,11 +56,27 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 
 | 输入 | 功能 |
 |---|---|
-| `1` / `2` | 手术刀 / 镊子 |
-| 鼠标左键拖动 | 切割（手术刀）或抓取牵拉（镊子） |
-| `Q` / `E` | 减小 / 增大刀刃深度。深度从刀下的组织表面算起，拖动时随表面高度变化；深度小于组织在竖直方向的厚度时为半切 |
-| 鼠标右键拖动、滚轮 | 旋转、缩放相机 |
-| `R` | 重新加载场景 |
+| `1` / `2` / `3` | 手术刀 / 镊子 / 测量 |
+| 鼠标左键拖动 | 切割（在组织上或组织旁按下）、抓取牵拉、选取测量点 |
+| 右键拖动（或 Alt + 左键） | 绕中心点旋转相机 |
+| 中键拖动（或 Shift + 右键） | 平移相机 |
+| 滚轮 | 向指针处缩放 |
+| `F` / `Home` | 框选指针下的物体（指针下没有物体时框选全部）/ 回到初始视角 |
+| 小键盘 `1` / `3` / `7` / `5` | 前视 / 右视 / 顶视 / 初始角度 |
+| `Q` / `E`，Ctrl + 滚轮 | 减小 / 增大刀刃深度。深度为刀尖在刀下组织表面以下的竖直距离，拖动时随表面高度变化；深度小于组织在竖直方向的厚度时为半切 |
+| `Z` / `X`，`C` / `V`，`A` / `D` | 刀刃侧倾、前倾、航向 |
+| `T` / `B` | 航向跟随刀路（默认开启）/ 刀刃回正 |
+| Shift + 左键拖动 | 沿当前航向直线切割 |
+| `[` / `]`；夹持时滚轮 | 镊子抓取半径；提起或放低 |
+| Shift + 松开左键 | 镊子保持夹持，再次点击松开 |
+| `P` / `N` | 暂停 / 单步 |
+| `F2`–`F8` | 调试图层：网格、lattice、节点、断棱、受力、刀刃、包围盒 |
+| `F9` / `F10` | 调试线绘制在表面之上 / 隐藏表面 |
+| `Tab` / `F1` / `R` | 显示面板 / 显示按键说明 / 重新加载场景 |
+
+左上角面板显示当前工具的状态（刀刃角度与深度、本刀断棱数、夹持力、测量距离）与各物体的块数、步进耗时，
+工具、视角、调试图层与节点着色方式也可在面板中点选。手术刀按下后移动 3 mm 才开始切割，航向取这段移动的方向；
+在组织旁按下时刀刃从侧面进入，全切需要从组织旁起刀。
 
 场景内四个对象：组织块、两端钉住且带预应力的皮瓣、椭球形肝叶、放在托盘中带皮肤层的组织垫（Tissue Pad，
 用于实体组织上的小切口）。
@@ -98,6 +120,9 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
     `maxPlasticDeformation` 为塑性变形上限。
 11. 快照：`ApxSoftBodyState state = body.CaptureState()`，之后 `body.RestoreState(state)` 回到该状态（含切口）。
 12. Blueprint：检视面板“Bake Blueprint”生成资产并赋给 `blueprint`；网格、分辨率或缩放改变后需重新烘焙。
+13. 交互工具：`ApxToolbox.CreateDefault(camera, scalpel, view)` 给相机加上 `ApxCameraRig`，并新建对象
+    “Apx Tools”，含手术刀、镊子、测量工具与调试显示（`ApxDebugView`）。调试显示也可单独添加，`layers` 选择图层，
+    编辑模式下在 Scene 视图中同样可见（内置渲染管线）。工具读取旧输入系统（Input Manager）。
 
 ## 目录
 
@@ -107,6 +132,7 @@ Assets/AdaptorPhysX/Runtime/        插件运行时（asmdef: AdaptorPhysX.Runti
   ApxColliderMaterial.cs 等         碰撞材质、距离场资产、blueprint 资产、力的类型
   SoftBodyWorld.cs                  软体之间的配对
   Core/                             lattice、求解器、接触、拓扑、切割、渲染、距离场、刚体耦合
+Assets/AdaptorPhysX/Tools/          交互工具与调试显示（asmdef: AdaptorPhysX.Tools）
 Assets/AdaptorPhysX/Editor/         检视面板（blueprint 与距离场烘焙）
 Assets/AdaptorPhysX/Shaders/        切面着色器
 Assets/AdaptorPhysX/Tests/          EditMode 与 PlayMode 测试
