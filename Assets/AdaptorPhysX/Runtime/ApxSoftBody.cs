@@ -337,6 +337,7 @@ namespace AdaptorPhysX
             _restSteps = disturbed || !allowSleep || Simulation.MaxSpeed > SleepSpeed ? 0 : _restSteps + 1;
             if (IsSleeping)
             {
+                Simulation.SkipStep();
                 return;
             }
 

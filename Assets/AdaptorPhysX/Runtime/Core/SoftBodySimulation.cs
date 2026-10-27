@@ -79,6 +79,22 @@ namespace AdaptorPhysX
         private bool _hasPending;
         private Stopwatch _stepTimer;
         private NativeArray<ColliderShape> _shapes;
+        private StepJobs _step;
+        /// <summary>A step was begun and waits for the other bodies of <see cref="Group"/> to schedule its substeps.</summary>
+        private bool _begun;
+
+        /// <summary>Jobs of the step being scheduled, from <see cref="BeginStep"/> to <see cref="EndStep"/>.</summary>
+        private struct StepJobs
+        {
+            public SolveCellsJob Solve;
+            public NodeStepJob Node;
+            public CopyPositionsJob Copy;
+            public bool Contacts;
+            public int Substeps;
+            public float Dt;
+            public float H;
+            public JobHandle Handle;
+        }
 
         // Static lattice.
         public VoxelGrid Grid { get; private set; }
@@ -395,6 +411,26 @@ namespace AdaptorPhysX
         public void ScheduleStep(float dt, int substeps, NativeArray<ColliderShape> shapes, NativeArray<float> fields = default,
             NativeArray<RigidBodyState> rigidBodies = default)
         {
+            BeginStep(dt, substeps, shapes, fields, rigidBodies);
+            if (Group != null)
+            {
+                // The substeps are scheduled together with the other bodies in contact.
+                _begun = true;
+                Group.Arrive(this);
+                return;
+            }
+            for (int s = 0; s <= _step.Substeps; s++)
+            {
+                ScheduleNodePass(s, default);
+                ScheduleSolvePass(s);
+            }
+            EndStep();
+        }
+
+        /// <summary>Everything before the substeps: copies the inputs and schedules the per-step jobs.</summary>
+        private void BeginStep(float dt, int substeps, NativeArray<ColliderShape> shapes, NativeArray<float> fields,
+            NativeArray<RigidBodyState> rigidBodies)
+        {
             CompleteStep();
             _stepTimer = Stopwatch.StartNew();
             if (!_shapes.IsCreated || _shapes.Length != shapes.Length)
@@ -500,40 +536,76 @@ namespace AdaptorPhysX
             }
 
             handle = ConfigureInteraction(ref node, handle, dt, substeps, fields, rigidBodies);
-            for (int s = 0; s <= substeps; s++)
+            _step = new StepJobs
             {
-                // Finish substep s-1 (contacts, colliders, velocity) and predict substep s.
-                node.Finish = s > 0;
-                node.Predict = s < substeps;
-                node.FinishTimePrev = (s - 1) / (float)substeps;
-                node.FinishTime = s / (float)substeps;
-                node.PredictTime = (s + 1) / (float)substeps;
-                // Piece contacts every few substeps: each resolution costs two dependent jobs.
-                node.Contacts = contacts && s > 0 && (s % ContactInterval == 0 || s == substeps);
-                if (node.Contacts)
-                {
-                    handle = copy.Schedule(NodeCount, 512, handle);
-                }
-                handle = node.Schedule(NodeCount, NodeBatch, handle);
-                handle = ScheduleRigidCoupling(handle, s, substeps, h, dt);
-                if (s == substeps)
-                {
-                    break;
-                }
-                for (int color = 0; color < 2; color++)
-                {
-                    int count = _colorSliceStart[color + 1] - _colorSliceStart[color];
-                    if (count == 0)
-                    {
-                        continue;
-                    }
-                    solve.SliceOffset = _colorSliceStart[color];
-                    handle = solve.Schedule(count, 1, handle);
-                }
+                Solve = solve,
+                Node = node,
+                Copy = copy,
+                Contacts = contacts,
+                Substeps = substeps,
+                Dt = dt,
+                H = h,
+                Handle = handle,
+            };
+        }
+
+        /// <summary>
+        /// Schedules the node job of pass <paramref name="s"/> (0 to substeps) of the begun step after
+        /// <paramref name="dependency"/>: finishes substep s-1 (contacts, colliders, velocity) and
+        /// predicts substep s.
+        /// </summary>
+        internal void ScheduleNodePass(int s, JobHandle dependency)
+        {
+            int substeps = _step.Substeps;
+            JobHandle handle = JobHandle.CombineDependencies(_step.Handle, dependency);
+            NodeStepJob node = _step.Node;
+            node.Finish = s > 0;
+            node.Predict = s < substeps;
+            node.FinishTimePrev = (s - 1) / (float)substeps;
+            node.FinishTime = s / (float)substeps;
+            node.PredictTime = (s + 1) / (float)substeps;
+            // Piece contacts every few substeps: each resolution costs two dependent jobs.
+            node.Contacts = _step.Contacts && s > 0 && (s % ContactInterval == 0 || s == substeps);
+            if (node.Contacts)
+            {
+                handle = _step.Copy.Schedule(NodeCount, 512, handle);
             }
-            handle = ScheduleAfterSubsteps(handle, dt);
+            handle = node.Schedule(NodeCount, NodeBatch, handle);
+            _step.Handle = ScheduleRigidCoupling(handle, s, substeps, _step.H, _step.Dt);
+        }
+
+        /// <summary>Schedules the constraint solve of substep <paramref name="s"/> after its node job (none after the last).</summary>
+        internal void ScheduleSolvePass(int s)
+        {
+            if (s >= _step.Substeps)
+            {
+                return;
+            }
+            JobHandle handle = _step.Handle;
+            SolveCellsJob solve = _step.Solve;
+            for (int color = 0; color < 2; color++)
+            {
+                int count = _colorSliceStart[color + 1] - _colorSliceStart[color];
+                if (count == 0)
+                {
+                    continue;
+                }
+                solve.SliceOffset = _colorSliceStart[color];
+                handle = solve.Schedule(count, 1, handle);
+            }
+            _step.Handle = handle;
+        }
+
+        /// <summary>Jobs of the begun step scheduled so far.</summary>
+        internal JobHandle StepHandle => _step.Handle;
+
+        /// <summary>Jobs after the last substep; the step then completes like any other.</summary>
+        internal void EndStep()
+        {
+            JobHandle handle = ScheduleAfterSubsteps(_step.Handle, _step.Dt);
             handle = new BoundsJob { Positions = Positions, Velocities = Velocities, NodeReal = NodeReal, Bounds = _bounds }.Schedule(handle);
             StepCount++;
+            _begun = false;
             _pending = handle;
             _hasPending = true;
             JobHandle.ScheduleBatchedJobs();
@@ -542,6 +614,11 @@ namespace AdaptorPhysX
         /// <summary>Waits for a scheduled step. Cheap when nothing is pending.</summary>
         public void CompleteStep()
         {
+            if (_begun)
+            {
+                // Still waiting for bodies of its group: go ahead with those that have begun.
+                Group.ScheduleBegun();
+            }
             if (!_hasPending)
             {
                 return;

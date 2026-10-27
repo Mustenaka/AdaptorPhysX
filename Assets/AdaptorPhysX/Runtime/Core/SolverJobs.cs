@@ -68,6 +68,12 @@ namespace AdaptorPhysX
         /// instead of its share, and the two together twice that.
         /// </summary>
         public NativeArray<float> PartnerShare;
+        /// <summary>
+        /// The partners' copies are refreshed between the substeps (see <see cref="SubstepGroup"/>): they
+        /// hold each partner's solved positions of this substep, and the partner resolves its share of the
+        /// same overlap in this substep, so no share is carried over.
+        /// </summary>
+        public bool PartnersSynced;
 
         public bool Finish;
         public bool Predict;
@@ -193,18 +199,27 @@ namespace AdaptorPhysX
             {
                 return x;
             }
+            // Time since the partners' copies were taken: none when they are refreshed between the
+            // substeps, otherwise from the start of the step.
+            float tau = PartnersSynced ? 0.0f : FinishTime * StepDt;
             float depth = AdaptorPhysX.BodyContacts.Penetration(x, NodeSdf[i], i * AdaptorPhysX.BodyContacts.MaxCandidates,
-                count, FinishTime * StepDt, PartnerCandidate, PartnerCells, PartnerCorner, PartnerVelocity, PartnerSdf,
+                count, tau, PartnerCandidate, PartnerCells, PartnerCorner, PartnerVelocity, PartnerSdf,
                 PartnerWeight, out float3 n, out float partnerWeight, out float3 partnerVelocity, out float friction);
-            // The partner resolves its share of the overlap in its own step.
-            depth -= PartnerShare[i];
+            if (!PartnersSynced)
+            {
+                // The partner resolves its share of the overlap in its own step.
+                depth -= PartnerShare[i];
+            }
             if (!(depth > 0.0f))
             {
                 return x;
             }
             float share = wi / (wi + partnerWeight);
             float push = math.min(depth * share, MaxBodyPush);
-            PartnerShare[i] += push * (1.0f - share) / share;
+            if (!PartnersSynced)
+            {
+                PartnerShare[i] += push * (1.0f - share) / share;
+            }
             x += n * push;
             float3 relative = (x - Previous[i]) - partnerVelocity * Dt;
             float3 tangent = relative - math.dot(relative, n) * n;

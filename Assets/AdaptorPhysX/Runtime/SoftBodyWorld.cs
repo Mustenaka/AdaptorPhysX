@@ -42,6 +42,20 @@ namespace AdaptorPhysX
                 body.Simulation.ClearPartners();
             }
             float dt = Time.fixedDeltaTime;
+            // Bodies in contact step together (SubstepGroup): connected components of the pairs.
+            var root = new int[bodies.Count];
+            for (int i = 0; i < root.Length; i++)
+            {
+                root[i] = i;
+            }
+            int Find(int i)
+            {
+                while (root[i] != i)
+                {
+                    i = root[i] = root[root[i]];
+                }
+                return i;
+            }
             for (int a = 0; a < bodies.Count; a++)
             {
                 ApxSoftBody first = bodies[a];
@@ -71,6 +85,7 @@ namespace AdaptorPhysX
                     float friction = 0.5f * (first.friction + second.friction);
                     x.AddPartner(y, minX, maxX, friction);
                     y.AddPartner(x, minY, maxY, friction);
+                    root[Find(a)] = Find(b);
                     // A moving body wakes a sleeping one it may touch; two resting bodies both sleep.
                     if (!first.IsSleeping && x.MaxSpeed > ApxSoftBody.SleepSpeed)
                     {
@@ -81,6 +96,20 @@ namespace AdaptorPhysX
                         first.WakeUp();
                     }
                 }
+            }
+            var groups = new Dictionary<int, SubstepGroup>();
+            for (int i = 0; i < bodies.Count; i++)
+            {
+                if (bodies[i].Simulation.PartnerCellCount == 0)
+                {
+                    continue;
+                }
+                int r = Find(i);
+                if (!groups.TryGetValue(r, out SubstepGroup group))
+                {
+                    groups[r] = group = new SubstepGroup();
+                }
+                group.Add(bodies[i].Simulation);
             }
         }
     }

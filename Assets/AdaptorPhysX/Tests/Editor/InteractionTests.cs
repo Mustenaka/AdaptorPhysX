@@ -136,6 +136,62 @@ namespace AdaptorPhysX.Tests
         }
 
         [Test]
+        public void MeshColliderAndFieldAssetFloorsHoldTheBodyLikeABoxCollider()
+        {
+            // The component paths to a distance field: a MeshCollider baked at runtime, and an
+            // ApxDistanceField asset on a collider that only bounds it. Each floor is a unit cube scaled to
+            // 0.6 x 0.2 x 0.6 m with its top face at y = 0.
+            Mesh unitBox = Track(MeshUtil.CreateBox(Vector3.one, 2));
+            float boxY = LowestNodeOnFloor(floor => floor.AddComponent<BoxCollider>());
+            float meshY = LowestNodeOnFloor(floor => floor.AddComponent<MeshCollider>().sharedMesh = unitBox);
+            ApxDistanceField baked = Track(ScriptableObject.CreateInstance<ApxDistanceField>());
+            baked.mesh = unitBox;
+            baked.Bake();
+            // A copy through serialization, as an asset loaded from disk: the field comes from the
+            // serialized values without baking again.
+            ApxDistanceField asset = Track(Object.Instantiate(baked));
+            Assert.IsTrue(asset.IsBaked, "the baked values were not serialized");
+            float fieldY = LowestNodeOnFloor(floor =>
+            {
+                // The box reaches 50 mm above the field's top face: the body lands at y = 0 only when the
+                // field replaces the collider's shape.
+                floor.AddComponent<BoxCollider>().size = new Vector3(1.0f, 1.5f, 1.0f);
+                floor.AddComponent<ApxColliderMaterial>().distanceField = asset;
+            });
+            TestContext.WriteLine($"lowest node: box {boxY * 1000:0.000} mm, mesh collider {meshY * 1000:0.000} mm, " +
+                                  $"field asset {fieldY * 1000:0.000} mm");
+            Assert.AreEqual(boxY, meshY, 5e-4f, $"box {boxY * 1000:0.00} mm, mesh collider {meshY * 1000:0.00} mm");
+            Assert.AreEqual(boxY, fieldY, 5e-4f, $"box {boxY * 1000:0.00} mm, field asset {fieldY * 1000:0.00} mm");
+        }
+
+        /// <summary>Drops a 10 cm cube from 10 mm onto the floor <paramref name="addCollider"/> builds; the lowest node height after 2 s.</summary>
+        private float LowestNodeOnFloor(System.Action<GameObject> addCollider)
+        {
+            GameObject floor = InScene(new GameObject("Floor"));
+            floor.transform.position = new Vector3(0.0f, -0.1f, 0.0f);
+            floor.transform.localScale = new Vector3(0.6f, 0.2f, 0.6f);
+            addCollider(floor);
+            ApxSoftBody body = CreateBody("Body", new Vector3(Size, Size, Size), new Vector3(0.0f, 0.5f * Size + 0.01f, 0.0f), 8);
+            Physics.SyncTransforms();
+            body.Initialize();
+            for (int f = 0; f < 120; f++)
+            {
+                body.Simulate(Dt);
+                body.UpdateRender();
+            }
+            AssertFinite(body.Simulation);
+            float minY = float.MaxValue;
+            for (int i = 0; i < body.Simulation.NodeCount; i++)
+            {
+                minY = math.min(minY, body.Simulation.Positions[i].y);
+            }
+            Release(body);
+            Object.DestroyImmediate(floor);
+            Assert.Less(minY, 0.005f, "body did not land");
+            return minY;
+        }
+
+        [Test]
         public void ColliderForceEqualsTheWeightOfARestingBody()
         {
             var parameters = SoftBodyParameters.Default;
@@ -265,6 +321,127 @@ namespace AdaptorPhysX.Tests
             float fallen = Run(false, out _);
             TestContext.WriteLine($"top body centre: stacked {stacked * 1000:0.00} mm, without contact {fallen * 1000:0.00} mm");
             Assert.Less(fallen, 0.03f, $"without body contact the top body sinks through (centre {fallen * 1000:0.0} mm)");
+        }
+
+        [Test]
+        [Ignore("TODO BUG-8: the pushed body tips forward on the floor and the pusher's lower edge goes more than a cell into it")]
+        public void PinnedBodyPushesAnotherWithoutPassingThrough()
+        {
+            Squeeze contact = RunSqueeze(true, 0.6f, false, 36, 0);
+            Squeeze unopposed = RunSqueeze(false, 0.6f, false, 36, 0);
+            float h = contact.Cell;
+            TestContext.WriteLine($"pushed body moved {contact.Moved * 1000:0.00} mm, deepest node {contact.Deepest * 1000:0.00} mm " +
+                                  $"(cell {h * 1000:0.0} mm); without contact moved {unopposed.Moved * 1000:0.00} mm, " +
+                                  $"deepest node {unopposed.Deepest * 1000:0.0} mm");
+            Assert.LessOrEqual(contact.Deepest, h, $"a node went {contact.Deepest * 1000:0.00} mm into the other body (cell {h * 1000:0.0} mm)");
+            Assert.Greater(contact.Moved, h, $"the pushed body moved {contact.Moved * 1000:0.00} mm");
+            Assert.Greater(unopposed.Deepest, h, $"without body contact the pusher enters the other body ({unopposed.Deepest * 1000:0.0} mm)");
+            Assert.Less(unopposed.Moved, h, $"without body contact the other body stays ({unopposed.Moved * 1000:0.00} mm)");
+        }
+
+        [Test]
+        public void PinnedBodyPushesAnotherAlongAFrictionlessFloor()
+        {
+            Squeeze push = RunSqueeze(true, 0.0f, false, 36, 0);
+            float h = push.Cell;
+            TestContext.WriteLine($"pushed body moved {push.Moved * 1000:0.00} mm, deepest node {push.Deepest * 1000:0.00} mm (cell {h * 1000:0.0} mm)");
+            Assert.LessOrEqual(push.Deepest, h, $"a node went {push.Deepest * 1000:0.00} mm into the other body (cell {h * 1000:0.0} mm)");
+            Assert.Greater(push.Moved, 0.04f, $"the pushed body moved {push.Moved * 1000:0.00} mm");
+        }
+
+        [Test]
+        public void SqueezedBodiesKeepTheirContactUnderASustainedLoad()
+        {
+            // The pushed body's far end is pinned; the pusher presses 5 mm into it and holds for a second.
+            // Before the substeps of bodies in contact were synchronised (BUG-8), the overlap grew during
+            // the hold (deepest node 4.5 -> 6.2 mm) and the contact nodes moved at up to 1.4 m/s.
+            Squeeze hold = RunSqueeze(true, 0.6f, true, 6, 60);
+            float h = hold.Cell;
+            TestContext.WriteLine($"deepest node {hold.Deepest * 1000:0.00} mm (cell {h * 1000:0.0} mm), growth during the hold " +
+                                  $"{hold.HoldGrowth * 1000:0.00} mm, fastest node in the last 30 frames {hold.MaxSpeed:0.000} m/s");
+            Assert.LessOrEqual(hold.Deepest, h, $"a node went {hold.Deepest * 1000:0.00} mm into the other body");
+            Assert.Less(hold.HoldGrowth, 2e-4f, $"the overlap grew by {hold.HoldGrowth * 1000:0.00} mm while holding");
+            Assert.Less(hold.MaxSpeed, 0.01f, $"nodes still move at {hold.MaxSpeed:0.000} m/s");
+        }
+
+        private struct Squeeze
+        {
+            /// <summary>Displacement of the pushed body's centre of mass along the push.</summary>
+            public float Moved;
+            /// <summary>Deepest node of either body inside the other (<see cref="Penetration"/>) from the first push on.</summary>
+            public float Deepest;
+            /// <summary>Change of the deepest node from the end of the push to the end of the hold.</summary>
+            public float HoldGrowth;
+            /// <summary>Fastest node of either body in the last 30 frames.</summary>
+            public float MaxSpeed;
+            public float Cell;
+        }
+
+        /// <summary>
+        /// A 4 cm cube (resolution 8) with its rear half pinned is pushed at 0.1 m/s for <paramref name="pushFrames"/>
+        /// into a 6 cm cube (resolution 12) resting on the floor, then holds for <paramref name="holdFrames"/>. Both
+        /// lattices have 5 mm cells on the same grid; the facing faces start one cell apart, so the outer nodes of
+        /// both faces start at x = 0. <paramref name="pinFarEnd"/> pins the last 12 mm of the pushed body.
+        /// </summary>
+        private Squeeze RunSqueeze(bool contact, float friction, bool pinFarEnd, int pushFrames, int holdFrames)
+        {
+            GameObject floor = Primitive(PrimitiveType.Cube);
+            floor.transform.position = new Vector3(0.0f, -0.05f, 0.0f);
+            floor.transform.localScale = new Vector3(0.5f, 0.1f, 0.5f);
+            ApxSoftBody pusher = CreateBody("Pusher", new Vector3(0.04f, 0.04f, 0.04f), new Vector3(-0.0225f, 0.035f, 0.0f), 8);
+            ApxSoftBody pushed = CreateBody("Pushed", new Vector3(0.06f, 0.06f, 0.06f), new Vector3(0.0325f, 0.03f, 0.0f), 12);
+            Collider pin = Trigger(new Vector3(-0.0325f, 0.035f, 0.0f), new Vector3(0.025f, 0.06f, 0.06f));
+            pusher.pinColliders = new[] { pin };
+            if (pinFarEnd)
+            {
+                pushed.pinColliders = new[] { Trigger(new Vector3(0.0625f, 0.03f, 0.0f), new Vector3(0.012f, 0.08f, 0.08f)) };
+            }
+            pushed.collisionMargin = -LatticeOffset(12, 0.06f);
+            pushed.friction = friction;
+            pusher.collideWithBodies = contact;
+            pushed.collideWithBodies = contact;
+            Physics.SyncTransforms();
+            pusher.Initialize();
+            pushed.Initialize();
+            var result = new Squeeze { Cell = pushed.Simulation.CellSize, Deepest = float.MinValue };
+            float start = 0.0f, pushedDepth = 0.0f;
+            int frames = 30 + pushFrames + holdFrames;
+            for (int f = 0; f < frames; f++)
+            {
+                if (f == 30)
+                {
+                    start = CenterOfMass(pushed.Simulation).x;
+                }
+                if (f >= 30 && f < 30 + pushFrames)
+                {
+                    pin.transform.position += new Vector3(0.1f * Dt, 0.0f, 0.0f);
+                }
+                pusher.Simulate(Dt);
+                pushed.Simulate(Dt);
+                pusher.UpdateRender();
+                pushed.UpdateRender();
+                if (f >= 30)
+                {
+                    float depth = Penetration(pusher.Simulation, pushed.Simulation);
+                    result.Deepest = math.max(result.Deepest, depth);
+                    if (f == 30 + pushFrames - 1)
+                    {
+                        pushedDepth = depth;
+                    }
+                    result.HoldGrowth = depth - pushedDepth;
+                }
+                if (f >= frames - 30)
+                {
+                    result.MaxSpeed = math.max(result.MaxSpeed, math.max(pusher.Simulation.MaxSpeed, pushed.Simulation.MaxSpeed));
+                }
+            }
+            AssertFinite(pusher.Simulation);
+            AssertFinite(pushed.Simulation);
+            result.Moved = CenterOfMass(pushed.Simulation).x - start;
+            Release(pusher);
+            Release(pushed);
+            Object.DestroyImmediate(floor);
+            return result;
         }
 
         [Test]
@@ -598,6 +775,103 @@ namespace AdaptorPhysX.Tests
                 }
             }
             return sum / count;
+        }
+
+        private static float3 CenterOfMass(SoftBodySimulation sim)
+        {
+            float3 sum = float3.zero;
+            float mass = 0.0f;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                if (sim.NodeReal[i] != 0 && sim.InverseMass[i] > 0.0f)
+                {
+                    float m = 1.0f / sim.InverseMass[i];
+                    sum += m * sim.Positions[i];
+                    mass += m;
+                }
+            }
+            return sum / mass;
+        }
+
+        /// <summary>Corners of the six tetrahedra of a cell (the Kuhn split the body contact uses).</summary>
+        private static readonly int4[] CellTets =
+        {
+            new int4(0, 1, 3, 7), new int4(0, 1, 7, 5), new int4(0, 2, 7, 3),
+            new int4(0, 2, 6, 7), new int4(0, 4, 5, 7), new int4(0, 4, 7, 6),
+        };
+
+        /// <summary>Deepest real node of either body inside the other (<see cref="DepthInside"/>).</summary>
+        private static float Penetration(SoftBodySimulation a, SoftBodySimulation b) =>
+            math.max(DepthInside(a, b), DepthInside(b, a));
+
+        /// <summary>
+        /// Deepest real node of <paramref name="body"/> inside <paramref name="other"/>, by the distance the body
+        /// contact uses (DESIGN 9.4): the other body's rest SDF interpolated linearly on the deformed tetrahedron
+        /// that contains the node, over the length of its world gradient. Where the gradient is shorter than 0.5
+        /// (on the medial axis of the SDF) the rest SDF itself is used.
+        /// float.MinValue when no node lies in a tetrahedron of the other body.
+        /// </summary>
+        private static float DepthInside(SoftBodySimulation body, SoftBodySimulation other)
+        {
+            int copies = other.Copies.Length;
+            var lo = new float3[copies];
+            var hi = new float3[copies];
+            for (int q = 0; q < copies; q++)
+            {
+                lo[q] = hi[q] = other.Positions[other.CopyNodes[Lattice.CornerCount * q]];
+                for (int k = 1; k < Lattice.CornerCount; k++)
+                {
+                    float3 p = other.Positions[other.CopyNodes[Lattice.CornerCount * q + k]];
+                    lo[q] = math.min(lo[q], p);
+                    hi[q] = math.max(hi[q], p);
+                }
+            }
+            float deepest = float.MinValue;
+            for (int i = 0; i < body.NodeCount; i++)
+            {
+                if (body.NodeReal[i] == 0)
+                {
+                    continue;
+                }
+                float3 x = body.Positions[i];
+                for (int q = 0; q < copies; q++)
+                {
+                    if (math.any(x < lo[q]) || math.any(x > hi[q]))
+                    {
+                        continue;
+                    }
+                    int mask = other.Copies[q].Mask;
+                    foreach (int4 t in CellTets)
+                    {
+                        if (((mask >> t.x) & (mask >> t.y) & (mask >> t.z) & (mask >> t.w) & 1) == 0)
+                        {
+                            continue;
+                        }
+                        int b = Lattice.CornerCount * q;
+                        int4 n = new int4(other.CopyNodes[b + t.x], other.CopyNodes[b + t.y], other.CopyNodes[b + t.z],
+                            other.CopyNodes[b + t.w]);
+                        float3 p0 = other.Positions[n.x];
+                        var m = new float3x3(other.Positions[n.y] - p0, other.Positions[n.z] - p0, other.Positions[n.w] - p0);
+                        if (!(math.abs(math.determinant(m)) > 1e-18f))
+                        {
+                            continue;
+                        }
+                        float3x3 inverse = math.inverse(m);
+                        float3 bc = math.mul(inverse, x - p0);
+                        if (1.0f - math.csum(bc) < -1e-5f || math.any(bc < -1e-5f))
+                        {
+                            continue;
+                        }
+                        float s0 = other.NodeSdf[n.x];
+                        float3 ds = new float3(other.NodeSdf[n.y], other.NodeSdf[n.z], other.NodeSdf[n.w]) - s0;
+                        float phi = s0 + math.dot(bc, ds);
+                        float g = math.length(math.mul(math.transpose(inverse), ds));
+                        deepest = math.max(deepest, g >= 0.5f ? -phi / g : -phi);
+                        break;
+                    }
+                }
+            }
+            return deepest;
         }
 
         private static void AssertFinite(SoftBodySimulation sim)

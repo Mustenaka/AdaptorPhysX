@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -101,8 +102,9 @@ namespace AdaptorPhysX
                     float g = math.length(gradient);
                     if (g < 0.5f)
                     {
-                        // Deeper than the exact band of the SDF (1.5 cells), where it is clamped: the
-                        // gradient is small or zero, and the distance -phi / g would be far too large.
+                        // On the medial axis of the SDF (e.g. inside an edge of the partner, where the corners
+                        // lie as far from two faces) the gradient is short or zero, and the distance
+                        // -phi / g would be far too large.
                         break;
                     }
                     float depth = -(s0 + math.dot(bc, ds)) / g - nodeSdf;
@@ -136,6 +138,83 @@ namespace AdaptorPhysX
                 case 4: return new int4(0, 4, 5, 7);
                 default: return new int4(0, 4, 7, 6);
             }
+        }
+    }
+
+    /// <summary>
+    /// Signed distance used by the contact between bodies at every grid point. The voxelizer's SDF is
+    /// exact within 1.5 cells of the surface and set to <see cref="Voxelizer.FarCells"/> cells deeper in,
+    /// where its gradient vanishes and a node that got that deep into a partner would no longer be pushed
+    /// out. Inside points beyond the exact band take the shortest path to it through the 26-neighbourhood
+    /// (forward and backward sweeps, twice); the band and the outside keep the voxelizer's values.
+    /// </summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal struct ContactSdfJob : IJob
+    {
+        [ReadOnly] public NativeArray<float> Sdf;
+        public int3 PointDims;
+        public float CellSize;
+        public NativeArray<float> Result;
+
+        public void Execute()
+        {
+            float far = Voxelizer.FarCells * CellSize;
+            var distance = new NativeArray<float>(Sdf.Length, Allocator.Temp);
+            var unknown = new NativeArray<bool>(Sdf.Length, Allocator.Temp);
+            for (int i = 0; i < Sdf.Length; i++)
+            {
+                float s = Sdf[i];
+                unknown[i] = s <= -0.9999f * far;
+                // Distance inside the surface; -1 marks outside points, which take no part.
+                distance[i] = unknown[i] ? float.MaxValue : s < 0.0f ? -s : -1.0f;
+            }
+            for (int round = 0; round < 2; round++)
+            {
+                for (int i = 0; i < Sdf.Length; i++)
+                {
+                    Relax(i, distance, unknown, true);
+                }
+                for (int i = Sdf.Length - 1; i >= 0; i--)
+                {
+                    Relax(i, distance, unknown, false);
+                }
+            }
+            for (int i = 0; i < Sdf.Length; i++)
+            {
+                Result[i] = unknown[i] && distance[i] < float.MaxValue ? -distance[i] : Sdf[i];
+            }
+        }
+
+        /// <summary>Shortest distance of unknown point <paramref name="i"/> through its neighbours before (or after) it.</summary>
+        private void Relax(int i, NativeArray<float> distance, NativeArray<bool> unknown, bool forward)
+        {
+            if (!unknown[i])
+            {
+                return;
+            }
+            int3 p = new int3(i % PointDims.x, (i / PointDims.x) % PointDims.y, i / (PointDims.x * PointDims.y));
+            float best = distance[i];
+            for (int dz = -1; dz <= 1; dz++)
+            for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                int offset = dx + PointDims.x * (dy + PointDims.y * dz);
+                if (forward ? offset >= 0 : offset <= 0)
+                {
+                    continue;
+                }
+                int3 q = p + new int3(dx, dy, dz);
+                if (math.any(q < 0) || math.any(q >= PointDims))
+                {
+                    continue;
+                }
+                float d = distance[i + offset];
+                if (d >= 0.0f && d < float.MaxValue)
+                {
+                    best = math.min(best, d + CellSize * math.sqrt(dx * dx + dy * dy + dz * dz));
+                }
+            }
+            distance[i] = best;
         }
     }
 
@@ -178,6 +257,8 @@ namespace AdaptorPhysX
         public NativeList<float3> Velocity;
         public NativeList<float> Sdf;
         public NativeList<float> Weight;
+        /// <summary>Partner node of each corner.</summary>
+        public NativeList<int> Nodes;
 
         public void Execute()
         {
@@ -206,8 +287,139 @@ namespace AdaptorPhysX
                     Velocity.Add(Velocities[n]);
                     Sdf.Add(NodeSdf[n]);
                     Weight.Add(KinematicId[n] >= 0 ? 0.0f : InverseMass[n] * MassScale);
+                    Nodes.Add(n);
                 }
                 Cells.Add(new PartnerCell { Center = center, Radius = radius, Mask = Copies[q].Mask, Friction = Friction });
+            }
+        }
+    }
+
+    /// <summary>
+    /// Moves the copied corners of one partner to its solved positions of the current substep, with the
+    /// velocity over the substep so far (<see cref="SubstepGroup"/>).
+    /// </summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal struct RefreshPartnerCellsJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<int> Nodes;
+        [ReadOnly] public NativeArray<float3> Positions;
+        [ReadOnly] public NativeArray<float3> Previous;
+        /// <summary>One over the partner's substep length.</summary>
+        public float InverseDt;
+        /// <summary>First corner of the partner in the copy arrays.</summary>
+        public int Offset;
+        [NativeDisableParallelForRestriction] public NativeArray<float3> Corner;
+        [NativeDisableParallelForRestriction] public NativeArray<float3> Velocity;
+
+        public void Execute(int c)
+        {
+            int n = Nodes[Offset + c];
+            Corner[Offset + c] = Positions[n];
+            Velocity[Offset + c] = (Positions[n] - Previous[n]) * InverseDt;
+        }
+    }
+
+    /// <summary>
+    /// Soft bodies in contact that step together in one round (TODO BUG-8). Each body steps against
+    /// copies of its partners' cells. Taken once per step, the copies do not show how far a partner
+    /// gives way or is pushed back by its elasticity during the step; each body resolves only its share
+    /// of the overlap it sees, and under a sustained load the rest grows until the nodes are lost. The
+    /// bodies of a group therefore schedule their substeps in turn: after the constraint solves of a
+    /// substep each body refreshes its copies to the partners' solved positions, and the contacts of
+    /// the substep then resolve the same overlap from both sides, each body its mass-weighted share.
+    /// A member that is read before the others have begun its step goes ahead with those that have;
+    /// partners that do not step then stay in place as obstacles. Members with different step or
+    /// substep lengths keep the copies of the start of the step.
+    /// </summary>
+    internal sealed class SubstepGroup
+    {
+        private readonly List<SoftBodySimulation> _members = new List<SoftBodySimulation>();
+        private readonly HashSet<SoftBodySimulation> _arrived = new HashSet<SoftBodySimulation>();
+        private bool _scheduled;
+
+        public void Add(SoftBodySimulation body)
+        {
+            _members.Add(body);
+            body.Group = this;
+        }
+
+        /// <summary>A member began its step or rests this round; the last one schedules the group.</summary>
+        public void Arrive(SoftBodySimulation body)
+        {
+            if (_arrived.Add(body) && (_scheduled || _arrived.Count == _members.Count))
+            {
+                ScheduleBegun();
+            }
+        }
+
+        /// <summary>Schedules the substeps of the members that have begun their steps.</summary>
+        public void ScheduleBegun()
+        {
+            _scheduled = true;
+            var begun = new List<SoftBodySimulation>();
+            foreach (SoftBodySimulation body in _members)
+            {
+                if (body.HasBegunStep)
+                {
+                    begun.Add(body);
+                }
+            }
+            if (begun.Count == 0)
+            {
+                return;
+            }
+            int substeps = begun[0].BegunSubsteps;
+            bool aligned = true;
+            foreach (SoftBodySimulation body in begun)
+            {
+                aligned &= body.BegunSubsteps == substeps && body.BegunDt == begun[0].BegunDt;
+            }
+            foreach (SoftBodySimulation body in begun)
+            {
+                body.PrepareSubsteps(begun, aligned);
+            }
+            if (!aligned)
+            {
+                foreach (SoftBodySimulation body in begun)
+                {
+                    for (int s = 0; s <= body.BegunSubsteps; s++)
+                    {
+                        body.ScheduleNodePass(s, default);
+                        body.ScheduleSolvePass(s);
+                    }
+                    body.EndStep();
+                }
+                return;
+            }
+            var solved = new NativeArray<JobHandle>(begun.Count, Allocator.Temp);
+            var refreshed = new NativeArray<JobHandle>(begun.Count, Allocator.Temp);
+            JobHandle copies = default;
+            for (int s = 0; s <= substeps; s++)
+            {
+                for (int b = 0; b < begun.Count; b++)
+                {
+                    begun[b].ScheduleNodePass(s, copies);
+                    begun[b].ScheduleSolvePass(s);
+                    solved[b] = begun[b].StepHandle;
+                }
+                if (s == substeps)
+                {
+                    break;
+                }
+                // Each refresh reads the partners' solved positions and writes the body's own copies,
+                // which its next node job reads; the partners' next node jobs wait for it.
+                JobHandle allSolved = JobHandle.CombineDependencies(solved);
+                for (int b = 0; b < begun.Count; b++)
+                {
+                    refreshed[b] = begun[b].ScheduleRefreshPartners(allSolved);
+                }
+                copies = JobHandle.CombineDependencies(refreshed);
+            }
+            solved.Dispose();
+            refreshed.Dispose();
+            foreach (SoftBodySimulation body in begun)
+            {
+                body.EndStep();
             }
         }
     }

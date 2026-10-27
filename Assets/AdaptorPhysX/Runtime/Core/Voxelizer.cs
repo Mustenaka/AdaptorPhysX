@@ -52,6 +52,9 @@ namespace AdaptorPhysX
 
     public static class Voxelizer
     {
+        /// <summary>SDF value, in cells, of the points further than 1.5 cells from the surface.</summary>
+        public const float FarCells = 2.0f;
+
         /// <summary>
         /// Voxelizes a closed mesh given in rest space. A cell is kept when one of its
         /// corners is inside the mesh or when it contains a mesh vertex, so every
@@ -250,7 +253,7 @@ namespace AdaptorPhysX
 
             public void Execute()
             {
-                float far = 2.0f * CellSize;
+                float far = FarCells * CellSize;
                 for (int i = 0; i < Distance.Length; i++)
                 {
                     Distance[i] = far;

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Collections.NotBurstCompatible;
 using Unity.Jobs;
@@ -31,6 +32,8 @@ namespace AdaptorPhysX
         private NativeArray<ColliderImpulse> _shapeConsumed;
 
         // Other soft bodies near this one (see BodyContacts).
+        /// <summary>SDF of the grid points for the contact between bodies (see ContactSdfJob).</summary>
+        private NativeArray<float> _contactSdf;
         private NativeArray<float> _nodeSdf;
         /// <summary>Nodes held by a sticky collider (see NodeStepJob.Stuck).</summary>
         private NativeArray<byte> _stuck;
@@ -41,6 +44,10 @@ namespace AdaptorPhysX
         private NativeList<float3> _partnerVelocity;
         private NativeList<float> _partnerSdf;
         private NativeList<float> _partnerWeight;
+        /// <summary>Partner node of each copied corner, to refresh the copies between substeps.</summary>
+        private NativeList<int> _partnerNode;
+        /// <summary>Copied cells of each partner, in the order they were added.</summary>
+        private readonly List<PartnerRange> _partnerRanges = new List<PartnerRange>();
         private float _partnerSpeed;
         private float _partnerRadius;
         private NativeArray<int> _partnerBucketStart;
@@ -48,6 +55,21 @@ namespace AdaptorPhysX
         private NativeArray<int> _partnerCandidate;
         private NativeArray<float> _partnerCandidateGap;
         private NativeArray<int> _partnerCandidateCount;
+
+        private struct PartnerRange
+        {
+            public SoftBodySimulation Body;
+            public int FirstCell;
+            public int CellCount;
+            /// <summary>The partner steps with this body this round, so its copy is refreshed between substeps.</summary>
+            public bool Steps;
+        }
+
+        /// <summary>
+        /// Bodies in contact that step together in the current round (see <see cref="SubstepGroup"/>);
+        /// null when the body steps alone. Set by the pairing at the start of each round.
+        /// </summary>
+        internal SubstepGroup Group;
 
         // Plasticity: rest scaling without the plastic stretch, and the plastic stretch P per cell.
         private NativeArray<float3x3> _cellRestBase;
@@ -72,7 +94,10 @@ namespace AdaptorPhysX
         /// <summary>Cell copies of other bodies this body collides with in the current round of steps.</summary>
         public int PartnerCellCount => _partnerCells.IsCreated ? _partnerCells.Length : 0;
 
-        /// <summary>Rest SDF of every node's grid point (positive outside the surface).</summary>
+        /// <summary>
+        /// Rest SDF of every node's grid point (positive outside the surface), used by the contact between
+        /// bodies: unlike the grid's SDF, exact (to a few percent) also deeper than 1.5 cells inside.
+        /// </summary>
         public NativeArray<float> NodeSdf => _nodeSdf;
 
         /// <summary>Whether plastic flow has changed the rest shape.</summary>
@@ -89,6 +114,7 @@ namespace AdaptorPhysX
             _partnerVelocity = new NativeList<float3>(0, Allocator.Persistent);
             _partnerSdf = new NativeList<float>(0, Allocator.Persistent);
             _partnerWeight = new NativeList<float>(0, Allocator.Persistent);
+            _partnerNode = new NativeList<int>(0, Allocator.Persistent);
             _partnerBucketStart = new NativeArray<int>(BodyContacts.BucketCount + 1, Allocator.Persistent);
         }
 
@@ -107,8 +133,10 @@ namespace AdaptorPhysX
             if (_partnerVelocity.IsCreated) _partnerVelocity.Dispose();
             if (_partnerSdf.IsCreated) _partnerSdf.Dispose();
             if (_partnerWeight.IsCreated) _partnerWeight.Dispose();
+            if (_partnerNode.IsCreated) _partnerNode.Dispose();
             DisposeIfCreated(ref _partnerBucketStart);
             DisposeIfCreated(ref _partnerEntries);
+            DisposeIfCreated(ref _contactSdf);
             DisposeIfCreated(ref _cellRestBase);
             DisposeIfCreated(ref _cellPlastic);
         }
@@ -120,11 +148,22 @@ namespace AdaptorPhysX
             _nodeSdf = new NativeArray<float>(NodeCount, Allocator.Persistent);
             _stuck = new NativeArray<byte>(NodeCount, Allocator.Persistent);
             _partnerShare = new NativeArray<float>(NodeCount, Allocator.Persistent);
-            using var sdf = new NativeArray<float>(Grid.Sdf, Allocator.TempJob);
+            if (!_contactSdf.IsCreated)
+            {
+                using var sdf = new NativeArray<float>(Grid.Sdf, Allocator.TempJob);
+                _contactSdf = new NativeArray<float>(sdf.Length, Allocator.Persistent);
+                new ContactSdfJob
+                {
+                    Sdf = sdf,
+                    PointDims = Grid.PointDims,
+                    CellSize = Grid.CellSize,
+                    Result = _contactSdf,
+                }.Run();
+            }
             new NodeSdfJob
             {
                 RestPositions = RestPositions,
-                Sdf = sdf,
+                Sdf = _contactSdf,
                 Origin = Grid.Origin,
                 InverseCellSize = 1.0f / Grid.CellSize,
                 PointDims = Grid.PointDims,
@@ -251,6 +290,7 @@ namespace AdaptorPhysX
             node.BodyContacts = _partnerCells.Length > 0;
             node.NodeSdf = _nodeSdf;
             node.PartnerShare = _partnerShare;
+            node.PartnersSynced = false;
             if (!node.BodyContacts)
             {
                 node.PartnerCandidate = _noInts;
@@ -433,8 +473,11 @@ namespace AdaptorPhysX
             _partnerVelocity.Clear();
             _partnerSdf.Clear();
             _partnerWeight.Clear();
+            _partnerNode.Clear();
+            _partnerRanges.Clear();
             _partnerSpeed = 0.0f;
             _partnerRadius = 0.0f;
+            Group = null;
         }
 
         /// <summary>
@@ -464,9 +507,11 @@ namespace AdaptorPhysX
                 Velocity = _partnerVelocity,
                 Sdf = _partnerSdf,
                 Weight = _partnerWeight,
+                Nodes = _partnerNode,
             }.Run();
             if (_partnerCells.Length > before)
             {
+                _partnerRanges.Add(new PartnerRange { Body = other, FirstCell = before, CellCount = _partnerCells.Length - before });
                 _partnerSpeed = math.max(_partnerSpeed, other._bounds[2].x);
                 _partnerRadius = math.max(_partnerRadius, 0.87f * other.CellSize);
                 for (int c = before; c < _partnerCells.Length; c++)
@@ -474,6 +519,74 @@ namespace AdaptorPhysX
                     _partnerRadius = math.max(_partnerRadius, _partnerCells[c].Radius);
                 }
             }
+        }
+
+        /// <summary>The body rests this round: its group does not wait for it.</summary>
+        public void SkipStep() => Group?.Arrive(this);
+
+        internal bool HasBegunStep => _begun;
+        internal int BegunSubsteps => _step.Substeps;
+        internal float BegunDt => _step.Dt;
+
+        /// <summary>
+        /// Before the substeps of a group are scheduled. With <paramref name="synchronised"/> substeps the
+        /// copies of the partners in <paramref name="stepping"/> are refreshed between the substeps
+        /// (<see cref="ScheduleRefreshPartners"/>), so the contact sees each partner's solved positions of the
+        /// substep and both bodies resolve their share of the same overlap. Partners that do not step now
+        /// (resting, or not begun when this body had to go ahead) stay where they are: obstacles that
+        /// take no share of the overlap.
+        /// </summary>
+        internal void PrepareSubsteps(List<SoftBodySimulation> stepping, bool synchronised)
+        {
+            _step.Node.PartnersSynced = synchronised;
+            for (int r = 0; r < _partnerRanges.Count; r++)
+            {
+                PartnerRange range = _partnerRanges[r];
+                range.Steps = stepping.Contains(range.Body);
+                _partnerRanges[r] = range;
+                if (!synchronised || range.Steps)
+                {
+                    continue;
+                }
+                int end = (range.FirstCell + range.CellCount) * Lattice.CornerCount;
+                for (int k = range.FirstCell * Lattice.CornerCount; k < end; k++)
+                {
+                    _partnerWeight[k] = 0.0f;
+                    _partnerVelocity[k] = float3.zero;
+                }
+            }
+        }
+
+        /// <summary>
+        /// After the constraint solves of a substep of every body (<paramref name="dependency"/>): moves the
+        /// copied partner cells to the partners' solved positions, which the contacts of the substep then
+        /// resolve.
+        /// </summary>
+        internal JobHandle ScheduleRefreshPartners(JobHandle dependency)
+        {
+            if (!_step.Node.PartnersSynced)
+            {
+                return dependency;
+            }
+            JobHandle handle = dependency;
+            foreach (PartnerRange range in _partnerRanges)
+            {
+                if (!range.Steps)
+                {
+                    continue;
+                }
+                handle = new RefreshPartnerCellsJob
+                {
+                    Nodes = _partnerNode.AsArray(),
+                    Positions = range.Body.Positions,
+                    Previous = range.Body.Previous,
+                    InverseDt = 1.0f / range.Body._step.H,
+                    Offset = range.FirstCell * Lattice.CornerCount,
+                    Corner = _partnerCorner.AsArray(),
+                    Velocity = _partnerVelocity.AsArray(),
+                }.Schedule(range.CellCount * Lattice.CornerCount, 256, handle);
+            }
+            return handle;
         }
 
         /// <summary>Copy of the complete simulation state, including the cut topology.</summary>
