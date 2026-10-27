@@ -568,8 +568,27 @@ namespace AdaptorPhysX
                 Origin = origin,
                 ContactCentroid = total.Weight > 0.0f ? total.Centroid / total.Weight : origin,
                 ContactNodes = total.Contacts / math.max(_impulseSubsteps, 1),
+                ContactNormals = total.Normals,
             };
             return true;
+        }
+
+        /// <summary>
+        /// Reference point of collider shape <paramref name="shape"/> averaged over the times its force was
+        /// sampled in the last step (the ends of the substeps): the position the step's average force belongs to (HAP-4).
+        /// </summary>
+        public float3 ShapeMeanPosition(int shape)
+        {
+            CompleteStep();
+            if (!_shapes.IsCreated || shape < 0 || shape >= _shapes.Length)
+            {
+                return float3.zero;
+            }
+            ColliderShape s = _shapes[shape];
+            // A dynamic body's shape is moved substep by substep; its pose at the start of the step is kept apart.
+            float3 start = s.DynamicBody > 0 && _shapeStart.IsCreated && shape < _shapeStart.Length ? _shapeStart[shape].A1 : s.A0;
+            int n = math.max(_impulseSubsteps, 1);
+            return math.lerp(start, s.A1, (n + 1) / (2.0f * n));
         }
 
         /// <summary>
@@ -759,6 +778,7 @@ namespace AdaptorPhysX
                 CellPlastic = _cellPlastic.IsCreated ? _cellPlastic.ToArray() : null,
                 CellRestParameters = _cellRestParameters,
                 MassDensity = _massDensity,
+                SimulatedTime = SimulatedTime,
                 Parameters = Parameters,
                 Stroke = _stroke,
                 StrokeTravelSum = _strokeTravel,
@@ -820,6 +840,7 @@ namespace AdaptorPhysX
             }
             _cellRestParameters = state.CellRestParameters;
             _massDensity = state.MassDensity;
+            SimulatedTime = state.SimulatedTime;
             Parameters = state.Parameters;
             _stroke = state.Stroke;
             _strokeTravel = state.StrokeTravelSum;
@@ -865,6 +886,7 @@ namespace AdaptorPhysX
         public float3x3[] CellPlastic;
         public float4 CellRestParameters;
         public float MassDensity;
+        public double SimulatedTime;
         public SoftBodyParameters Parameters;
         public int Stroke;
         public float StrokeTravelSum;

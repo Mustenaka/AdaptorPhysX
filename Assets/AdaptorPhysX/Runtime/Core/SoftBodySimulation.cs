@@ -174,6 +174,8 @@ namespace AdaptorPhysX
         public float LastStepMilliseconds { get; private set; }
         /// <summary>Number of steps scheduled so far; renderers skip frames in which the body did not step.</summary>
         public int StepCount { get; private set; }
+        /// <summary>Sum of the lengths of the steps scheduled so far (s).</summary>
+        public double SimulatedTime { get; private set; }
 
         public float CellSize => Grid.CellSize;
 
@@ -606,6 +608,7 @@ namespace AdaptorPhysX
             JobHandle handle = ScheduleAfterSubsteps(_step.Handle, _step.Dt);
             handle = new BoundsJob { Positions = Positions, Velocities = Velocities, NodeReal = NodeReal, Bounds = _bounds }.Schedule(handle);
             StepCount++;
+            SimulatedTime += _step.Dt;
             _begun = false;
             _pending = handle;
             _hasPending = true;

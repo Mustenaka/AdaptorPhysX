@@ -135,7 +135,7 @@ namespace AdaptorPhysX
                     x -= slip <= limit ? tangent : tangent * (limit / slip);
                     if (AccumulateImpulses)
                     {
-                        AddImpulse(i, s, x, x - before, shape.A1);
+                        AddImpulse(i, s, x, x - before, shape.A1, n);
                     }
                 }
                 if (Sticky)
@@ -173,8 +173,11 @@ namespace AdaptorPhysX
             return x - (shape.A0 + math.mul(shape.R0, local));
         }
 
-        /// <summary>Momentum m dx / h the node received from shape <paramref name="s"/>, added to the node's block.</summary>
-        private void AddImpulse(int i, int s, float3 x, float3 dx, float3 origin)
+        /// <summary>
+        /// Momentum m dx / h the node received from shape <paramref name="s"/>, and the shape's normal
+        /// <paramref name="n"/> there (HAP-4), added to the node's block.
+        /// </summary>
+        private void AddImpulse(int i, int s, float3 x, float3 dx, float3 origin, float3 n)
         {
             float w = Weights[i];
             if (!(w > 0.0f))
@@ -183,7 +186,9 @@ namespace AdaptorPhysX
             }
             int index = i / SoftBodySimulation.NodeBatch * Shapes.Length + s;
             ColliderImpulse impulse = Impulses[index];
-            impulse.Add(x, origin, dx * (1.0f / (w * Dt)), math.length(dx));
+            float size = math.length(dx);
+            impulse.Add(x, origin, dx * (1.0f / (w * Dt)), size);
+            impulse.AddNormal(n, size);
             Impulses[index] = impulse;
         }
 

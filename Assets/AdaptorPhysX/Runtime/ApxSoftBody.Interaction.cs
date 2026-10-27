@@ -17,6 +17,11 @@ namespace AdaptorPhysX
         private readonly List<Collider> _wrenchColliders = new List<Collider>();
         private readonly Dictionary<Collider, ApxWrench> _wrenches = new Dictionary<Collider, ApxWrench>();
         private int _wrenchStep = -1;
+        /// <summary>Force models of the colliders in contact during the last step, and the estimators of all gathered colliders (HAP-4).</summary>
+        private readonly Dictionary<Collider, ApxForceModel> _forceModels = new Dictionary<Collider, ApxForceModel>();
+        private readonly Dictionary<Collider, ApxForceModelEstimator> _estimators = new Dictionary<Collider, ApxForceModelEstimator>();
+        private readonly HashSet<Collider> _modelColliders = new HashSet<Collider>();
+        private readonly List<Collider> _staleColliders = new List<Collider>();
         /// <summary>Dynamic rigid bodies of the gathered colliders, and of the last scheduled step.</summary>
         private readonly List<Rigidbody> _gatheredBodies = new List<Rigidbody>();
         private readonly List<RigidBodyState> _gatheredStates = new List<RigidBodyState>();
@@ -36,6 +41,17 @@ namespace AdaptorPhysX
         {
             CollectWrenches();
             return _wrenches.TryGetValue(collider, out wrench);
+        }
+
+        /// <summary>
+        /// Local linear model of the force on <paramref name="collider"/>, published after each step (HAP-4):
+        /// F(x) = F0 + K (x - x0), K = -k N with N the contact normals and k from the force change along the
+        /// collider's motion over the last steps. False when the collider had no contact in the last step.
+        /// </summary>
+        public bool TryGetColliderForceModel(Collider collider, out ApxForceModel model)
+        {
+            CollectWrenches();
+            return _forceModels.TryGetValue(collider, out model);
         }
 
         /// <summary>Wrenches of all colliders in contact during the last step.</summary>
@@ -93,7 +109,53 @@ namespace AdaptorPhysX
                     _wrenches[collider] = _wrenches.TryGetValue(collider, out ApxWrench other) ? other + wrench : wrench;
                 }
             }
+            UpdateForceModels();
         }
+
+        /// <summary>
+        /// Advances the force model estimator of every collider gathered for the last step, in or out of contact
+        /// (a contact starts from zero force), and publishes the models of those in contact. Called once per step.
+        /// </summary>
+        private void UpdateForceModels()
+        {
+            _forceModels.Clear();
+            _modelColliders.Clear();
+            for (int s = 0; s < _wrenchColliders.Count; s++)
+            {
+                Collider collider = _wrenchColliders[s];
+                // A collider of several shapes is placed by its first one.
+                if (collider == null || !_modelColliders.Add(collider))
+                {
+                    continue;
+                }
+                bool contact = _wrenches.TryGetValue(collider, out ApxWrench wrench);
+                _estimators.TryGetValue(collider, out ApxForceModelEstimator estimator);
+                ApxForceModel model = estimator.Update(Simulation.SimulatedTime, Simulation.ShapeMeanPosition(s),
+                    contact ? wrench.Force : float3.zero, contact ? wrench.ContactNormals : float3x3.zero,
+                    ForceModelMinMotion * Simulation.CellSize);
+                _estimators[collider] = estimator;
+                if (contact)
+                {
+                    _forceModels[collider] = model;
+                }
+            }
+            // Colliders that left the body's neighbourhood start afresh when they come back.
+            _staleColliders.Clear();
+            foreach (Collider collider in _estimators.Keys)
+            {
+                if (!_modelColliders.Contains(collider))
+                {
+                    _staleColliders.Add(collider);
+                }
+            }
+            foreach (Collider collider in _staleColliders)
+            {
+                _estimators.Remove(collider);
+            }
+        }
+
+        /// <summary>Motion of a collider, in cells, before its force model's stiffness is estimated again.</summary>
+        private const float ForceModelMinMotion = 0.01f;
 
         /// <summary>
         /// Two-way coupling: adds the correction the tissue made to each dynamic rigid body during the
@@ -238,6 +300,8 @@ namespace AdaptorPhysX
             _wrenches.Clear();
             _wrenchColliders.Clear();
             _wrenchStep = -1;
+            _forceModels.Clear();
+            _estimators.Clear();
             _stepBodies.Clear();
             _responseStep = -1;
         }
@@ -282,6 +346,8 @@ namespace AdaptorPhysX
             _wrenches.Clear();
             _wrenchColliders.Clear();
             _wrenchStep = -1;
+            _forceModels.Clear();
+            _estimators.Clear();
             _stepBodies.Clear();
         }
 

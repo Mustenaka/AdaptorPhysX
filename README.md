@@ -91,6 +91,8 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
    - `ApxColliderMaterial` 还可设置该碰撞体的摩擦系数与粘附（`stickiness`、`stickDistance`）。
    - 碰撞体带非运动学 Rigidbody 时与组织双向耦合（`twoWayCoupling`，默认开启）；此时物体每次 FixedUpdate 都步进，不受 `maxStepsPerFrame` 限制。
    - 器械受力：`TryGetColliderWrench(collider, out ApxWrench)`；多个软体对同一碰撞体的合力用 `ApxHaptics.TrySumColliderWrench`。
+   - 力反馈：`TryGetColliderForceModel(collider, out ApxForceModel)` 给出每步发布的局部线性力模型，
+     触觉线程在两次物理步之间用 `model.Evaluate(器械位置)` 计算力；多个软体用 `ApxHaptics.TrySumColliderForceModel`。
 9. 多个 `ApxSoftBody` 之间默认相互接触（`collideWithBodies`，并受 `collisionLayers` 过滤）。
 10. 塑性：`plasticCreep` 大于 0 时启用，`plasticYield` 为屈服应变，`plasticRecovery` 为恢复速率，
     `maxPlasticDeformation` 为塑性变形上限。

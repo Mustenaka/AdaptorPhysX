@@ -22,6 +22,9 @@ namespace AdaptorPhysX
         public float Weight;
         /// <summary>Node contacts summed over the substeps.</summary>
         public float Contacts;
+        /// <summary>Contact normals n n^T weighted like the centroid (colliders only): xx, yy, zz and xy, xz, yz.</summary>
+        public float3 NormalDiagonal;
+        public float3 NormalOffDiagonal;
 
         public void Add(float3 x, float3 origin, float3 impulse, float size)
         {
@@ -32,6 +35,27 @@ namespace AdaptorPhysX
             Contacts += 1.0f;
         }
 
+        public void AddNormal(float3 n, float size)
+        {
+            NormalDiagonal += n * n * size;
+            NormalOffDiagonal += new float3(n.x * n.y, n.x * n.z, n.y * n.z) * size;
+        }
+
+        /// <summary>The contact normals scaled to unit trace (zero without contacts).</summary>
+        public float3x3 Normals
+        {
+            get
+            {
+                float trace = math.csum(NormalDiagonal);
+                if (!(trace > 0.0f))
+                {
+                    return float3x3.zero;
+                }
+                float3 d = NormalDiagonal / trace, o = NormalOffDiagonal / trace;
+                return new float3x3(d.x, o.x, o.y, o.x, d.y, o.z, o.y, o.z, d.z);
+            }
+        }
+
         public static ColliderImpulse operator +(ColliderImpulse a, ColliderImpulse b) => new ColliderImpulse
         {
             Linear = a.Linear + b.Linear,
@@ -39,6 +63,8 @@ namespace AdaptorPhysX
             Centroid = a.Centroid + b.Centroid,
             Weight = a.Weight + b.Weight,
             Contacts = a.Contacts + b.Contacts,
+            NormalDiagonal = a.NormalDiagonal + b.NormalDiagonal,
+            NormalOffDiagonal = a.NormalOffDiagonal + b.NormalOffDiagonal,
         };
     }
 

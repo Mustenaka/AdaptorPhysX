@@ -11,7 +11,7 @@ namespace AdaptorPhysX.Tests
     /// <summary>
     /// Contact with other bodies and instruments: distance-field colliders, collider forces,
     /// rigid-body coupling, body-body contact, adhesion, plasticity, state snapshots and blueprints
-    /// (TODO ECO-1 to ECO-3, ECO-6 to ECO-8, HAP-1 to HAP-3). Component tests run in a preview scene with its
+    /// (TODO ECO-1 to ECO-3, ECO-6 to ECO-8, HAP-1 to HAP-4). Component tests run in a preview scene with its
     /// own physics scene, so the scene open in the editor neither takes part nor changes.
     /// </summary>
     public sealed class InteractionTests
@@ -452,13 +452,119 @@ namespace AdaptorPhysX.Tests
 
         private static void AddBits(List<uint> bits, ApxWrench w)
         {
-            foreach (float3 v in new[] { w.Force, w.Torque, w.Origin, w.ContactCentroid })
+            foreach (float3 v in new[] { w.Force, w.Torque, w.Origin, w.ContactCentroid, w.ContactNormals.c0, w.ContactNormals.c1, w.ContactNormals.c2 })
             {
                 bits.Add(math.asuint(v.x));
                 bits.Add(math.asuint(v.y));
                 bits.Add(math.asuint(v.z));
             }
             bits.Add(math.asuint(w.ContactNodes));
+        }
+
+        [Test]
+        public void ForceModelPredictsTheNextStepOfAnIndentation()
+        {
+            // A 2 cm ball pressed at 12 mm/s into an 8 x 4 x 8 cm block with a pinned base (default material, 2.5 mm
+            // cells, no gravity). The model published after each step, evaluated at the ball's position in the next
+            // step, predicts that step's force (HAP-4). From 1 mm deep: the first steps of a contact have no stiffness yet.
+            ApxSoftBody block = CreateBody("Block", new Vector3(0.08f, 0.04f, 0.08f), new Vector3(0.0f, 0.02f, 0.0f), 32);
+            block.useGravity = false;
+            block.pinColliders = new[] { Trigger(new Vector3(0.0f, -0.00125f, 0.0f), new Vector3(0.1f, 0.002f, 0.1f)) };
+            GameObject ball = Primitive(PrimitiveType.Sphere);
+            ball.transform.localScale = new Vector3(0.04f, 0.04f, 0.04f);
+            ball.transform.position = new Vector3(0.0f, 0.3f, 0.0f);
+            Physics.SyncTransforms();
+            block.Initialize();
+            Collider ballCollider = ball.GetComponent<Collider>();
+            float top = block.Simulation.BoundsMax.y;
+            const float radius = 0.02f, speed = 0.012f;
+            var models = new List<ApxForceModel>();
+            var depths = new List<float>();
+            for (int f = 0; f < 36; f++)
+            {
+                float depth = speed * Dt * f - 0.001f;
+                ball.transform.position = new Vector3(0.0f, top + radius - depth, 0.0f);
+                Physics.SyncTransforms();
+                block.Simulate(Dt);
+                block.UpdateRender();
+                if (block.TryGetColliderForceModel(ballCollider, out ApxForceModel model))
+                {
+                    models.Add(model);
+                    depths.Add(depth);
+                }
+            }
+            AssertFinite(block.Simulation);
+            Assert.Greater(models.Count, 20, "the ball barely touched the block");
+            float worst = 0.0f, worstHold = 0.0f;
+            int samples = 0;
+            for (int k = 0; k + 1 < models.Count; k++)
+            {
+                if (depths[k + 1] < 0.001f)
+                {
+                    continue;
+                }
+                ApxForceModel model = models[k], next = models[k + 1];
+                float3 predicted = model.Evaluate(next.Position0);
+                float error = math.length(predicted - next.Force0) / math.length(next.Force0);
+                float hold = math.length(model.Force0 - next.Force0) / math.length(next.Force0);
+                TestContext.WriteLine($"depth {depths[k + 1] * 1000:0.00} mm: force {next.Force0.y:0.0000} N, predicted {predicted.y:0.0000} N " +
+                                      $"(error {error * 100:0.0}%, previous force {hold * 100:0.0}%), Kyy {model.Stiffness.c1.y:0} N/m");
+                Assert.AreEqual(Dt, (float)(next.Time - model.Time), 1e-6f);
+                worst = math.max(worst, error);
+                worstHold = math.max(worstHold, hold);
+                samples++;
+            }
+            ApxForceModel last = models[models.Count - 1];
+            TestContext.WriteLine($"{samples} steps: largest error {worst * 100:0.0}% (previous force alone {worstHold * 100:0.0}%); " +
+                                  $"last stiffness {last.Stiffness}");
+            Assert.Greater(samples, 15);
+            Assert.Less(worst, 0.1f, $"largest relative error {worst * 100:0.0}%");
+            Assert.Less(last.Stiffness.c1.y, 0.0f, "no stiffness against the pressing direction");
+            Assert.IsTrue(last.Stiffness.c0.y == last.Stiffness.c1.x && last.Stiffness.c0.z == last.Stiffness.c2.x &&
+                          last.Stiffness.c1.z == last.Stiffness.c2.y, "the stiffness is not symmetric");
+            Assert.IsTrue(ApxHaptics.TrySumColliderForceModel(ballCollider, out ApxForceModel sum));
+            Assert.IsTrue(math.all(sum.Force0 == last.Force0), "one body: the sum is its model");
+        }
+
+        [Test]
+        public void ForceModelPushesOnlyAndLearnsAlongTheNormals()
+        {
+            // Evaluate: linear along the normals, zero once the force would pull, clamped to MaxForce.
+            var model = new ApxForceModel
+            {
+                Position0 = new float3(0.0f, 0.1f, 0.0f),
+                Force0 = new float3(0.0f, 1.0f, 0.0f),
+                Stiffness = new float3x3(0.0f, 0.0f, 0.0f, 0.0f, -100.0f, 0.0f, 0.0f, 0.0f, 0.0f),
+            };
+            Assert.AreEqual(1.5f, model.Evaluate(new float3(0.0f, 0.095f, 0.0f)).y, 1e-5f);
+            Assert.AreEqual(1.0f, model.Evaluate(new float3(0.01f, 0.1f, 0.0f)).y, 1e-6f);
+            Assert.IsTrue(math.all(model.Evaluate(new float3(0.0f, 0.12f, 0.0f)) == float3.zero), "the model pulls");
+            ApxForceModel limited = model;
+            limited.MaxForce = 1.2f;
+            Assert.AreEqual(1.2f, math.length(limited.Evaluate(new float3(0.0f, 0.09f, 0.0f))), 1e-5f);
+            // Two bodies' models of one instrument: the second is moved to the first's position.
+            ApxForceModel other = model;
+            other.Position0 = new float3(0.0f, 0.099f, 0.0f);
+            Assert.AreEqual(1.0f + 1.0f - 0.1f, (model + other).Force0.y, 1e-5f);
+
+            // Estimator: a contact of 200 N/m along y, touched at y = 0.1.
+            var estimator = new ApxForceModelEstimator();
+            var normals = new float3x3(0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+            float3 Force(float3 x) => new float3(0.0f, math.max(0.0f, 200.0f * (0.1f - x.y)), 0.0f);
+            void Step(float3 x) => estimator.Update(0.0, x, Force(x), math.lengthsq(Force(x)) > 0.0f ? normals : float3x3.zero, 1e-4f);
+            Step(new float3(0.0f, 0.1005f, 0.0f));
+            Step(new float3(0.0f, 0.1f, 0.0f));
+            Assert.AreEqual(0.0f, estimator.NormalStiffness, "no stiffness out of contact");
+            Step(new float3(0.0f, 0.0995f, 0.0f));
+            Assert.AreEqual(200.0f, estimator.NormalStiffness, 0.5f, "from zero force at the last position out of contact");
+            Step(new float3(0.0f, 0.099f, 0.0f));
+            Assert.AreEqual(200.0f, estimator.NormalStiffness, 0.5f);
+            // Sliding along the surface (force unchanged) and tiny motions keep k.
+            Step(new float3(0.003f, 0.099f, 0.0f));
+            Step(new float3(0.003f, 0.09899f, 0.0f));
+            Assert.AreEqual(200.0f, estimator.NormalStiffness, 0.5f);
+            Step(new float3(0.003f, 0.1005f, 0.0f));
+            Assert.AreEqual(0.0f, estimator.NormalStiffness, "stiffness after the contact ended");
         }
 
         /// <summary>
