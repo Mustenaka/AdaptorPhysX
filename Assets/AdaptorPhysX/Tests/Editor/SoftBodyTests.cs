@@ -423,6 +423,58 @@ namespace AdaptorPhysX.Tests
         }
 
         [Test]
+        public void WavyStrokePutsTheCutPointsOnTheBladePath()
+        {
+            // A wavy stroke (3 mm amplitude, 45 mm wavelength) of 3 mm sweeps: many edges have their
+            // ends passed by different sweeps and are severed by the side labels. Their cut points come
+            // from the distances of the ends to the blade; the edge midpoints were up to 3 mm off.
+            var parameters = SoftBodyParameters.Default;
+            parameters.Gravity = float3.zero;
+            SoftBodySimulation sim = CreateBox(new float3(0.12f, 0.05f, 0.1f), parameters, 20);
+            float h = sim.CellSize;
+            const int frames = 60;
+            var path = new float2[frames + 1];
+            for (int f = 0; f <= frames; f++)
+            {
+                float z = math.lerp(-0.09f, 0.09f, f / (float)frames);
+                path[f] = new float2(0.003f * math.sin(2.0f * math.PI * z / 0.045f), z);
+            }
+            for (int f = 1; f <= frames; f++)
+            {
+                sim.Cut(new float3(path[f - 1].x, 0.06f, path[f - 1].y), new float3(path[f - 1].x, -0.06f, path[f - 1].y),
+                    new float3(path[f].x, 0.06f, path[f].y), new float3(path[f].x, -0.06f, path[f].y), 1);
+            }
+            Assert.AreEqual(2, sim.CountPieces());
+
+            float worst = 0.0f;
+            int points = 0;
+            for (int c = 0; c < sim.CellCount; c++)
+            {
+                for (int e = 0; e < Lattice.EdgeCount; e++)
+                {
+                    if ((sim.Severed[c] & (1 << e)) == 0)
+                    {
+                        continue;
+                    }
+                    float3 u = math.lerp((float3)Lattice.CornerOffset(Lattice.EdgeCorners[2 * e]),
+                        Lattice.CornerOffset(Lattice.EdgeCorners[2 * e + 1]), sim.EdgeT[c * Lattice.EdgeCount + e]);
+                    float3 p = math.transform(sim.RestToWorld, sim.Grid.Origin + ((float3)sim.CellCoord[c] + u) * h);
+                    float distance = float.MaxValue;
+                    for (int f = 1; f <= frames; f++)
+                    {
+                        float2 a = path[f - 1], ab = path[f] - a;
+                        float s = math.saturate(math.dot(p.xz - a, ab) / math.lengthsq(ab));
+                        distance = math.min(distance, math.distance(p.xz, a + s * ab));
+                    }
+                    worst = math.max(worst, distance);
+                    points++;
+                }
+            }
+            Assert.Greater(points, 0);
+            Assert.Less(worst, 0.15f * h, $"cut point {worst * 1000.0f:0.00} mm from the blade path, cell {h * 1000.0f:0.00} mm");
+        }
+
+        [Test]
         public void CutOffPieceRestsOnTheRestInsteadOfFallingThrough()
         {
             SoftBodySimulation sim = CreateBox(new float3(Size), gravity: true, height: 0.001f);

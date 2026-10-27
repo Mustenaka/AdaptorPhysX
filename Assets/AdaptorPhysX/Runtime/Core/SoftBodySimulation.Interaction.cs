@@ -767,6 +767,7 @@ namespace AdaptorPhysX
                 PieceId = PieceId.ToArray(),
                 StrokeSide = StrokeSide.ToArray(),
                 StrokeTravel = StrokeTravel.ToArray(),
+                StrokeDistance = StrokeDistance.ToArray(),
                 ContactNode = _contactNode.ToArray(),
                 Stuck = _stuck.ToArray(),
                 TetRotation = _tetRotation.ToArray(),
@@ -818,6 +819,7 @@ namespace AdaptorPhysX
             PieceId = new NativeArray<int>(state.PieceId, Allocator.Persistent);
             StrokeSide = new NativeArray<sbyte>(state.StrokeSide, Allocator.Persistent);
             StrokeTravel = new NativeArray<float>(state.StrokeTravel, Allocator.Persistent);
+            StrokeDistance = new NativeArray<float>(state.StrokeDistance, Allocator.Persistent);
             _contactNode = new NativeArray<byte>(state.ContactNode, Allocator.Persistent);
             _weights = new NativeArray<float>(count, Allocator.Persistent);
             _contactPartner = new NativeArray<int>(count * Contacts.MaxPerNode, Allocator.Persistent);
@@ -875,6 +877,7 @@ namespace AdaptorPhysX
         public int[] PieceId;
         public sbyte[] StrokeSide;
         public float[] StrokeTravel;
+        public float[] StrokeDistance;
         public byte[] ContactNode;
         public byte[] Stuck;
         public quaternion[] TetRotation;

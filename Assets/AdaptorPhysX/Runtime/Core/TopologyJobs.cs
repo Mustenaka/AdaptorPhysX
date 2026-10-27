@@ -259,6 +259,7 @@ namespace AdaptorPhysX
         [ReadOnly] public NativeArray<float3> OldKinematicLocal;
         [ReadOnly] public NativeArray<sbyte> OldStrokeSide;
         [ReadOnly] public NativeArray<float> OldStrokeTravel;
+        [ReadOnly] public NativeArray<float> OldStrokeDistance;
         public float4x4 RestToWorld;
 
         public NativeArray<float3> Positions;
@@ -269,6 +270,7 @@ namespace AdaptorPhysX
         public NativeArray<float3> KinematicLocal;
         public NativeArray<sbyte> StrokeSide;
         public NativeArray<float> StrokeTravel;
+        public NativeArray<float> StrokeDistance;
 
         public void Execute(int i)
         {
@@ -284,6 +286,7 @@ namespace AdaptorPhysX
                 KinematicLocal[i] = float3.zero;
                 StrokeSide[i] = 0;
                 StrokeTravel[i] = 0.0f;
+                StrokeDistance[i] = 0.0f;
                 return;
             }
             Positions[i] = OldPositions[p];
@@ -293,6 +296,7 @@ namespace AdaptorPhysX
             KinematicLocal[i] = OldKinematicLocal[p];
             StrokeSide[i] = OldStrokeSide[p];
             StrokeTravel[i] = OldStrokeTravel[p];
+            StrokeDistance[i] = OldStrokeDistance[p];
         }
     }
 
@@ -326,10 +330,11 @@ namespace AdaptorPhysX
 
         /// <summary>
         /// Per node: side of the blade when the current stroke passed it (+1, -1, or 0 for not
-        /// yet), and the blade travel of the stroke at that moment.
+        /// yet), and the blade travel of the stroke and the node's distance from the blade at that moment.
         /// </summary>
         public NativeArray<sbyte> StrokeSide;
         public NativeArray<float> StrokeTravel;
+        public NativeArray<float> StrokeDistance;
         /// <summary>Blade travel of the stroke up to this sweep.</summary>
         public float Travel;
         /// <summary>Blade travel after which a label is renewed, so a stroke may come back over the same tissue.</summary>
@@ -435,7 +440,7 @@ namespace AdaptorPhysX
                         {
                             continue;
                         }
-                        t = t < 0.0f ? 0.5f : t;
+                        t = t < 0.0f ? LabelCrossing(np, nr) : t;
                     }
                     else if (t < 0.0f)
                     {
@@ -493,6 +498,7 @@ namespace AdaptorPhysX
                         float d = math.dot(Positions[node] - A0, bladeNormal) * Orientation;
                         StrokeSide[node] = (sbyte)(d >= 0.0f ? 1 : -1);
                         StrokeTravel[node] = Travel;
+                        StrokeDistance[node] = d;
                     }
                 }
             }
@@ -524,9 +530,22 @@ namespace AdaptorPhysX
                     // An end on the blade counts as the positive side, as in Crossing.
                     StrokeSide[node] = (sbyte)(d >= 0.0f ? 1 : -1);
                     StrokeTravel[node] = Travel;
+                    StrokeDistance[node] = d;
                 }
                 return;
             }
+        }
+
+        /// <summary>
+        /// Parameter of the blade between the ends of an edge labelled on opposite sides, from their
+        /// distances to the blade when it passed them. The ends may have been passed by different
+        /// sweeps, and the edge may have moved off the blade since: the edge midpoint would put the
+        /// cut surface up to half a cell off the blade path.
+        /// </summary>
+        private float LabelCrossing(int p, int r)
+        {
+            float dp = math.abs(StrokeDistance[p]), dr = math.abs(StrokeDistance[r]);
+            return dp + dr > 0.0f ? dp / (dp + dr) : 0.5f;
         }
 
         /// <summary>

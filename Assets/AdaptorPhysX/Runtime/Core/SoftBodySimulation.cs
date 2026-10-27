@@ -140,10 +140,12 @@ namespace AdaptorPhysX
         public NativeArray<int> PieceId;
         /// <summary>
         /// Side of the blade (+1, -1) each node was on when the current cut stroke passed it, 0 when
-        /// not passed; with the stroke's blade travel at that moment (see <see cref="Cut"/>).
+        /// not passed; with the stroke's blade travel and the node's distance from the blade at that
+        /// moment (see <see cref="Cut"/>).
         /// </summary>
         public NativeArray<sbyte> StrokeSide;
         public NativeArray<float> StrokeTravel;
+        public NativeArray<float> StrokeDistance;
         private int _stroke;
         private float _strokeTravel;
         private float3 _strokeNormal;
@@ -691,6 +693,7 @@ namespace AdaptorPhysX
                 SweptA0 = sweptA0, SweptB0 = sweptB0,
                 StrokeSide = StrokeSide,
                 StrokeTravel = StrokeTravel,
+                StrokeDistance = StrokeDistance,
                 Travel = _strokeTravel,
                 // Tissue dragged along by the blade is passed over several cells of blade travel.
                 LabelTravel = 8.0f * CellSize,
@@ -890,6 +893,7 @@ namespace AdaptorPhysX
             var kinematicLocal = new NativeArray<float3>(count, Allocator.Persistent);
             var strokeSide = new NativeArray<sbyte>(count, Allocator.Persistent);
             var strokeTravel = new NativeArray<float>(count, Allocator.Persistent);
+            var strokeDistance = new NativeArray<float>(count, Allocator.Persistent);
             using (var empty3 = new NativeArray<float3>(0, Allocator.TempJob))
             using (var emptyI = new NativeArray<int>(0, Allocator.TempJob))
             using (var emptyS = new NativeArray<sbyte>(0, Allocator.TempJob))
@@ -907,6 +911,7 @@ namespace AdaptorPhysX
                     OldKinematicLocal = hasOld ? KinematicLocal : empty3,
                     OldStrokeSide = hasOld ? StrokeSide : emptyS,
                     OldStrokeTravel = hasOld ? StrokeTravel : emptyF,
+                    OldStrokeDistance = hasOld ? StrokeDistance : emptyF,
                     RestToWorld = RestToWorld,
                     Positions = positions,
                     Previous = previous,
@@ -916,6 +921,7 @@ namespace AdaptorPhysX
                     KinematicLocal = kinematicLocal,
                     StrokeSide = strokeSide,
                     StrokeTravel = strokeTravel,
+                    StrokeDistance = strokeDistance,
                 }.Schedule(count, 256).Complete();
             }
 
@@ -953,6 +959,7 @@ namespace AdaptorPhysX
             KinematicLocal = kinematicLocal;
             StrokeSide = strokeSide;
             StrokeTravel = strokeTravel;
+            StrokeDistance = strokeDistance;
             RestPositions = new NativeArray<float3>(nodeRest.AsArray(), Allocator.Persistent);
             _weights = new NativeArray<float>(count, Allocator.Persistent);
             NodeReal = new NativeArray<byte>(count, Allocator.Persistent);
@@ -1003,6 +1010,7 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref KinematicLocal);
             DisposeIfCreated(ref StrokeSide);
             DisposeIfCreated(ref StrokeTravel);
+            DisposeIfCreated(ref StrokeDistance);
             DisposeIfCreated(ref _weights);
             DisposeIfCreated(ref NodeReal);
             DisposeIfCreated(ref PieceId);
