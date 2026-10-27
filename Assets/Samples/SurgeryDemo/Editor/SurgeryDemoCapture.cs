@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using AdaptorPhysX.Tools;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -18,6 +19,7 @@ namespace AdaptorPhysX.Samples.Editor
 
         private static Camera _camera;
         private static ApxScalpel _scalpel;
+        private static ApxDebugView _debugView;
         private static string _directory;
 
         [MenuItem("AdaptorPhysX/Capture Standard Scenarios")]
@@ -105,6 +107,12 @@ namespace AdaptorPhysX.Samples.Editor
             Physics.SyncTransforms();
             _camera = Camera.main;
             _scalpel = UnityEngine.Object.FindObjectOfType<ApxScalpel>();
+            // The standard shots show the surfaces only; the debug view is turned on for the D shots.
+            _debugView = UnityEngine.Object.FindObjectOfType<ApxDebugView>();
+            if (_debugView != null)
+            {
+                _debugView.enabled = false;
+            }
             ApxSoftBody block = Find("Tissue Block");
             ApxSoftBody flap = Find("Skin Flap");
             ApxSoftBody liver = Find("Liver Lobe");
@@ -146,6 +154,9 @@ namespace AdaptorPhysX.Samples.Editor
             Run(40);
             Log("S3 pieces apart");
             Shot("S3b_block_pieces_apart", new Vector3(-0.2f, 0.26f, -0.1f), new Vector3(-0.2f, 0.03f, 0.01f));
+            // D1: lattice coloured by piece and the gaps of the severed edges, surfaces hidden.
+            DebugShot("D1_block_lattice_cuts", ApxDebugLayers.Grid | ApxDebugLayers.Lattice | ApxDebugLayers.Cuts, true,
+                new Vector3(-0.2f, 0.2f, -0.16f), new Vector3(-0.2f, 0.02f, 0.01f));
 
             // S2: partial incision into the pre-tensioned flap, about half its thickness deep.
             float flapTop = SurfaceHeight(flap, new Vector3(0.0f, 0.3f, 0.0f));
@@ -193,7 +204,37 @@ namespace AdaptorPhysX.Samples.Editor
             Log("S6 retraction");
             Shot("S6b_pad_retracted", new Vector3(0.0f, padTop + 0.05f, -0.255f), new Vector3(0.0f, padTop - 0.004f, -0.21f));
             Release(pad);
+
+            // D3: a leaning blade held at the pad surface (heading +x, tilt 30, rake 20 degrees, 10 mm deep).
+            var pose = new ApxBladePose { heading = 90.0f, tilt = 30.0f, rake = 20.0f, depth = 0.01f, clearance = 0.01f };
+            var bladePoint = new Vector3(0.025f, padTop, -0.205f);
+            pose.GetEdge(bladePoint, out Vector3 heel, out Vector3 tip);
+            _scalpel.cutting = false;
+            _scalpel.transform.SetPositionAndRotation(bladePoint, pose.Rotation);
+            _scalpel.edgeStart = _scalpel.transform.InverseTransformPoint(heel);
+            _scalpel.edgeEnd = _scalpel.transform.InverseTransformPoint(tip);
+            DebugShot("D3_blade_pose", ApxDebugLayers.Grid | ApxDebugLayers.Blades, false,
+                new Vector3(0.025f, padTop + 0.045f, -0.27f), new Vector3(0.025f, padTop - 0.004f, -0.205f));
+
             Shot("99_overview", new Vector3(0.0f, 0.32f, -0.42f), new Vector3(0.0f, 0.03f, 0.0f));
+        }
+
+        private static void DebugShot(string name, ApxDebugLayers layers, bool hideSurfaces, Vector3 position, Vector3 target)
+        {
+            if (_debugView == null)
+            {
+                return;
+            }
+            _debugView.layers = layers;
+            _debugView.hideSurfaces = hideSurfaces;
+            _debugView.xray = false;
+            _debugView.nodeColoring = ApxNodeColoring.Piece;
+            _debugView.enabled = true;
+            // The grid fades with the camera distance: place the camera before collecting the lines.
+            _camera.transform.SetPositionAndRotation(position, Quaternion.LookRotation(target - position));
+            _debugView.Refresh();
+            Shot(name, position, target);
+            _debugView.enabled = false;
         }
 
         /// <summary>Height of the topmost real node below <paramref name="above"/>.</summary>

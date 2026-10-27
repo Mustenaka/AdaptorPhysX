@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using AdaptorPhysX.Tools;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -18,6 +19,7 @@ namespace AdaptorPhysX.Samples.Editor
         private static Camera _camera;
         private static string _directory;
         private static ApxDemoPresser[] _pressers;
+        private static ApxDebugView _debugView;
 
         [MenuItem("AdaptorPhysX/Capture Interaction Scenarios")]
         public static void CaptureMenu()
@@ -105,6 +107,12 @@ namespace AdaptorPhysX.Samples.Editor
             }
             _camera = Camera.main;
             _pressers = UnityEngine.Object.FindObjectsOfType<ApxDemoPresser>();
+            // The standard shots show the surfaces only; the debug view is turned on for the D shot.
+            _debugView = UnityEngine.Object.FindObjectOfType<ApxDebugView>();
+            if (_debugView != null)
+            {
+                _debugView.enabled = false;
+            }
             Shot("I00_overview", new Vector3(0.0f, 0.36f, -0.5f), new Vector3(0.0f, 0.02f, 0.06f));
 
             // 1.33 s: the lobe and the ball have landed.
@@ -119,6 +127,20 @@ namespace AdaptorPhysX.Samples.Editor
             Shot("S10a_ring_pressed", new Vector3(0.11f, 0.08f, -0.12f), new Vector3(0.11f, 0.035f, 0.0f));
             Shot("S11a_putty_pressed", new Vector3(0.33f, 0.09f, -0.13f), new Vector3(0.33f, 0.025f, 0.0f));
             Shot("S11c_paddle_lifting", new Vector3(0.33f, 0.07f, 0.12f), new Vector3(0.33f, 0.035f, 0.22f));
+            // D2: forces on the instruments, the ball, the clamps and the table, with the node bounds.
+            if (_debugView != null)
+            {
+                _debugView.layers = ApxDebugLayers.Grid | ApxDebugLayers.Forces | ApxDebugLayers.Bounds;
+                _debugView.hideSurfaces = false;
+                _debugView.enabled = true;
+                var position = new Vector3(0.0f, 0.3f, -0.42f);
+                var target = new Vector3(0.0f, 0.02f, 0.06f);
+                // The grid fades with the camera distance: place the camera before collecting the lines.
+                _camera.transform.SetPositionAndRotation(position, Quaternion.LookRotation(target - position));
+                _debugView.Refresh();
+                Shot("D2_contact_forces", position, target);
+                _debugView.enabled = false;
+            }
 
             // 4 s: the ring is back up, the putty press lifted away.
             Run(90);

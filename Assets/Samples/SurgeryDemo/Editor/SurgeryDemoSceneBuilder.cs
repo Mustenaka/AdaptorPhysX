@@ -1,4 +1,5 @@
 using AdaptorPhysX.Samples;
+using AdaptorPhysX.Tools;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -80,9 +81,10 @@ namespace AdaptorPhysX.Samples.Editor
                 CreateTrayPart("Tray Wall F", new Vector3(0.0f, 0.019f, -0.1715f), new Vector3(0.115f, 0.04f, 0.008f), trayMaterial),
             };
 
-            var scalpel = new GameObject("Scalpel", typeof(ApxScalpel));
-            var controller = new GameObject("Surgery Demo", typeof(SurgeryDemoController)).GetComponent<SurgeryDemoController>();
-            controller.scalpel = scalpel.GetComponent<ApxScalpel>();
+            var view = new ApxOrbit { Pivot = new Vector3(0.0f, 0.03f, 0.0f), Pitch = 38.0f, Distance = 0.55f };
+            camera.transform.SetPositionAndRotation(view.Position, view.Rotation);
+            var scalpel = new GameObject("Scalpel", typeof(ApxScalpel)).GetComponent<ApxScalpel>();
+            ApxToolbox.CreateDefault(camera, scalpel, view);
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };

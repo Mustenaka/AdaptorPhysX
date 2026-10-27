@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using AdaptorPhysX.Samples;
+using AdaptorPhysX.Tools;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -133,11 +134,10 @@ namespace AdaptorPhysX.Samples.Editor
             paddlePress.overshoot = 0.012f;
             paddlePress.phases = new Vector4(0.5f, 0.5f, 0.5f, 2.0f);
 
-            var scalpel = new GameObject("Scalpel", typeof(ApxScalpel));
-            var controller = new GameObject("Interaction Demo", typeof(SurgeryDemoController)).GetComponent<SurgeryDemoController>();
-            controller.scalpel = scalpel.GetComponent<ApxScalpel>();
-            controller.orbitTarget = new Vector3(0.0f, 0.03f, 0.05f);
-            controller.orbitDistance = 0.75f;
+            var view = new ApxOrbit { Pivot = new Vector3(0.0f, 0.03f, 0.05f), Pitch = 38.0f, Distance = 0.75f };
+            camera.transform.SetPositionAndRotation(view.Position, view.Rotation);
+            var scalpel = new GameObject("Scalpel", typeof(ApxScalpel)).GetComponent<ApxScalpel>();
+            ApxToolbox.CreateDefault(camera, scalpel, view);
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             var scenes = new List<EditorBuildSettingsScene>(EditorBuildSettings.scenes);
