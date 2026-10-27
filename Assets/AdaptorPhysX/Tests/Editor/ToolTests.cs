@@ -129,10 +129,43 @@ namespace AdaptorPhysX.Tests
             Frame(tool, scalpel, body, Pointer(0.08f, false, false, true));
             Assert.IsFalse(scalpel.cutting);
             Assert.Greater(tool.SeveredThisStroke, 0);
-            Assert.AreEqual(0.16f, tool.StrokeLength, 0.001f, "from the press at x = -0.08 to x = 0.08");
+            Assert.AreEqual(0.16f - tool.stabilizer, tool.StrokeLength, 0.001f,
+                "from the press at x = -0.08 to the string length behind the pointer at x = 0.08");
             for (int f = 0; f < 10; f++)
             {
                 Frame(tool, scalpel, body, Pointer(0.2f, false, false, false));
+            }
+            List<int> pieces = body.Simulation.PieceSizes();
+            int total = pieces.Sum();
+            Assert.AreEqual(2, pieces.Count(n => n > 0.02f * total), $"pieces [{string.Join(",", pieces)}]");
+        }
+
+        [Test]
+        public void ScalpelToolStringKeepsHandJitterOutOfTheCut()
+        {
+            ApxSoftBody body = CreateBody(16);
+            GameObject go = InScene(new GameObject("Scalpel"));
+            var scalpel = go.AddComponent<ApxScalpel>();
+            scalpel.cutting = false;
+            var tool = go.AddComponent<ApxScalpelTool>();
+            tool.scalpel = scalpel;
+            tool.blade = new ApxBladePose { depth = 0.12f, clearance = 0.01f };
+
+            // The pointer moves 3 mm along x per frame and shakes 2 mm to either side every two frames.
+            const int frames = 60;
+            const float shake = 0.002f;
+            for (int f = 0; f <= frames; f++)
+            {
+                float z = f == 0 ? 0.0f : f % 4 < 2 ? shake : -shake;
+                Frame(tool, scalpel, body, Pointer(Mathf.Lerp(-0.08f, 0.1f, f / (float)frames), z, f == 0, true, false));
+            }
+            Frame(tool, scalpel, body, Pointer(0.1f, 0.0f, false, false, true));
+            // Without the string the blade would follow the full shake.
+            float lateral = tool.Trail.Max(p => Mathf.Abs(p.z));
+            Assert.Less(lateral, 0.5f * shake, "blade path across the stroke");
+            for (int f = 0; f < 10; f++)
+            {
+                Frame(tool, scalpel, body, Pointer(0.2f, 0.0f, false, false, false));
             }
             List<int> pieces = body.Simulation.PieceSizes();
             int total = pieces.Sum();
@@ -258,9 +291,12 @@ namespace AdaptorPhysX.Tests
         }
 
         /// <summary>Vertical pointer ray at (x, 0) with the given button state.</summary>
-        private static ApxToolInput Pointer(float x, bool down, bool held, bool up) => new ApxToolInput
+        private static ApxToolInput Pointer(float x, bool down, bool held, bool up) => Pointer(x, 0.0f, down, held, up);
+
+        /// <summary>Vertical pointer ray at (x, z) with the given button state.</summary>
+        private static ApxToolInput Pointer(float x, float z, bool down, bool held, bool up) => new ApxToolInput
         {
-            Ray = new Ray(new Vector3(x, 0.5f, 0.0f), Vector3.down),
+            Ray = new Ray(new Vector3(x, 0.5f, z), Vector3.down),
             ViewForward = Vector3.down,
             Down = down,
             Held = held,
