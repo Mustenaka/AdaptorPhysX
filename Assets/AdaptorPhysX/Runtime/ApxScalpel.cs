@@ -17,10 +17,18 @@ namespace AdaptorPhysX
         public bool cutting = true;
 
         public int LastSeveredEdges { get; private set; }
+        /// <summary>Edges severed since the current stroke began.</summary>
+        public int StrokeSeveredEdges { get; private set; }
+        /// <summary>Whether the last call to <see cref="Sweep"/> swept a quad (see <see cref="GetLastSweep"/>).</summary>
+        public bool HasSweep { get; private set; }
 
         private Vector3 _previousStart;
         private Vector3 _previousEnd;
         private bool _hasPrevious;
+        private Vector3 _sweepStart0;
+        private Vector3 _sweepEnd0;
+        private Vector3 _sweepStart1;
+        private Vector3 _sweepEnd1;
         /// <summary>Identifies the current stroke (from ResetSweep or cutting on) to the soft bodies.</summary>
         private int _stroke;
         private static int s_strokes;
@@ -38,6 +46,7 @@ namespace AdaptorPhysX
             Vector3 start = transform.TransformPoint(edgeStart);
             Vector3 end = transform.TransformPoint(edgeEnd);
             LastSeveredEdges = 0;
+            HasSweep = false;
             if (cutting && _hasPrevious &&
                 ((start - _previousStart).sqrMagnitude > 1e-10f || (end - _previousEnd).sqrMagnitude > 1e-10f))
             {
@@ -52,14 +61,30 @@ namespace AdaptorPhysX
                         LastSeveredEdges += body.Cut(_previousStart, _previousEnd, start, end, _stroke);
                     }
                 }
+                _sweepStart0 = _previousStart;
+                _sweepEnd0 = _previousEnd;
+                _sweepStart1 = start;
+                _sweepEnd1 = end;
+                HasSweep = true;
             }
             if (cutting && !_hasPrevious)
             {
                 _stroke = ++s_strokes;
+                StrokeSeveredEdges = 0;
             }
+            StrokeSeveredEdges += LastSeveredEdges;
             _previousStart = start;
             _previousEnd = end;
             _hasPrevious = cutting;
+        }
+
+        /// <summary>Edge (start, end) before and after the last sweep, in world space.</summary>
+        public void GetLastSweep(out Vector3 start0, out Vector3 end0, out Vector3 start1, out Vector3 end1)
+        {
+            start0 = _sweepStart0;
+            end0 = _sweepEnd0;
+            start1 = _sweepStart1;
+            end1 = _sweepEnd1;
         }
 
         private void OnDrawGizmos()

@@ -3,6 +3,7 @@
     "rootNamespace": "AdaptorPhysX.Tests",
     "references": [
         "AdaptorPhysX.Runtime",
+        "AdaptorPhysX.Tools",
         "Unity.Burst",
         "Unity.Collections",
         "Unity.Mathematics",
