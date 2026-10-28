@@ -17,7 +17,7 @@ namespace AdaptorPhysX
     /// Submesh 0 is the skin, submesh 1 the cut surface; UV1 holds the rest-space position
     /// for triplanar interior shading.
     /// </summary>
-    public sealed class SurfaceMesh : IDisposable
+    public sealed partial class SurfaceMesh : IDisposable
     {
         private readonly SoftBodySimulation _sim;
         private readonly float3[] _restPositions;
@@ -44,6 +44,10 @@ namespace AdaptorPhysX
 
         private NativeArray<int> _nativeTriangles;
         private NativeArray<int> _nativeEmbedCell;
+        private NativeArray<float3> _nativeRestPositions;
+        private NativeArray<float3> _nativeRestNormals;
+        private NativeArray<float2> _nativeUvs;
+        private NativeArray<int> _nativeEdgeCorners;
         private NativeArray<int> _vertexCopy;
         private NativeArray<float3> _vertexU;
         private NativeArray<float3> _vertexRestNormal;
@@ -137,6 +141,10 @@ namespace AdaptorPhysX
             _sourceStatic = new NativeArray<StaticVertex>(sourceStatic, Allocator.Persistent);
             _nativeTriangles = new NativeArray<int>(triangles, Allocator.Persistent);
             _nativeEmbedCell = new NativeArray<int>(_embedCell, Allocator.Persistent);
+            _nativeRestPositions = new NativeArray<float3>(restPositions, Allocator.Persistent);
+            _nativeRestNormals = new NativeArray<float3>(restNormals, Allocator.Persistent);
+            _nativeUvs = new NativeArray<float2>(Array.ConvertAll(uvs, uv => (float2)uv), Allocator.Persistent);
+            _nativeEdgeCorners = new NativeArray<int>(Lattice.EdgeCorners, Allocator.Persistent);
             Mesh = new Mesh { name = "ApxSoftBody", indexFormat = IndexFormat.UInt32 };
             Mesh.MarkDynamic();
         }
@@ -146,6 +154,10 @@ namespace AdaptorPhysX
             DisposeArrays();
             if (_nativeTriangles.IsCreated) _nativeTriangles.Dispose();
             if (_nativeEmbedCell.IsCreated) _nativeEmbedCell.Dispose();
+            if (_nativeRestPositions.IsCreated) _nativeRestPositions.Dispose();
+            if (_nativeRestNormals.IsCreated) _nativeRestNormals.Dispose();
+            if (_nativeUvs.IsCreated) _nativeUvs.Dispose();
+            if (_nativeEdgeCorners.IsCreated) _nativeEdgeCorners.Dispose();
             if (_sourceStatic.IsCreated) _sourceStatic.Dispose();
             if (Mesh == null)
             {
@@ -273,8 +285,8 @@ namespace AdaptorPhysX
         }
 
         /// <summary>
-        /// Split result of one skin triangle near a cut, stored per cell and copy ordinal within
-        /// the cell, so it stays valid while copy indices of other cells are renumbered.
+        /// Split result of one skin triangle near a cut, per cell and copy ordinal within the cell
+        /// (managed path, for triangles the split job cannot hold, see <see cref="SplitTrianglesJob"/>).
         /// </summary>
         private sealed class SplitTriangle
         {
@@ -290,8 +302,6 @@ namespace AdaptorPhysX
             public readonly List<(int, int, int, int)> Keys = new List<(int, int, int, int)>(8);
         }
 
-        private readonly Dictionary<int, SplitTriangle> _splitCache = new Dictionary<int, SplitTriangle>();
-        private ushort[] _previousSevered = Array.Empty<ushort>();
 
         /// <summary>A convex piece of a skin triangle and the side of each plane it was split by.</summary>
         private sealed class Piece
@@ -304,7 +314,6 @@ namespace AdaptorPhysX
         private void RebuildTopology(ref UpdateTimings timings)
         {
             _version = _sim.TopologyVersion;
-            ushort[] previousSevered = _previousSevered;
             _range = _sim.CellCopyRange.ToArray();
             _copies = _sim.Copies.AsArray().ToArray();
             _copyNodes = _sim.CopyNodes.AsArray().ToArray();
@@ -313,8 +322,6 @@ namespace AdaptorPhysX
             _edgeT = _sim.EdgeT.ToArray();
             _edgeNormal = _sim.EdgeNormal.ToArray();
             ComputeVisibleCopies();
-            bool[] dirty = DirtyCells(previousSevered);
-            _previousSevered = _severed;
 
             // Source vertex v is render vertex v, evaluated in the (first) copy of its cell.
             // Triangles away from cuts keep their source indices; only triangles touching a
@@ -324,46 +331,18 @@ namespace AdaptorPhysX
             BuildCutGeometry(b);
             timings.CutGeometry = Lap();
 
-            // Triangles away from cut cells keep their indices (classified in Burst); the rest are split here.
-            int[] dynamicTriangles;
+            // Triangles away from cut cells keep their indices; the rest are split in Burst, in parallel.
             using var staticIndices = new NativeList<int>(_triangles.Length, Allocator.TempJob);
-            using (var dynamicList = new NativeList<int>(256, Allocator.TempJob))
-            using (var range = new NativeArray<int2>(_range, Allocator.TempJob))
+            using var dynamicTriangles = new NativeList<int>(256, Allocator.TempJob);
+            new ClassifyTrianglesJob
             {
-                new ClassifyTrianglesJob
-                {
-                    Triangles = _nativeTriangles,
-                    EmbedCell = _nativeEmbedCell,
-                    CellCopyRange = range,
-                    StaticIndices = staticIndices,
-                    DynamicTriangles = dynamicList,
-                }.Run();
-                dynamicTriangles = dynamicList.AsArray().ToArray();
-            }
-
-            var planes = new List<float4>(4);
-            var pieces = new List<Piece>(4);
-            var next = new List<Piece>(4);
-            var used = new HashSet<int>();
-            foreach (int t in dynamicTriangles)
-            {
-                used.Add(t);
-                if (!_splitCache.TryGetValue(t, out SplitTriangle split) || IsDirty(t, dirty))
-                {
-                    split = SplitSkinTriangle(t, planes, pieces, next);
-                    _splitCache[t] = split;
-                }
-                AppendSplit(b, split);
-            }
-            if (used.Count != _splitCache.Count)
-            {
-                var stale = new List<int>();
-                foreach (int t in _splitCache.Keys)
-                {
-                    if (!used.Contains(t)) stale.Add(t);
-                }
-                foreach (int t in stale) _splitCache.Remove(t);
-            }
+                Triangles = _nativeTriangles,
+                EmbedCell = _nativeEmbedCell,
+                CellCopyRange = _sim.CellCopyRange,
+                StaticIndices = staticIndices,
+                DynamicTriangles = dynamicTriangles,
+            }.Run();
+            SplitDynamicTriangles(b, dynamicTriangles.AsArray());
             timings.Split = Lap();
             int extra = b.Copies.Count;
             int count = baseCount + extra;
@@ -432,6 +411,133 @@ namespace AdaptorPhysX
             CutTriangleCount = cutCount / 3;
             timings.Topology = Lap();
         }
+
+        /// <summary>
+        /// Splits the skin triangles touching cut cells (<see cref="SplitTrianglesJob"/>) and appends them to the
+        /// builder in order; triangles the job could not hold go through the managed split.
+        /// </summary>
+        private void SplitDynamicTriangles(Builder b, NativeArray<int> dynamicTriangles)
+        {
+            if (ManagedSplitOnly)
+            {
+                var managedPlanes = new List<float4>(4);
+                var managedPieces = new List<Piece>(4);
+                var managedNext = new List<Piece>(4);
+                foreach (int t in dynamicTriangles.ToArray())
+                {
+                    AppendSplit(b, SplitSkinTriangle(t, managedPlanes, managedPieces, managedNext));
+                }
+                SplitOverflowCount = 0;
+                return;
+            }
+            int cellCount = _cellCoord.Length;
+            using var cellPlanes = new NativeArray<int2>(cellCount, Allocator.TempJob);
+            using var cellBlockers = new NativeArray<int2>(cellCount, Allocator.TempJob);
+            var planes = new List<float4>();
+            var blockers = new List<float3>();
+            var planeRanges = new int2[cellCount];
+            var blockerRanges = new int2[cellCount];
+            foreach (KeyValuePair<int, List<float4>> entry in _cutPlanes)
+            {
+                planeRanges[entry.Key] = new int2(planes.Count, entry.Value.Count);
+                planes.AddRange(entry.Value);
+            }
+            foreach (KeyValuePair<int, List<float3>> entry in _cutTriangles)
+            {
+                blockerRanges[entry.Key] = new int2(blockers.Count, entry.Value.Count);
+                blockers.AddRange(entry.Value);
+            }
+            cellPlanes.CopyFrom(planeRanges);
+            cellBlockers.CopyFrom(blockerRanges);
+            using var nativePlanes = new NativeArray<float4>(planes.ToArray(), Allocator.TempJob);
+            using var nativeBlockers = new NativeArray<float3>(blockers.ToArray(), Allocator.TempJob);
+
+            var stream = new NativeStream(math.max(dynamicTriangles.Length, 1), Allocator.TempJob);
+            using var vertexCopies = new NativeList<int>(Allocator.TempJob);
+            using var vertexU = new NativeList<float3>(Allocator.TempJob);
+            using var vertexNormals = new NativeList<float3>(Allocator.TempJob);
+            using var vertexUv0 = new NativeList<float2>(Allocator.TempJob);
+            using var vertexUv1 = new NativeList<float3>(Allocator.TempJob);
+            using var indices = new NativeList<int>(Allocator.TempJob);
+            using var overflow = new NativeList<int>(Allocator.TempJob);
+            try
+            {
+                VoxelGrid grid = _sim.Grid;
+                JobHandle split = new SplitTrianglesJob
+                {
+                    DynamicTriangles = dynamicTriangles,
+                    Triangles = _nativeTriangles,
+                    RestPositions = _nativeRestPositions,
+                    RestNormals = _nativeRestNormals,
+                    Uvs = _nativeUvs,
+                    EmbedCell = _nativeEmbedCell,
+                    CellCopyRange = _sim.CellCopyRange,
+                    Copies = _sim.Copies.AsArray(),
+                    Severed = _sim.Severed,
+                    EdgeT = _sim.EdgeT,
+                    EdgeNormal = _sim.EdgeNormal,
+                    CellCoord = _sim.CellCoord,
+                    GridToCell = _sim.GridToCell,
+                    EdgeCorners = _nativeEdgeCorners,
+                    CellPlanes = cellPlanes,
+                    Planes = nativePlanes,
+                    CellBlockers = cellBlockers,
+                    Blockers = nativeBlockers,
+                    Origin = grid.Origin,
+                    Dims = grid.Dims,
+                    CellSize = grid.CellSize,
+                    Output = stream.AsWriter(),
+                }.Schedule(dynamicTriangles.Length, 16);
+                new MergeSplitsJob
+                {
+                    Input = stream.AsReader(),
+                    Count = dynamicTriangles.Length,
+                    CellCopyRange = _sim.CellCopyRange,
+                    FirstVertex = b.BaseCount + b.Copies.Count,
+                    VertexCopies = vertexCopies,
+                    VertexU = vertexU,
+                    VertexNormals = vertexNormals,
+                    VertexUv0 = vertexUv0,
+                    VertexUv1 = vertexUv1,
+                    Indices = indices,
+                    Overflow = overflow,
+                }.Schedule(split).Complete();
+            }
+            finally
+            {
+                stream.Dispose();
+            }
+
+            b.Copies.AddRange(vertexCopies.AsArray().ToArray());
+            b.Us.AddRange(vertexU.AsArray().ToArray());
+            b.Normals.AddRange(vertexNormals.AsArray().ToArray());
+            foreach (float2 uv in vertexUv0.AsArray().ToArray())
+            {
+                b.Uv0.Add(uv);
+            }
+            foreach (float3 rest in vertexUv1.AsArray().ToArray())
+            {
+                b.Uv1.Add(rest);
+            }
+            b.Skin.AddRange(indices.AsArray().ToArray());
+            if (overflow.Length > 0)
+            {
+                var planeList = new List<float4>(4);
+                var pieces = new List<Piece>(4);
+                var next = new List<Piece>(4);
+                foreach (int i in overflow.AsArray().ToArray())
+                {
+                    AppendSplit(b, SplitSkinTriangle(dynamicTriangles[i], planeList, pieces, next));
+                }
+            }
+            SplitOverflowCount = overflow.Length;
+        }
+
+        /// <summary>Skin triangles of the last rebuild that the split job could not hold (handled by the managed split).</summary>
+        public int SplitOverflowCount { get; private set; }
+
+        /// <summary>Splits every triangle with the managed code, to compare the split job with it in tests.</summary>
+        internal static bool ManagedSplitOnly;
 
         private void ComputeVisibleCopies()
         {
@@ -576,39 +682,6 @@ namespace AdaptorPhysX
             piece.Signs.Add(sign);
             return piece;
         }
-
-        /// <summary>Cells whose severed edges changed since the last rebuild, dilated by one cell.</summary>
-        private bool[] DirtyCells(ushort[] previousSevered)
-        {
-            var dirty = new bool[_cellCoord.Length];
-            if (previousSevered.Length != _severed.Length)
-            {
-                for (int c = 0; c < dirty.Length; c++) dirty[c] = true;
-                return dirty;
-            }
-            int3 dims = _sim.Grid.Dims;
-            for (int c = 0; c < _severed.Length; c++)
-            {
-                if (_severed[c] == previousSevered[c])
-                {
-                    continue;
-                }
-                int3 p = _cellCoord[c];
-                for (int z = -1; z <= 1; z++)
-                for (int y = -1; y <= 1; y++)
-                for (int x = -1; x <= 1; x++)
-                {
-                    int3 n = p + new int3(x, y, z);
-                    if (math.any(n < 0) || math.any(n >= dims)) continue;
-                    int cell = _gridToCell[n.x + dims.x * (n.y + dims.y * n.z)];
-                    if (cell >= 0) dirty[cell] = true;
-                }
-            }
-            return dirty;
-        }
-
-        private bool IsDirty(int t, bool[] dirty) =>
-            dirty[_embedCell[_triangles[t]]] || dirty[_embedCell[_triangles[t + 1]]] || dirty[_embedCell[_triangles[t + 2]]];
 
         private SplitTriangle SplitSkinTriangle(int t, List<float4> planes, List<Piece> pieces, List<Piece> next)
         {

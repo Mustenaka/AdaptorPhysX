@@ -698,6 +698,60 @@ namespace AdaptorPhysX.Tests
         }
 
         [Test]
+        public void SplitJobMatchesTheManagedSplit()
+        {
+            SoftBodySimulation sim = CreateBox(new float3(Size), gravity: false, out float3[] rest, out float3[] normals,
+                out Vector2[] uvs, out int[] triangles);
+            // A full cut, a crossing cut and an oblique cut that stops inside: cells with one and two planes,
+            // split points on split edges, and crack faces.
+            CutPlaneX(sim, 0.003f, -0.2f, 0.2f);
+            CutPlaneZ(sim, -0.004f, -0.2f, 0.2f);
+            sim.Cut(new float3(-0.2f, 0.06f, 0.03f), new float3(-0.2f, -0.02f, 0.01f),
+                new float3(0.02f, 0.06f, 0.035f), new float3(0.02f, -0.02f, 0.015f));
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                float3 p = sim.Positions[i];
+                sim.Velocities[i] = new float3(p.x < 0.0f ? -0.2f : 0.2f, 0.0f, p.z < 0.0f ? -0.2f : 0.2f);
+            }
+            StepFrames(sim, 10);
+
+            using var job = new SurfaceMesh(sim, rest, normals, uvs, triangles);
+            job.Update(float4x4.identity);
+            SurfaceMesh.ManagedSplitOnly = true;
+            try
+            {
+                using var managed = new SurfaceMesh(sim, rest, normals, uvs, triangles);
+                managed.Update(float4x4.identity);
+                Assert.AreEqual(0, job.SplitOverflowCount);
+                Assert.Greater(job.Mesh.vertexCount, rest.Length, "no triangle was split");
+                Assert.AreEqual(managed.Mesh.vertexCount, job.Mesh.vertexCount);
+                CollectionAssert.AreEqual(managed.Mesh.GetTriangles(0), job.Mesh.GetTriangles(0));
+                CollectionAssert.AreEqual(managed.Mesh.GetTriangles(1), job.Mesh.GetTriangles(1));
+                Vector3[] jobVertices = job.Mesh.vertices, managedVertices = managed.Mesh.vertices;
+                Vector3[] jobNormals = job.Mesh.normals, managedNormals = managed.Mesh.normals;
+                var jobUv0 = new List<Vector2>();
+                var managedUv0 = new List<Vector2>();
+                var jobUv1 = new List<Vector3>();
+                var managedUv1 = new List<Vector3>();
+                job.Mesh.GetUVs(0, jobUv0);
+                managed.Mesh.GetUVs(0, managedUv0);
+                job.Mesh.GetUVs(1, jobUv1);
+                managed.Mesh.GetUVs(1, managedUv1);
+                for (int i = 0; i < jobVertices.Length; i++)
+                {
+                    Assert.Less(Vector3.Distance(jobVertices[i], managedVertices[i]), 1e-6f, $"vertex {i}");
+                    Assert.Less(Vector3.Distance(jobNormals[i], managedNormals[i]), 1e-5f, $"normal {i}");
+                    Assert.Less(Vector2.Distance(jobUv0[i], managedUv0[i]), 1e-6f, $"uv0 {i}");
+                    Assert.Less(Vector3.Distance(jobUv1[i], managedUv1[i]), 1e-6f, $"uv1 {i}");
+                }
+            }
+            finally
+            {
+                SurfaceMesh.ManagedSplitOnly = false;
+            }
+        }
+
+        [Test]
         public void SkinDoesNotBridgeSeparatedPieces()
         {
             SoftBodySimulation sim = CreateBox(new float3(Size), gravity: false, out float3[] rest, out float3[] normals,
