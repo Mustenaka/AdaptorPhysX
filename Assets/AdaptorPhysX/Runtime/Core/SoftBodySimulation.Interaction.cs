@@ -784,6 +784,7 @@ namespace AdaptorPhysX
                 SimulatedTime = SimulatedTime,
                 Parameters = Parameters,
                 Stroke = _stroke,
+                StrokeEnded = _strokeEnded,
                 StrokeTravelSum = _strokeTravel,
                 StrokeNormal = _strokeNormal,
                 StrokeMotion = _strokeMotion,
@@ -846,6 +847,7 @@ namespace AdaptorPhysX
             SimulatedTime = state.SimulatedTime;
             Parameters = state.Parameters;
             _stroke = state.Stroke;
+            _strokeEnded = state.StrokeEnded;
             _strokeTravel = state.StrokeTravelSum;
             _strokeNormal = state.StrokeNormal;
             _strokeMotion = state.StrokeMotion;
@@ -896,6 +898,7 @@ namespace AdaptorPhysX
         public double SimulatedTime;
         public SoftBodyParameters Parameters;
         public int Stroke;
+        public bool StrokeEnded;
         public float StrokeTravelSum;
         public float3 StrokeNormal;
         public float3 StrokeMotion;

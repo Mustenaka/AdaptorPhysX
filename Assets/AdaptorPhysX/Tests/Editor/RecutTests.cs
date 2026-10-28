@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
+using Unity.Mathematics;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -62,28 +63,25 @@ namespace AdaptorPhysX.Tests
 
         /// <summary>
         /// The second stroke one cell beside the first with the blade leaning towards it, along it with the hand
-        /// wavering, and back along it at a slant; offsets from the first stroke and the waver to either side in cells,
-        /// back: from the far side of the band to the near one. The lean stands in for the turn of the cut parts under
-        /// the demo's steel ball, which put the second stroke into cells of the first. Before the fix, the leaning
-        /// stroke left skin stretched across the incision (3 triangles longer than two cells), and the wavering and
-        /// slanted ones shaved 8 and 6 fragments of 1–5 nodes off the walls, while rays through the incision crossing
-        /// the surface an odd number of times went from 0.2 % to 3.0 % and 2.8 % (holes and flaps). The leaning blade still
-        /// grazes the nodes above the surface beside the incision and leaves a seam along it (3.3 %, 3.5 % before the
-        /// fix); its holes are not checked.
+        /// wavering, back along it at a slant, and one cell beside it upright, which cuts a strip off; offsets from the
+        /// first stroke and the waver to either side in cells, back: from the far side of the band to the near one,
+        /// pieces: pieces of at least SurfaceMesh.MinVisiblePieceNodes nodes afterwards. The lean stands in for the turn
+        /// of the cut parts under the demo's steel ball. Before the fixes, the leaning stroke left skin stretched across
+        /// the incision (3 triangles longer than two cells) and flaps of the wall that swung apart (rays through the
+        /// incision crossing the surface an odd number of times 0.2 % to 3.5 %, TODO BUG-16), and the wavering and
+        /// slanted ones shaved 8 and 6 fragments of 1–5 nodes off the walls (3.0 % and 2.8 %, TODO BUG-15).
         /// </summary>
-        [TestCase(1.0f, 1.0f, 0.0f, 15.0f, false, false, TestName = "SecondStrokeBesideAnIncisionLeaningTowardsIt")]
-        [TestCase(0.0f, 0.0f, 0.4f, 0.0f, false, true, TestName = "SecondStrokeWaveringAlongAnIncision")]
-        [TestCase(0.3f, -0.3f, 0.3f, 0.0f, true, true, TestName = "SecondStrokeBackAlongAnIncisionAtASlant")]
+        [TestCase(1.0f, 1.0f, 0.0f, 15.0f, false, 2, TestName = "SecondStrokeBesideAnIncisionLeaningTowardsIt")]
+        [TestCase(0.0f, 0.0f, 0.4f, 0.0f, false, 2, TestName = "SecondStrokeWaveringAlongAnIncision")]
+        [TestCase(0.3f, -0.3f, 0.3f, 0.0f, true, 2, TestName = "SecondStrokeBackAlongAnIncisionAtASlant")]
+        [TestCase(1.0f, 1.0f, 0.0f, 0.0f, false, 3, TestName = "SecondStrokeOneCellBesideAnIncisionCutsAStripOff")]
         public void SecondStrokeLeavesTheIncisionWhole(float startOffset, float endOffset, float waver, float lean, bool back,
-            bool checkHoles)
+            int pieces)
         {
             SoftBodySimulation sim = _band.Simulation;
             float h = sim.CellSize;
-            Run(60);
-            Stroke(new Vector3(CutX, 0.0f, -0.05f), new Vector3(CutX, 0.0f, 0.05f), 0.0f, 0.0f);
-            Run(40);
+            CutThrough();
             List<int> before = sim.PieceSizes();
-            Assert.AreEqual(2, before.Count(n => n >= SurfaceMesh.MinVisiblePieceNodes), $"first stroke: pieces [{string.Join(",", before)}]");
             Assert.AreEqual(0, LongSkinTriangles(h), "first stroke: skin triangles longer than two cells");
             float oddBefore = OddRays();
 
@@ -95,12 +93,54 @@ namespace AdaptorPhysX.Tests
             float oddAfter = OddRays();
             TestContext.WriteLine($"pieces [{string.Join(",", after.OrderByDescending(n => n))}], odd rays {oddBefore:P1} -> {oddAfter:P1}");
             Assert.AreEqual(0, LongSkinTriangles(h), "skin triangles longer than two cells");
+            Assert.AreEqual(pieces, after.Count(n => n >= SurfaceMesh.MinVisiblePieceNodes), $"pieces [{string.Join(",", after)}]");
             Assert.AreEqual(before.Count(n => n < SurfaceMesh.MinVisiblePieceNodes), after.Count(n => n < SurfaceMesh.MinVisiblePieceNodes),
                 $"fragments of fewer than {SurfaceMesh.MinVisiblePieceNodes} nodes: pieces [{string.Join(",", after)}]");
-            if (checkHoles)
+            Assert.Less(oddAfter - oddBefore, 0.02f, "rays through the incision crossing the surface an odd number of times");
+        }
+
+        /// <summary>
+        /// A second stroke from the incision into the part beside it, upright and at 45 degrees to the incision, that
+        /// stops inside the part: the partial cut stays. The end of the stroke restores only edges cut alongside the
+        /// earlier cut, and these cuts run across it.
+        /// </summary>
+        [TestCase(0.0f, TestName = "StrokeFromAnIncisionIntoAPartKeepsItsCut")]
+        [TestCase(45.0f, TestName = "SlantedStrokeFromAnIncisionIntoAPartKeepsItsCut")]
+        public void StrokeFromAnIncisionIntoAPartKeepsItsCut(float angle)
+        {
+            SoftBodySimulation sim = _band.Simulation;
+            CutThrough();
+            int before = SeveredEdges();
+            // From the gap of the incision 2 cm into the part between it and the right clamp, in the middle of the band.
+            var direction = new Vector3(Mathf.Cos(angle * Mathf.Deg2Rad), 0.0f, Mathf.Sin(angle * Mathf.Deg2Rad));
+            Vector3 start = new Vector3(CutX, 0.0f, 0.0f) - 0.008f * direction;
+            Stroke(start, start + 0.028f * direction, 0.0f, 0.0f);
+            int atEnd = SeveredEdges();
+            Run(40);
+            Assert.Greater(atEnd, before, "the second stroke cuts");
+            Assert.AreEqual(atEnd, SeveredEdges(), "severed edges after the end of the stroke");
+            Assert.AreEqual(2, sim.PieceSizes().Count(n => n >= SurfaceMesh.MinVisiblePieceNodes), "pieces");
+        }
+
+        /// <summary>The first stroke: across the band at <see cref="CutX"/>, through it, after the band has settled.</summary>
+        private void CutThrough()
+        {
+            Run(60);
+            Stroke(new Vector3(CutX, 0.0f, -0.05f), new Vector3(CutX, 0.0f, 0.05f), 0.0f, 0.0f);
+            Run(40);
+            List<int> pieces = _band.Simulation.PieceSizes();
+            Assert.AreEqual(2, pieces.Count(n => n >= SurfaceMesh.MinVisiblePieceNodes), $"first stroke: pieces [{string.Join(",", pieces)}]");
+        }
+
+        /// <summary>Severed edges summed over the cells (an edge counts once for every cell sharing it).</summary>
+        private int SeveredEdges()
+        {
+            int count = 0;
+            foreach (ushort mask in _band.Simulation.Severed)
             {
-                Assert.Less(oddAfter - oddBefore, 0.02f, "rays through the incision crossing the surface an odd number of times");
+                count += math.countbits((uint)mask);
             }
+            return count;
         }
 
         /// <summary>

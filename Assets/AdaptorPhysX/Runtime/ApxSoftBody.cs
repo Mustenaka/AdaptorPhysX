@@ -422,6 +422,17 @@ namespace AdaptorPhysX
             return severed;
         }
 
+        /// <summary>Ends a stroke of <see cref="Cut"/> (see <see cref="SoftBodySimulation.EndStroke"/>); returns the restored edges.</summary>
+        public int EndStroke(int stroke)
+        {
+            int healed = Simulation == null ? 0 : Simulation.EndStroke(stroke);
+            if (healed > 0)
+            {
+                WakeUp();
+            }
+            return healed;
+        }
+
         /// <summary>Resumes stepping a sleeping body.</summary>
         public void WakeUp() => _restSteps = 0;
 

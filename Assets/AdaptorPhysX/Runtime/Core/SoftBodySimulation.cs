@@ -154,6 +154,8 @@ namespace AdaptorPhysX
         public NativeArray<ushort> StrokeStartSevered;
         public NativeArray<ushort> StrokeKept;
         private int _stroke;
+        /// <summary>The current stroke has been ended (<see cref="EndStroke"/>).</summary>
+        private bool _strokeEnded;
         private float _strokeTravel;
         private float3 _strokeNormal;
         /// <summary>Direction the blade moved in the previous sweep of the stroke, zero at its start.</summary>
@@ -764,6 +766,8 @@ namespace AdaptorPhysX
             CompleteStep();
             if (stroke == 0 || stroke != _stroke)
             {
+                EndStroke(_stroke);
+                _strokeEnded = false;
                 for (int i = 0; i < StrokeSide.Length; i++)
                 {
                     StrokeSide[i] = 0;
@@ -845,6 +849,51 @@ namespace AdaptorPhysX
                 RebuildTopology(true);
             }
             return severed;
+        }
+
+        /// <summary>Largest distance, in cells, between a stroke and an earlier cut it ran alongside (<see cref="EndStroke"/>).</summary>
+        public const float StrokeHealGap = 0.75f;
+        /// <summary>Least |cos| between the normals of a stroke and an earlier cut it ran alongside (<see cref="EndStroke"/>).</summary>
+        public const float StrokeHealAlignment = 0.8f;
+
+        /// <summary>
+        /// Ends stroke <paramref name="stroke"/> (nothing for stroke 0, another stroke or one already ended): restores the
+        /// edges it severed less than <see cref="StrokeHealGap"/> cells alongside the cut surface of an earlier stroke without
+        /// separating anything (<see cref="HealStrokeJob"/>) and rebuilds the topology if there were any. Returns their
+        /// number. <see cref="ApxScalpel"/> calls it when it stops cutting; a new stroke ends the previous one.
+        /// </summary>
+        public int EndStroke(int stroke)
+        {
+            CompleteStep();
+            if (stroke == 0 || stroke != _stroke || _strokeEnded)
+            {
+                return 0;
+            }
+            _strokeEnded = true;
+            using var healed = new NativeArray<int>(1, Allocator.TempJob);
+            new HealStrokeJob
+            {
+                CellCoord = CellCoord,
+                GridToCell = GridToCell,
+                CellCopyRange = CellCopyRange,
+                Copies = Copies.AsArray(),
+                CopyNodes = CopyNodes.AsArray(),
+                PieceId = PieceId,
+                EdgeCorners = _tables.EdgeCorners,
+                StrokeStartSevered = StrokeStartSevered,
+                EdgeT = EdgeT,
+                EdgeNormal = EdgeNormal,
+                Dims = Grid.Dims,
+                MaxGap = StrokeHealGap,
+                MinAlignment = StrokeHealAlignment,
+                Severed = Severed,
+                Healed = healed,
+            }.Run();
+            if (healed[0] > 0)
+            {
+                RebuildTopology(true);
+            }
+            return healed[0];
         }
 
         /// <summary>Attaches nodes to kinematic frame <paramref name="frame"/> at their current positions.</summary>

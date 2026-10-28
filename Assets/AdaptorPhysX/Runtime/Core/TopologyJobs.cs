@@ -951,4 +951,162 @@ namespace AdaptorPhysX
             }
         }
     }
+
+    /// <summary>
+    /// At the end of a stroke, restores the edges it severed alongside the cut surface of an earlier stroke without
+    /// separating anything: a severed edge whose ends are in one piece, with a node at an end lying between its cut
+    /// point and the Hermite point of an edge that was severed before the stroke and shares that node, the two less than
+    /// <see cref="MaxGap"/> apart along the normal of the earlier edge and the normals within <see cref="MinAlignment"/>.
+    /// A blade drawn beside an incision whose walls have moved since slices into a wall a fraction of a cell from it and
+    /// leaves flaps of the wall attached along one side; they turned and swung apart, and the wall showed slits
+    /// (TODO BUG-16). Only the end of the stroke tells: a strip cut off along the whole incision is such a flap until the
+    /// blade has passed its far end. A node between the two cut points rules out a stroke that continues an earlier cut
+    /// in its own plane, and one that starts from an incision at a right angle.
+    /// </summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal struct HealStrokeJob : IJob
+    {
+        [ReadOnly] public NativeArray<int3> CellCoord;
+        [ReadOnly] public NativeArray<int> GridToCell;
+        [ReadOnly] public NativeArray<int2> CellCopyRange;
+        [ReadOnly] public NativeArray<CellCopy> Copies;
+        [ReadOnly] public NativeArray<int> CopyNodes;
+        [ReadOnly] public NativeArray<int> PieceId;
+        [ReadOnly] public NativeArray<int> EdgeCorners;
+        /// <summary>Severed edges when the stroke began.</summary>
+        [ReadOnly] public NativeArray<ushort> StrokeStartSevered;
+        [ReadOnly] public NativeArray<float> EdgeT;
+        [ReadOnly] public NativeArray<float3> EdgeNormal;
+        public int3 Dims;
+        /// <summary>Largest distance between the two cuts, in cells.</summary>
+        public float MaxGap;
+        /// <summary>Least |cos| between the normals of the two cuts.</summary>
+        public float MinAlignment;
+        public NativeArray<ushort> Severed;
+        /// <summary>[0]: number of restored edges.</summary>
+        public NativeArray<int> Healed;
+
+        public void Execute()
+        {
+            int healed = 0;
+            for (int c = 0; c < CellCoord.Length; c++)
+            {
+                for (int e = 0; e < Lattice.EdgeCount; e++)
+                {
+                    // Edges restored from a cell sharing them are no longer severed here.
+                    if (((Severed[c] & ~StrokeStartSevered[c]) & (1 << e)) == 0 || Separates(c, e) || !Alongside(c, e))
+                    {
+                        continue;
+                    }
+                    RestoreShared(c, e);
+                    healed++;
+                }
+            }
+            Healed[0] = healed;
+        }
+
+        /// <summary>Whether the copies owning the two corners of the edge belong to different pieces.</summary>
+        private bool Separates(int cell, int edge)
+        {
+            int2 range = CellCopyRange[cell];
+            int k0 = EdgeCorners[2 * edge], k1 = EdgeCorners[2 * edge + 1];
+            int p0 = -1, p1 = -1;
+            for (int q = range.x; q < range.x + range.y; q++)
+            {
+                int mask = Copies[q].Mask;
+                if (((mask >> k0) & 1) != 0)
+                {
+                    p0 = PieceId[CopyNodes[q * 8 + k0]];
+                }
+                if (((mask >> k1) & 1) != 0)
+                {
+                    p1 = PieceId[CopyNodes[q * 8 + k1]];
+                }
+            }
+            return p0 != p1;
+        }
+
+        private bool Alongside(int cell, int edge)
+        {
+            int3 coord = CellCoord[cell];
+            int k0 = EdgeCorners[2 * edge], k1 = EdgeCorners[2 * edge + 1];
+            // Positions in cells of the rest lattice.
+            float3 x = (float3)coord + math.lerp((float3)Lattice.CornerOffset(k0), Lattice.CornerOffset(k1),
+                EdgeT[cell * Lattice.EdgeCount + edge]);
+            float3 normal = EdgeNormal[cell * Lattice.EdgeCount + edge];
+            for (int end = 0; end < 2; end++)
+            {
+                int3 node = coord + Lattice.CornerOffset(end == 0 ? k0 : k1);
+                for (int k = 0; k < Lattice.CornerCount; k++)
+                {
+                    int3 cc = node - Lattice.CornerOffset(k);
+                    if (math.any(cc < 0) || math.any(cc >= Dims))
+                    {
+                        continue;
+                    }
+                    int other = GridToCell[cc.x + Dims.x * (cc.y + Dims.y * cc.z)];
+                    if (other < 0 || StrokeStartSevered[other] == 0)
+                    {
+                        continue;
+                    }
+                    for (int f = 0; f < Lattice.EdgeCount; f++)
+                    {
+                        int a = EdgeCorners[2 * f], b = EdgeCorners[2 * f + 1];
+                        if ((a != k && b != k) || (StrokeStartSevered[other] & (1 << f)) == 0)
+                        {
+                            continue;
+                        }
+                        float3 earlier = EdgeNormal[other * Lattice.EdgeCount + f];
+                        if (math.abs(math.dot(earlier, normal)) < MinAlignment)
+                        {
+                            continue;
+                        }
+                        float3 hermite = (float3)cc + math.lerp((float3)Lattice.CornerOffset(a), Lattice.CornerOffset(b),
+                            EdgeT[other * Lattice.EdgeCount + f]);
+                        float toCut = math.dot(earlier, x - (float3)node);
+                        float toEarlier = math.dot(earlier, hermite - (float3)node);
+                        if (toCut * toEarlier < 0.0f && math.abs(toCut - toEarlier) < MaxGap)
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        private void RestoreShared(int cell, int edge)
+        {
+            int axis = edge / 4;
+            int3 start = CellCoord[cell] + Lattice.CornerOffset(EdgeCorners[2 * edge]);
+            int axisB = (axis + 1) % 3, axisC = (axis + 2) % 3;
+            for (int ob = 0; ob < 2; ob++)
+            {
+                for (int oc = 0; oc < 2; oc++)
+                {
+                    int3 offset = int3.zero;
+                    offset[axisB] = ob;
+                    offset[axisC] = oc;
+                    int3 nc = start - offset;
+                    if (math.any(nc < 0) || math.any(nc >= Dims))
+                    {
+                        continue;
+                    }
+                    int n = GridToCell[nc.x + Dims.x * (nc.y + Dims.y * nc.z)];
+                    if (n < 0)
+                    {
+                        continue;
+                    }
+                    int localStart = Lattice.CornerIndex(offset);
+                    for (int e = axis * 4; e < axis * 4 + 4; e++)
+                    {
+                        if (EdgeCorners[2 * e] == localStart)
+                        {
+                            Severed[n] = (ushort)(Severed[n] & ~(1 << e));
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

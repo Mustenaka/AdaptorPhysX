@@ -67,6 +67,14 @@ namespace AdaptorPhysX
                 _sweepEnd1 = end;
                 HasSweep = true;
             }
+            if (!cutting && _hasPrevious)
+            {
+                // The stroke has ended: the bodies restore what it severed alongside earlier cuts without separating anything.
+                foreach (ApxSoftBody body in ApxSoftBody.Active)
+                {
+                    body.EndStroke(_stroke);
+                }
+            }
             if (cutting && !_hasPrevious)
             {
                 _stroke = ++s_strokes;
