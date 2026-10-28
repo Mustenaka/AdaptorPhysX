@@ -558,6 +558,9 @@ namespace AdaptorPhysX
         /// <summary>Skin triangles of the last rebuild that the split job could not hold (handled by the managed split).</summary>
         public int SplitOverflowCount { get; private set; }
 
+        /// <summary>Copy that render vertex <paramref name="vertex"/> is evaluated in (for tests).</summary>
+        internal int VertexCopy(int vertex) => _vertexCopy[vertex];
+
         /// <summary>
         /// Builds the cut geometry and splits every triangle with the managed code, to compare the jobs with it in
         /// tests (<see cref="CutGeometryJob"/>, <see cref="SplitTrianglesJob"/>).
@@ -616,10 +619,13 @@ namespace AdaptorPhysX
                     Cells = cells.AsArray(),
                     CellCopyRange = _sim.CellCopyRange,
                     Copies = _sim.Copies.AsArray(),
+                    CopyNodes = _sim.CopyNodes.AsArray(),
+                    PieceId = _sim.PieceId,
                     Severed = _sim.Severed,
                     EdgeT = _sim.EdgeT,
                     EdgeNormal = _sim.EdgeNormal,
                     CellCoord = _sim.CellCoord,
+                    GridToCell = _sim.GridToCell,
                     PointSdf = _sim.PointSdf,
                     EdgeCorners = _nativeEdgeCorners,
                     Origin = grid.Origin,
@@ -1164,8 +1170,8 @@ namespace AdaptorPhysX
         }
 
         /// <summary>
-        /// For every cell with several copies: the cut surface (one polygon per copy and
-        /// virtual corner group, from the Hermite points of its boundary edges) as blocker
+        /// For every cell with several copies: the cut surface (one polygon per region of copies
+        /// (<see cref="CutRegions"/>) and virtual corner group, from the Hermite points of its boundary edges) as blocker
         /// triangles, one plane per distinct cut through the cell, and the rendered cut faces
         /// clipped to the inside of the original surface.
         /// </summary>
@@ -1178,6 +1184,7 @@ namespace AdaptorPhysX
             var polygon = new List<CutVertex>(12);
             var clipped = new List<CutVertex>(16);
             var group = new int[8];
+            var region = new int[8];
             for (int cell = 0; cell < _cellCoord.Length; cell++)
             {
                 int2 range = _range[cell];
@@ -1194,11 +1201,16 @@ namespace AdaptorPhysX
                 float3 cellMin = CellMin(cell);
                 var blockers = new List<float3>();
                 _cutTriangles.Add(cell, blockers);
-                _cutPlanes.Add(cell, FitPlanes(cell, severed, cellMin));
+                CutRegions(cell, range, severed, region);
+                _cutPlanes.Add(cell, FitPlanes(cell, severed, cellMin, region));
 
                 for (int q = range.x; q < range.x + range.y; q++)
                 {
-                    int mask = _copies[q].Mask;
+                    if (Root(region, q - range.x) != q - range.x)
+                    {
+                        continue;
+                    }
+                    int mask = RegionMask(range, region, q - range.x);
                     // Group virtual corners that touch through cube edges; each group gets its own polygon.
                     for (int k = 0; k < 8; k++)
                     {
@@ -1246,6 +1258,7 @@ namespace AdaptorPhysX
                                 U = math.lerp((float3)Lattice.CornerOffset(a), Lattice.CornerOffset(c), t),
                                 Normal = n,
                                 Sdf = math.lerp(sdfA, sdfC, t),
+                                Copy = CopyOwning(range, realA ? a : c),
                             });
                         }
                         if (polygon.Count < 3)
@@ -1267,7 +1280,7 @@ namespace AdaptorPhysX
                         int first = b.BaseCount + b.Copies.Count;
                         foreach (CutVertex cv in clipped)
                         {
-                            b.Add(q, cv.U, math.normalizesafe(cv.Normal), new Vector2(-cv.Sdf, 0.0f), cellMin + cv.U * h);
+                            b.Add(cv.Copy, cv.U, math.normalizesafe(cv.Normal), new Vector2(-cv.Sdf, 0.0f), cellMin + cv.U * h);
                         }
                         for (int i = 1; i + 1 < clipped.Count; i++)
                         {
@@ -1326,6 +1339,7 @@ namespace AdaptorPhysX
                         U = math.lerp((float3)Lattice.CornerOffset(a), Lattice.CornerOffset(c), t),
                         Normal = n,
                         Sdf = math.lerp(sdfA, sdfC, t),
+                        Copy = copy,
                     });
                 }
                 if (polygon.Count < 3)
@@ -1364,7 +1378,7 @@ namespace AdaptorPhysX
         /// normal alone, their edges gave one plane between the two cuts, and skin next to either was evaluated in
         /// the copy across it (TODO BUG-15). Edges inside one copy (a crack) need two for a plane.
         /// </summary>
-        private List<float4> FitPlanes(int cell, int severed, float3 cellMin)
+        private List<float4> FitPlanes(int cell, int severed, float3 cellMin, int[] region)
         {
             int2 range = _range[cell];
             var pairs = new List<int>(2);
@@ -1377,8 +1391,13 @@ namespace AdaptorPhysX
                 {
                     continue;
                 }
-                int pair = PlaneGroup(CopyOwning(range, Lattice.EdgeCorners[2 * e]) - range.x,
-                    CopyOwning(range, Lattice.EdgeCorners[2 * e + 1]) - range.x);
+                int qa = CopyOwning(range, Lattice.EdgeCorners[2 * e]) - range.x;
+                int qc = CopyOwning(range, Lattice.EdgeCorners[2 * e + 1]) - range.x;
+                if (qa != qc && Root(region, qa) == Root(region, qc))
+                {
+                    continue;
+                }
+                int pair = PlaneGroup(qa, qc);
                 float3 n = _edgeNormal[cell * Lattice.EdgeCount + e];
                 float3 p = cellMin + HermitePoint(cell, e) * _sim.CellSize;
                 int cluster = -1;
@@ -1418,6 +1437,155 @@ namespace AdaptorPhysX
             return planes;
         }
 
+        /// <summary>
+        /// |n · edge| below which a severed edge lies in its own cut plane (<see cref="CutRegions"/>): the angle between
+        /// the edge and the plane is under about 17°.
+        /// </summary>
+        private const float InPlaneEdge = 0.3f;
+
+        /// <summary>
+        /// Parent array over the copy ordinals of a cell: copies of one piece whose corners the cell separates only by severed
+        /// edges lying in their own cut plane (|n · edge| &lt; <see cref="InPlaneEdge"/>) form one region, drawn with one cut
+        /// face and not cut apart by a plane. A blade passing along a cell edge also severs that edge; its two corners, both on
+        /// the same side of the cut, became copies of their own, each drew a triangle around its corner, and the triangle
+        /// between them stayed open in the wall (TODO BUG-17). A cut crossing a layer of nodes at a slant also severs edges in
+        /// its plane, but there an edge between the two copies crosses the cut as well: they lie on its two sides. The cells
+        /// sharing such an edge must agree (<see cref="SeparatedNearby"/>), or the faces of neighbouring cells do not meet.
+        /// </summary>
+        private void CutRegions(int cell, int2 range, int severed, int[] region)
+        {
+            for (int i = 0; i < 8; i++)
+            {
+                region[i] = i;
+            }
+            CopyPairs(cell, range, severed, out ulong inPlane, out ulong crossing);
+            for (int a = 0; a < range.y; a++)
+            {
+                for (int c = a + 1; c < range.y; c++)
+                {
+                    ulong bit = PairBit(a, c);
+                    if ((inPlane & bit) != 0 && (crossing & bit) == 0 && PieceOf(range.x + a) == PieceOf(range.x + c) &&
+                        !SeparatedNearby(cell, range, severed, a, c))
+                    {
+                        Merge(region, a, c);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// The pairs of copies (<see cref="PairBit"/> of their ordinals) that a severed edge of the cell joins: lying in its
+        /// cut plane, or crossing it.
+        /// </summary>
+        private void CopyPairs(int cell, int2 range, int severed, out ulong inPlane, out ulong crossing)
+        {
+            inPlane = 0;
+            crossing = 0;
+            for (int e = 0; e < Lattice.EdgeCount; e++)
+            {
+                if ((severed & (1 << e)) == 0)
+                {
+                    continue;
+                }
+                int qa = CopyOwning(range, Lattice.EdgeCorners[2 * e]) - range.x;
+                int qc = CopyOwning(range, Lattice.EdgeCorners[2 * e + 1]) - range.x;
+                if (qa == qc)
+                {
+                    continue;
+                }
+                if (math.abs(_edgeNormal[cell * Lattice.EdgeCount + e][e / 4]) < InPlaneEdge)
+                {
+                    inPlane |= PairBit(qa, qc);
+                }
+                else
+                {
+                    crossing |= PairBit(qa, qc);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Whether another cell sharing one of the severed edges between copies <paramref name="a"/> and <paramref name="c"/>
+        /// keeps the edge's corners in two copies joined by an edge that crosses its cut: a later cut passed between the two
+        /// nodes (the edge keeps the data of the first cut), as where a second stroke leaves a notch beside the first.
+        /// </summary>
+        private bool SeparatedNearby(int cell, int2 range, int severed, int a, int c)
+        {
+            int3 dims = _sim.Grid.Dims;
+            for (int e = 0; e < Lattice.EdgeCount; e++)
+            {
+                if ((severed & (1 << e)) == 0 ||
+                    PairBit(CopyOwning(range, Lattice.EdgeCorners[2 * e]) - range.x,
+                        CopyOwning(range, Lattice.EdgeCorners[2 * e + 1]) - range.x) != PairBit(a, c))
+                {
+                    continue;
+                }
+                int axis = e / 4;
+                int3 start = _cellCoord[cell] + Lattice.CornerOffset(Lattice.EdgeCorners[2 * e]);
+                for (int k = 0; k < 4; k++)
+                {
+                    int3 offset = int3.zero;
+                    offset[(axis + 1) % 3] = k & 1;
+                    offset[(axis + 2) % 3] = k >> 1;
+                    int3 coord = start - offset;
+                    if (math.any(coord < 0) || math.any(coord >= dims))
+                    {
+                        continue;
+                    }
+                    int other = _gridToCell[coord.x + dims.x * (coord.y + dims.y * coord.z)];
+                    if (other < 0 || other == cell)
+                    {
+                        continue;
+                    }
+                    int2 otherRange = _range[other];
+                    int edge = Lattice.EdgeFromStart(axis, Lattice.CornerIndex(offset));
+                    int qa = CopyOwning(otherRange, Lattice.EdgeCorners[2 * edge]) - otherRange.x;
+                    int qc = CopyOwning(otherRange, Lattice.EdgeCorners[2 * edge + 1]) - otherRange.x;
+                    if (qa == qc)
+                    {
+                        continue;
+                    }
+                    CopyPairs(other, otherRange, _severed[other], out _, out ulong crossing);
+                    if ((crossing & PairBit(qa, qc)) != 0)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /// <summary>Bit min * 8 + max of a pair of copy ordinals.</summary>
+        private static ulong PairBit(int a, int c) => 1UL << (math.min(a, c) * 8 + math.max(a, c));
+
+        /// <summary>Real corners of the copies in the region of copy ordinal <paramref name="ordinal"/>.</summary>
+        private int RegionMask(int2 range, int[] region, int ordinal)
+        {
+            int mask = 0;
+            for (int i = 0; i < range.y; i++)
+            {
+                if (Root(region, i) == Root(region, ordinal))
+                {
+                    mask |= _copies[range.x + i].Mask;
+                }
+            }
+            return mask;
+        }
+
+        /// <summary>Piece of a copy: that of its first real node.</summary>
+        private int PieceOf(int copy)
+        {
+            int mask = _copies[copy].Mask;
+            for (int k = 0; k < 8; k++)
+            {
+                if (((mask >> k) & 1) != 0)
+                {
+                    return _pieceId[_copyNodes[copy * 8 + k]];
+                }
+            }
+            return -1;
+        }
+
         /// <summary>Group of a severed edge in <see cref="FitPlanes"/>: the ordinals of the copies owning its corners.</summary>
         private static int PlaneGroup(int ordinalA, int ordinalC) =>
             math.min(ordinalA, ordinalC) * Lattice.CornerCount + math.max(ordinalA, ordinalC);
@@ -1431,6 +1599,8 @@ namespace AdaptorPhysX
             public float3 U;
             public float3 Normal;
             public float Sdf;
+            /// <summary>Copy the vertex is evaluated in: the copy owning the real corner of its edge.</summary>
+            public int Copy;
         }
 
         /// <summary>Orders points counter-clockwise around n, which Unity renders front-facing towards n.</summary>
@@ -1474,6 +1644,7 @@ namespace AdaptorPhysX
                         U = math.lerp(a.U, c.U, s),
                         Normal = math.lerp(a.Normal, c.Normal, s),
                         Sdf = 0.0f,
+                        Copy = insideA ? a.Copy : c.Copy,
                     });
                 }
             }

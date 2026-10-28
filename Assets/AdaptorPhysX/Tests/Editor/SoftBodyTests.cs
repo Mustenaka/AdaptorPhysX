@@ -835,13 +835,20 @@ namespace AdaptorPhysX.Tests
 
             using var job = new SurfaceMesh(sim, rest, normals, uvs, triangles);
             job.Update(float4x4.identity);
+            Assert.AreEqual(0, job.SplitOverflowCount);
+            Assert.Greater(job.Mesh.vertexCount, rest.Length, "no triangle was split");
+            AssertManagedRebuildMatches(sim, rest, normals, uvs, triangles, job);
+        }
+
+        /// <summary>The managed rebuild of the surface of <paramref name="sim"/> equals <paramref name="job"/>.</summary>
+        private static void AssertManagedRebuildMatches(SoftBodySimulation sim, float3[] rest, float3[] normals, Vector2[] uvs,
+            int[] triangles, SurfaceMesh job)
+        {
             SurfaceMesh.ManagedRebuild = true;
             try
             {
                 using var managed = new SurfaceMesh(sim, rest, normals, uvs, triangles);
                 managed.Update(float4x4.identity);
-                Assert.AreEqual(0, job.SplitOverflowCount);
-                Assert.Greater(job.Mesh.vertexCount, rest.Length, "no triangle was split");
                 Assert.AreEqual(managed.Mesh.vertexCount, job.Mesh.vertexCount);
                 CollectionAssert.AreEqual(managed.Mesh.GetTriangles(0), job.Mesh.GetTriangles(0));
                 CollectionAssert.AreEqual(managed.Mesh.GetTriangles(1), job.Mesh.GetTriangles(1));
@@ -897,6 +904,167 @@ namespace AdaptorPhysX.Tests
                 }
             }
             Assert.Less(longest, 2.0f * sim.CellSize, "a skin triangle spans the gap between pieces");
+        }
+
+        /// <summary>
+        /// A cut passing 0.035 h from a row of lattice lines, with the edges along those lines severed in the cut plane, as a
+        /// blade running along them leaves them in the Hammock of the interaction demo (TODO BUG-17): the two corners of each
+        /// such edge lie on one side of the cut but became copies of their own, each drew a triangle around its corner, and
+        /// the wall between the two triangles stayed open. The walls have no open edges below the surface, in the jobs and
+        /// in the managed rebuild.
+        /// </summary>
+        [Test]
+        public void CutAlongLatticeEdgesLeavesNoHoleInTheWalls()
+        {
+            SoftBodySimulation sim = CreateBox(new float3(Size), gravity: false, out float3[] rest, out float3[] normals,
+                out Vector2[] uvs, out int[] triangles);
+            using var surface = new SurfaceMesh(sim, rest, normals, uvs, triangles);
+            int3 dims = sim.Grid.Dims;
+            int3 middle = dims / 2;
+            // The lines x - y = k (grid units) through the middle; the plane x - y = k - 0.05 leaves them just on its high side,
+            // crossing the x edges ending on them at t = 0.95 and the y edges starting on them at t = 0.05.
+            var normal = math.normalize(new float3(1.0f, -1.0f, 0.0f));
+            int severed = 0;
+            for (int x = 0; x <= dims.x; x++)
+            {
+                int y = x - (middle.x - middle.y);
+                for (int z = 0; z < dims.z && y >= 0 && y <= dims.y; z++)
+                {
+                    severed += SeverEdge(sim, new int3(x, y, z), 2, 0.3f, normal) ? 1 : 0;
+                }
+            }
+            Assert.Greater(severed, 0);
+            float3 point = math.transform(sim.RestToWorld,
+                sim.Grid.Origin + new float3(middle.x - 0.05f, middle.y, 0.0f) * sim.CellSize);
+            float3 along = 0.3f * math.normalize(new float3(1.0f, 1.0f, 0.0f));
+            var front = new float3(0.0f, 0.0f, -0.2f);
+            var back = new float3(0.0f, 0.0f, 0.2f);
+            sim.Cut(point + along + front, point - along + front, point + along + back, point - along + back);
+            Assert.AreEqual(2, sim.CountPieces());
+            surface.Update(float4x4.identity);
+            Assert.AreEqual(0, OpenCutFaceEdges(sim, surface), "open edges of the cut faces below the surface");
+            AssertManagedRebuildMatches(sim, rest, normals, uvs, triangles, surface);
+        }
+
+        /// <summary>
+        /// A half-depth cut 5° off the lattice axis crosses a lattice line inside the body and severs the edges along it
+        /// nearly in its plane, between corners on its two sides, which stay one piece. Both walls are drawn there as well:
+        /// the cut faces cover the two walls of the incision.
+        /// </summary>
+        [Test]
+        public void SlantedPartialCutKeepsBothWalls()
+        {
+            SoftBodySimulation sim = CreateBox(new float3(Size), gravity: false, out float3[] rest, out float3[] normals,
+                out Vector2[] uvs, out int[] triangles);
+            using var surface = new SurfaceMesh(sim, rest, normals, uvs, triangles);
+            float angle = math.radians(5.0f);
+            float3 Blade(float z) => new float3(0.003f + math.tan(angle) * z, 0.0f, z);
+            float3 top = new float3(0.0f, 0.2f, 0.0f), tip = new float3(0.0f, 0.0f, 0.0f);
+            sim.Cut(Blade(-0.2f) + top, Blade(-0.2f) + tip, Blade(0.2f) + top, Blade(0.2f) + tip);
+            Assert.AreEqual(1, sim.CountPieces());
+            surface.Update(float4x4.identity);
+
+            var restPositions = new List<Vector3>();
+            surface.Mesh.GetUVs(1, restPositions);
+            int[] cut = surface.Mesh.GetTriangles(1);
+            float area = 0.0f;
+            for (int t = 0; t < cut.Length; t += 3)
+            {
+                float3 a = restPositions[cut[t]], b = restPositions[cut[t + 1]], c = restPositions[cut[t + 2]];
+                area += 0.5f * math.length(math.cross(b - a, c - a));
+            }
+            // The cells holding the blade tip stay whole; the walls run from their top to the top of the box.
+            float floor = sim.Grid.Origin.y + math.ceil(-sim.Grid.Origin.y / sim.CellSize) * sim.CellSize;
+            float walls = 2.0f * (0.5f * Size - floor) * Size / math.cos(angle);
+            TestContext.WriteLine($"cut-face area {area / walls:0.000} of two walls");
+            Assert.Greater(area, 0.95f * walls, "a wall is missing");
+        }
+
+        /// <summary>
+        /// Severs the edge from grid point <paramref name="start"/> along <paramref name="axis"/> in every cell sharing it,
+        /// as <see cref="CutJob"/> does; false when no cell has it.
+        /// </summary>
+        private static bool SeverEdge(SoftBodySimulation sim, int3 start, int axis, float t, float3 normal)
+        {
+            int3 dims = sim.Grid.Dims;
+            int axisB = (axis + 1) % 3, axisC = (axis + 2) % 3;
+            bool any = false;
+            for (int ob = 0; ob < 2; ob++)
+            {
+                for (int oc = 0; oc < 2; oc++)
+                {
+                    int3 offset = int3.zero;
+                    offset[axisB] = ob;
+                    offset[axisC] = oc;
+                    int3 cell = start - offset;
+                    if (math.any(cell < 0) || math.any(cell >= dims))
+                    {
+                        continue;
+                    }
+                    int c = sim.GridToCell[cell.x + dims.x * (cell.y + dims.y * cell.z)];
+                    if (c < 0)
+                    {
+                        continue;
+                    }
+                    int e = Lattice.EdgeFromStart(axis, Lattice.CornerIndex(offset));
+                    sim.Severed[c] = (ushort)(sim.Severed[c] | (1 << e));
+                    sim.EdgeT[c * Lattice.EdgeCount + e] = t;
+                    sim.EdgeNormal[c * Lattice.EdgeCount + e] = normal;
+                    any = true;
+                }
+            }
+            return any;
+        }
+
+        /// <summary>
+        /// Edges of the cut faces, with vertices welded by rest position and piece, that belong to one triangle only and lie
+        /// below the surface (along the surface the cut faces meet the skin).
+        /// </summary>
+        private static int OpenCutFaceEdges(SoftBodySimulation sim, SurfaceMesh surface)
+        {
+            var depth = new List<Vector2>();
+            var restPositions = new List<Vector3>();
+            surface.Mesh.GetUVs(0, depth);
+            surface.Mesh.GetUVs(1, restPositions);
+            int[] cut = surface.Mesh.GetTriangles(1);
+            var weld = new Dictionary<(long, long, long, int), int>();
+            var welded = new List<int>();
+            int Id(int v)
+            {
+                int copy = surface.VertexCopy(v);
+                int node = -1;
+                for (int k = 0; k < 8 && node < 0; k++)
+                {
+                    node = ((sim.Copies[copy].Mask >> k) & 1) != 0 ? sim.CopyNodes[copy * 8 + k] : -1;
+                }
+                Vector3 p = restPositions[v];
+                var key = ((long)math.round(p.x * 1e6), (long)math.round(p.y * 1e6), (long)math.round(p.z * 1e6), sim.PieceId[node]);
+                if (!weld.TryGetValue(key, out int id))
+                {
+                    id = weld.Count;
+                    weld[key] = id;
+                    welded.Add(v);
+                }
+                return id;
+            }
+            var uses = new Dictionary<(int, int), int>();
+            for (int t = 0; t < cut.Length; t += 3)
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    int a = Id(cut[t + i]), b = Id(cut[t + (i + 1) % 3]);
+                    var edge = (math.min(a, b), math.max(a, b));
+                    uses[edge] = uses.TryGetValue(edge, out int n) ? n + 1 : 1;
+                }
+            }
+            float below = 0.05f * sim.CellSize;
+            int open = 0;
+            foreach (KeyValuePair<(int, int), int> edge in uses)
+            {
+                open += edge.Value == 1 && depth[welded[edge.Key.Item1]].x > below && depth[welded[edge.Key.Item2]].x > below ? 1 : 0;
+            }
+            TestContext.WriteLine($"open cut-face edges below the surface: {open}");
+            return open;
         }
 
         [Test]

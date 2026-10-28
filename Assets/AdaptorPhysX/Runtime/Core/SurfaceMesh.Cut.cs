@@ -97,10 +97,13 @@ namespace AdaptorPhysX
             [ReadOnly] public NativeArray<int> Cells;
             [ReadOnly] public NativeArray<int2> CellCopyRange;
             [ReadOnly] public NativeArray<CellCopy> Copies;
+            [ReadOnly] public NativeArray<int> CopyNodes;
+            [ReadOnly] public NativeArray<int> PieceId;
             [ReadOnly] public NativeArray<ushort> Severed;
             [ReadOnly] public NativeArray<float> EdgeT;
             [ReadOnly] public NativeArray<float3> EdgeNormal;
             [ReadOnly] public NativeArray<int3> CellCoord;
+            [ReadOnly] public NativeArray<int> GridToCell;
             [ReadOnly] public NativeArray<float> PointSdf;
             [ReadOnly] public NativeArray<int> EdgeCorners;
             public float3 Origin;
@@ -120,14 +123,16 @@ namespace AdaptorPhysX
                 }
                 else
                 {
-                    FitPlanes(cell);
-                    EmitCutFaces(cell, range);
+                    var region = new FixedList64Bytes<int>();
+                    CutRegions(cell, range, ref region);
+                    FitPlanes(cell, ref region);
+                    EmitCutFaces(cell, range, ref region);
                 }
                 Output.Write(RecordEnd);
                 Output.EndForEachIndex();
             }
 
-            private void EmitCutFaces(int cell, int2 range)
+            private void EmitCutFaces(int cell, int2 range, ref FixedList64Bytes<int> region)
             {
                 int severed = Severed[cell];
                 int3 coord = CellCoord[cell];
@@ -137,7 +142,11 @@ namespace AdaptorPhysX
                 var group = new FixedList64Bytes<int>();
                 for (int q = range.x; q < range.x + range.y; q++)
                 {
-                    int mask = Copies[q].Mask;
+                    if (Root(ref region, q - range.x) != q - range.x)
+                    {
+                        continue;
+                    }
+                    int mask = RegionMask(range, ref region, q - range.x);
                     // Group virtual corners that touch through cube edges; each group gets its own polygon.
                     group.Clear();
                     for (int k = 0; k < 8; k++)
@@ -183,6 +192,7 @@ namespace AdaptorPhysX
                                 U = math.lerp((float3)Lattice.CornerOffset(a), Lattice.CornerOffset(c), t),
                                 Normal = n,
                                 Sdf = math.lerp(Sdf(coord + Lattice.CornerOffset(a)), Sdf(coord + Lattice.CornerOffset(c)), t),
+                                Copy = range.x + Ordinal(range, realA ? a : c),
                             });
                         }
                         if (polygon.Length < 3)
@@ -209,7 +219,7 @@ namespace AdaptorPhysX
                             CutVertex cv = clipped[i];
                             Output.Write(new CutFaceVertex
                             {
-                                Copy = q,
+                                Copy = cv.Copy,
                                 U = cv.U,
                                 Normal = math.normalizesafe(cv.Normal),
                                 Uv0 = new float2(-cv.Sdf, 0.0f),
@@ -266,6 +276,7 @@ namespace AdaptorPhysX
                             U = math.lerp((float3)Lattice.CornerOffset(a), Lattice.CornerOffset(c), t),
                             Normal = n,
                             Sdf = math.lerp(Sdf(coord + Lattice.CornerOffset(a)), Sdf(coord + Lattice.CornerOffset(c)), t),
+                            Copy = copy,
                         });
                     }
                     if (polygon.Length < 3)
@@ -307,7 +318,7 @@ namespace AdaptorPhysX
             }
 
             /// <summary>Writes the plane count and the planes (see SurfaceMesh.FitPlanes).</summary>
-            private void FitPlanes(int cell)
+            private void FitPlanes(int cell, ref FixedList64Bytes<int> region)
             {
                 int severed = Severed[cell];
                 int2 range = CellCopyRange[cell];
@@ -322,7 +333,12 @@ namespace AdaptorPhysX
                     {
                         continue;
                     }
-                    int pair = CopyPair(range, EdgeCorners[2 * e], EdgeCorners[2 * e + 1]);
+                    int qa = Ordinal(range, EdgeCorners[2 * e]), qc = Ordinal(range, EdgeCorners[2 * e + 1]);
+                    if (qa != qc && Root(ref region, qa) == Root(ref region, qc))
+                    {
+                        continue;
+                    }
+                    int pair = PlaneGroup(qa, qc);
                     float3 n = EdgeNormal[cell * Lattice.EdgeCount + e];
                     float t = EdgeT[cell * Lattice.EdgeCount + e];
                     float3 hermite = math.lerp((float3)Lattice.CornerOffset(EdgeCorners[2 * e]),
@@ -368,8 +384,141 @@ namespace AdaptorPhysX
                 }
             }
 
-            /// <summary><see cref="PlaneGroup"/> of the copies owning corners a and c.</summary>
-            private int CopyPair(int2 range, int a, int c) => PlaneGroup(Ordinal(range, a), Ordinal(range, c));
+            /// <summary>See SurfaceMesh.CutRegions.</summary>
+            private void CutRegions(int cell, int2 range, ref FixedList64Bytes<int> region)
+            {
+                region.Clear();
+                for (int i = 0; i < 8; i++)
+                {
+                    region.Add(i);
+                }
+                CopyPairs(cell, range, out ulong inPlane, out ulong crossing);
+                for (int a = 0; a < range.y; a++)
+                {
+                    for (int c = a + 1; c < range.y; c++)
+                    {
+                        ulong bit = PairBit(a, c);
+                        if ((inPlane & bit) != 0 && (crossing & bit) == 0 && PieceOf(range.x + a) == PieceOf(range.x + c) &&
+                            !SeparatedNearby(cell, range, a, c))
+                        {
+                            Merge(ref region, a, c);
+                        }
+                    }
+                }
+            }
+
+            /// <summary>See SurfaceMesh.CopyPairs.</summary>
+            private void CopyPairs(int cell, int2 range, out ulong inPlane, out ulong crossing)
+            {
+                inPlane = 0;
+                crossing = 0;
+                int severed = Severed[cell];
+                for (int e = 0; e < Lattice.EdgeCount; e++)
+                {
+                    if ((severed & (1 << e)) == 0)
+                    {
+                        continue;
+                    }
+                    int qa = Ordinal(range, EdgeCorners[2 * e]), qc = Ordinal(range, EdgeCorners[2 * e + 1]);
+                    if (qa == qc)
+                    {
+                        continue;
+                    }
+                    if (math.abs(EdgeNormal[cell * Lattice.EdgeCount + e][e / 4]) < InPlaneEdge)
+                    {
+                        inPlane |= PairBit(qa, qc);
+                    }
+                    else
+                    {
+                        crossing |= PairBit(qa, qc);
+                    }
+                }
+            }
+
+            /// <summary>See SurfaceMesh.SeparatedNearby.</summary>
+            private bool SeparatedNearby(int cell, int2 range, int a, int c)
+            {
+                int severed = Severed[cell];
+                int3 dims = PointDims - 1;
+                for (int e = 0; e < Lattice.EdgeCount; e++)
+                {
+                    if ((severed & (1 << e)) == 0 ||
+                        PairBit(Ordinal(range, EdgeCorners[2 * e]), Ordinal(range, EdgeCorners[2 * e + 1])) != PairBit(a, c))
+                    {
+                        continue;
+                    }
+                    int axis = e / 4;
+                    int3 start = CellCoord[cell] + Lattice.CornerOffset(EdgeCorners[2 * e]);
+                    for (int k = 0; k < 4; k++)
+                    {
+                        int3 offset = int3.zero;
+                        offset[(axis + 1) % 3] = k & 1;
+                        offset[(axis + 2) % 3] = k >> 1;
+                        int3 coord = start - offset;
+                        if (math.any(coord < 0) || math.any(coord >= dims))
+                        {
+                            continue;
+                        }
+                        int other = GridToCell[coord.x + dims.x * (coord.y + dims.y * coord.z)];
+                        if (other < 0 || other == cell)
+                        {
+                            continue;
+                        }
+                        int2 otherRange = CellCopyRange[other];
+                        int edge = EdgeFromStart(axis, Lattice.CornerIndex(offset));
+                        int qa = Ordinal(otherRange, EdgeCorners[2 * edge]), qc = Ordinal(otherRange, EdgeCorners[2 * edge + 1]);
+                        if (qa == qc)
+                        {
+                            continue;
+                        }
+                        CopyPairs(other, otherRange, out _, out ulong crossing);
+                        if ((crossing & PairBit(qa, qc)) != 0)
+                        {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+
+            private int EdgeFromStart(int axis, int start)
+            {
+                for (int e = axis * 4; e < axis * 4 + 4; e++)
+                {
+                    if (EdgeCorners[2 * e] == start)
+                    {
+                        return e;
+                    }
+                }
+                return -1;
+            }
+
+            /// <summary>Real corners of the copies in the region of copy ordinal <paramref name="ordinal"/>.</summary>
+            private int RegionMask(int2 range, ref FixedList64Bytes<int> region, int ordinal)
+            {
+                int mask = 0;
+                for (int i = 0; i < range.y; i++)
+                {
+                    if (Root(ref region, i) == Root(ref region, ordinal))
+                    {
+                        mask |= Copies[range.x + i].Mask;
+                    }
+                }
+                return mask;
+            }
+
+            private int PieceOf(int copy)
+            {
+                int mask = Copies[copy].Mask;
+                for (int k = 0; k < 8; k++)
+                {
+                    if (((mask >> k) & 1) != 0)
+                    {
+                        return PieceId[CopyNodes[copy * 8 + k]];
+                    }
+                }
+                return -1;
+            }
 
             /// <summary>Ordinal within the cell of the copy owning a corner.</summary>
             private int Ordinal(int2 range, int corner)
@@ -487,6 +636,7 @@ namespace AdaptorPhysX
                             U = math.lerp(a.U, c.U, s),
                             Normal = math.lerp(a.Normal, c.Normal, s),
                             Sdf = 0.0f,
+                            Copy = insideA ? a.Copy : c.Copy,
                         });
                     }
                 }
