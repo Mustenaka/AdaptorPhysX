@@ -247,12 +247,24 @@ namespace AdaptorPhysX
             {
                 triangles.AddRange(mesh.GetTriangles(s));
             }
-            MeshUtil.CountOpenEdges(positions.ToArray(), triangles.ToArray(), out int boundaryEdges, out _);
+            float3[] positionArray = positions.ToArray();
+            int[] triangleArray = triangles.ToArray();
+            MeshUtil.CountOpenEdges(positionArray, triangleArray, out int boundaryEdges, out _);
             closed = boundaryEdges == 0;
             if (!closed)
             {
                 Debug.LogWarning($"{name}: the mesh has {boundaryEdges} boundary edges (holes). The lattice closes them " +
                                  "(inside and outside by the generalized winding number); the rendered surface keeps them.", this);
+            }
+            // Normals only shade the surface. A mesh without usable ones (none, or computed by the importer from
+            // triangles too small for it) gets the normals of its triangles in rest space.
+            float agreement = MeshUtil.NormalAgreement(positionArray, normals.ToArray(), triangleArray, out float3[] geometric);
+            if (agreement < MinNormalAgreement)
+            {
+                Debug.LogWarning($"{name}: the mesh normals do not follow its triangles (agreement {agreement:0.00}); " +
+                                 "they are recalculated from the triangles.", this);
+                normals.Clear();
+                normals.AddRange(geometric);
             }
 
             MeshUtil.Subdivide(positions, normals, uvs, triangles, 0.5f * CellSizeFor(mesh));
@@ -261,6 +273,9 @@ namespace AdaptorPhysX
             restUvs = uvs.ToArray();
             restTriangles = triangles.ToArray();
         }
+
+        /// <summary>Below this mean cosine between the mesh normals and its triangles' normals, the normals are recalculated.</summary>
+        public const float MinNormalAgreement = 0.5f;
 
         private float CellSizeFor(Mesh mesh)
         {

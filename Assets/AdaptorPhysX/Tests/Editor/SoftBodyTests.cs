@@ -264,6 +264,51 @@ namespace AdaptorPhysX.Tests
         }
 
         [Test]
+        public void UnusableNormalsAreRecalculatedFromTheTriangles()
+        {
+            var bodyObject = new GameObject("Normals Test", typeof(MeshFilter), typeof(MeshRenderer));
+            Mesh box = MeshUtil.CreateBox(new Vector3(0.1f, 0.05f, 0.08f), 4);
+            ApxSoftBody body = null;
+            try
+            {
+                body = bodyObject.AddComponent<ApxSoftBody>();
+                body.resolution = 8;
+                body.useGravity = false;
+                body.sourceMesh = box;
+                body.Initialize();
+                LogAssert.NoUnexpectedReceived();
+
+                // All normals up, as an importer leaves them for triangles too small to compute normals from.
+                var up = new Vector3[box.vertexCount];
+                for (int i = 0; i < up.Length; i++)
+                {
+                    up[i] = Vector3.up;
+                }
+                box.normals = up;
+                LogAssert.Expect(LogType.Warning, new Regex("normals do not follow its triangles"));
+                body.Rebuild();
+                Vector3[] vertices = body.Surface.Mesh.vertices;
+                Vector3[] normals = body.Surface.Mesh.normals;
+                int bottom = 0;
+                for (int i = 0; i < vertices.Length; i++)
+                {
+                    if (vertices[i].y < -0.0249f && math.abs(vertices[i].x) < 0.04f && math.abs(vertices[i].z) < 0.03f)
+                    {
+                        Assert.Less(normals[i].y, -0.99f, $"vertex {i} on the bottom face");
+                        bottom++;
+                    }
+                }
+                Assert.Greater(bottom, 0);
+            }
+            finally
+            {
+                body?.Release();
+                Object.DestroyImmediate(bodyObject);
+                Object.DestroyImmediate(box);
+            }
+        }
+
+        [Test]
         public void OpenMeshIsVoxelizedLikeTheClosedMesh()
         {
             Mesh box = MeshUtil.CreateBox(new Vector3(0.1f, 0.05f, 0.08f), 4);

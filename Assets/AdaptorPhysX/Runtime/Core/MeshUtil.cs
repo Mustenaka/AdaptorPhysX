@@ -112,6 +112,67 @@ namespace AdaptorPhysX
         }
 
         /// <summary>
+        /// Area-weighted vertex normals of the triangles (<paramref name="geometric"/>), and how well
+        /// <paramref name="normals"/> agree with them: the mean over the triangles of the cosine between the
+        /// triangle's normal and the sum of its vertices' normals (1 when they agree, about 0 for normals that
+        /// do not follow the surface, -1 when they point inward).
+        /// </summary>
+        public static float NormalAgreement(float3[] positions, float3[] normals, int[] triangles, out float3[] geometric)
+        {
+            using var nativePositions = new NativeArray<float3>(positions, Allocator.TempJob);
+            using var nativeNormals = new NativeArray<float3>(normals, Allocator.TempJob);
+            using var nativeTriangles = new NativeArray<int>(triangles, Allocator.TempJob);
+            using var result = new NativeArray<float3>(positions.Length, Allocator.TempJob);
+            using var agreement = new NativeArray<float>(1, Allocator.TempJob);
+            new NormalAgreementJob
+            {
+                Positions = nativePositions,
+                Normals = nativeNormals,
+                Triangles = nativeTriangles,
+                Geometric = result,
+                Agreement = agreement,
+            }.Run();
+            geometric = result.ToArray();
+            return agreement[0];
+        }
+
+        [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+        private struct NormalAgreementJob : IJob
+        {
+            [ReadOnly] public NativeArray<float3> Positions;
+            [ReadOnly] public NativeArray<float3> Normals;
+            [ReadOnly] public NativeArray<int> Triangles;
+            public NativeArray<float3> Geometric;
+            public NativeArray<float> Agreement;
+
+            public void Execute()
+            {
+                double sum = 0.0;
+                int count = 0;
+                for (int t = 0; t < Triangles.Length; t += 3)
+                {
+                    int a = Triangles[t], b = Triangles[t + 1], c = Triangles[t + 2];
+                    float3 area = math.cross(Positions[b] - Positions[a], Positions[c] - Positions[a]);
+                    Geometric[a] += area;
+                    Geometric[b] += area;
+                    Geometric[c] += area;
+                    float3 given = Normals[a] + Normals[b] + Normals[c];
+                    float lengths = math.length(area) * math.length(given);
+                    if (lengths > 0.0f)
+                    {
+                        sum += math.dot(area, given) / lengths;
+                        count++;
+                    }
+                }
+                for (int i = 0; i < Geometric.Length; i++)
+                {
+                    Geometric[i] = math.normalizesafe(Geometric[i], new float3(0.0f, 1.0f, 0.0f));
+                }
+                Agreement[0] = count > 0 ? (float)(sum / count) : 0.0f;
+            }
+        }
+
+        /// <summary>
         /// Splits every edge longer than <paramref name="maxEdge"/> (shared midpoints, so no
         /// T-junctions) until none remain. Incisions on the skin follow triangle edges, so the
         /// render mesh must be finer than the lattice.

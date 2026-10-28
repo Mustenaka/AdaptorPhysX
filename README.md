@@ -97,7 +97,8 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 ## 在自己的场景中使用
 
 1. 在带 `MeshFilter` + `MeshRenderer` 的对象上添加 `ApxSoftBody`。网格需开启 Read/Write，最好闭合：有孔的网格
-   按广义缠绕数判定内外，孔只在体积（lattice）中封闭，渲染表面保留孔，初始化时输出警告。
+   按广义缠绕数判定内外，孔只在体积（lattice）中封闭，渲染表面保留孔，初始化时输出警告。网格法线与三角形不符
+   （没有法线，或导入时没能算出）时按三角形重新计算，并输出警告。
 2. 设置 `resolution`（最长轴上的体素数）、`youngsModulus`、`poissonRatio`、`density`。
    需要皮肤层时设置 `skinThickness`（米）、`skinYoungsModulus`、`skinPreStrain`；整体预应力用 `preStrain`。
    这些参数在运行时修改后下一步生效；修改 `resolution` 或 `pinColliders` 后调用 `Rebuild()`（切割会丢弃）。
