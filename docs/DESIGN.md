@@ -780,6 +780,23 @@
 - `BlueprintGivesTheSameSimulationWithoutVoxelizing`：使用 blueprint 时体素化耗时为 0，20 步后的节点位置与不使用时逐位一致。
 - 检视面板的“Bake Blueprint”按钮生成或更新资产；`ApxDistanceField` 资产的检视面板有“Bake”按钮。
 
+### 9.8 动态附着（TODO ECO-13，`SoftBodySimulation.Attachments.cs`）
+
+- 一个附着由目标坐标系（世界坐标）、柔度 α（m/N）、断开力（N，对每个点）与一组材料点（4.4 节）组成。附着时记录每个点
+  在目标坐标系中的位置 l；每一步目标坐标系从上一步的位姿插值到新位姿（`MoveAttachment`；`ApxSoftBody.AddAttachment`
+  每步读取目标 Transform 的位置与旋转）。
+- 每个子步在单元求解之后，`AttachmentJob` 按顺序对每个点求解一次 XPBD 约束 C = x − t：x = Σ w_k x_k（副本角点的三线性
+  权重），t 为 l 在本子步结束时的目标位置。λ 每个子步从 0 开始，Δλ = −C / (Σ w_k² m_k⁻¹ + α / h²)，角点移动 w_k m_k⁻¹ Δλ。
+  与 Obi 的动态附着（pin 约束）相同，区别是作用在材料点上，点可以在节点之间或切面上。
+- 约束力 |Δλ| / h² 超过断开力时该点脱开，之后不再恢复。
+- 受力（`TryGetAttachmentWrench`）：组织获得的动量 Δλ / h 按子步累加，F = −Σ (Δλ / h) / Δt，力矩相对目标在步末的原点，
+  与运动学帧（9.2 节）相同。被附着的材料保留质量，约束力承担全部重量，不另加节点自身的重量。
+- 与运动学帧（钉住、抓取）的区别：运动学帧上的节点逆质量为 0，严格跟随帧；动态附着的节点仍为自由节点，有柔度，可以断开。
+  目标是运动学的，组织不反推目标（对 Rigidbody 的反作用未实现）。朝向由多个点共同决定，不另设朝向约束。
+- 测试：10 cm 立方体由顶层 100 个材料点的附着悬挂，附着受力 −9.792 N，重量 9.824 N（`DynamicAttachmentCarriesTheWeight`）；
+  断开力为每点平均载荷的一半时全部脱开、立方体落下，10 倍时全部保持（`DynamicAttachmentLetsGoAboveItsBreakForce`）；
+  水平切开后下半部分落下，附着受力 −4.904 N，上半部分重 4.919 N（`AttachmentHoldsTheUpperPartAfterACut`）。
+
 ## 10. 交互工具与调试显示（`Assets/AdaptorPhysX/Tools/`，TODO ENG-5）
 
 程序集 `AdaptorPhysX.Tools`，引用运行时程序集，运行时程序集不引用它。两个演示场景由场景生成器调用

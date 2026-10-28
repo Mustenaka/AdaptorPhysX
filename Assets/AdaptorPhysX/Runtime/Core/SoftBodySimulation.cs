@@ -343,6 +343,7 @@ namespace AdaptorPhysX
 
             CreateInteraction();
             _materialPoints = new NativeList<MaterialPoint>(0, Allocator.Persistent);
+            CreateAttachments();
             RebuildTopology(false);
         }
 
@@ -373,6 +374,7 @@ namespace AdaptorPhysX
             if (Copies.IsCreated) Copies.Dispose();
             if (CopyNodes.IsCreated) CopyNodes.Dispose();
             if (_materialPoints.IsCreated) _materialPoints.Dispose();
+            DisposeAttachments();
             DisposeNodes();
             DisposeIfCreated(ref _bounds);
             DisposeIfCreated(ref _bucketStart);
@@ -552,6 +554,7 @@ namespace AdaptorPhysX
                 UpdateCellRest();
             }
             ConfigureFrames(ref solve, h);
+            BeginAttachments();
             JobHandle handle = new EffectiveMassJob
             {
                 InverseMass = InverseMass,
@@ -733,7 +736,7 @@ namespace AdaptorPhysX
                 solve.SliceOffset = _colorSliceStart[color];
                 handle = solve.Schedule(count, 1, handle);
             }
-            _step.Handle = handle;
+            _step.Handle = ScheduleAttachments(handle, s);
         }
 
         /// <summary>Jobs of the begun step scheduled so far.</summary>

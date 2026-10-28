@@ -106,6 +106,67 @@ namespace AdaptorPhysX
 
         public bool RemoveMaterialPoint(int point) => Simulation != null && Simulation.RemoveMaterialPoint(point);
 
+        /// <summary>
+        /// Holds material points (<see cref="AddMaterialPoint"/>) to <paramref name="target"/> with a dynamic attachment
+        /// (TODO ECO-13): each point is pulled to where it is now in the target's frame, through a constraint of
+        /// <paramref name="compliance"/> m/N (0 rigid), and lets go when its force exceeds <paramref name="breakForce"/> N.
+        /// The target's position and rotation are read every step; the tissue does not push it back. Returns the handle.
+        /// </summary>
+        public int AddAttachment(Transform target, IReadOnlyList<int> points, float compliance = 0.0f,
+            float breakForce = float.PositiveInfinity)
+        {
+            if (Simulation == null)
+            {
+                return -1;
+            }
+            int attachment = Simulation.AddAttachment(FrameOf(target), compliance, breakForce);
+            foreach (int point in points)
+            {
+                Simulation.AttachPoint(attachment, point);
+            }
+            _attachmentTargets[attachment] = target;
+            WakeUp();
+            return attachment;
+        }
+
+        /// <summary>Lets go of all points of an attachment.</summary>
+        public void RemoveAttachment(int attachment)
+        {
+            Simulation?.RemoveAttachment(attachment);
+            _attachmentTargets.Remove(attachment);
+            WakeUp();
+        }
+
+        /// <summary>Points an attachment still holds (the others let go above its break force).</summary>
+        public int HeldPoints(int attachment) => Simulation == null ? 0 : Simulation.HeldPoints(attachment);
+
+        /// <summary>
+        /// Force and torque the tissue exerted on an attachment's target in the last step (HAP-2), with the torque about the
+        /// target's position; false when it held no point.
+        /// </summary>
+        public bool TryGetAttachmentWrench(int attachment, out ApxWrench wrench)
+        {
+            wrench = default;
+            return Simulation != null && Simulation.TryGetAttachmentWrench(attachment, out wrench);
+        }
+
+        /// <summary>Moves the attachments to their targets for the next step; true when a target moved.</summary>
+        private bool MoveAttachments()
+        {
+            bool moved = false;
+            foreach (KeyValuePair<int, Transform> pair in _attachmentTargets)
+            {
+                if (pair.Value == null)
+                {
+                    continue;
+                }
+                float4x4 frame = FrameOf(pair.Value);
+                moved |= !frame.Equals(Simulation.AttachmentTarget(pair.Key));
+                Simulation.MoveAttachment(pair.Key, frame);
+            }
+            return moved;
+        }
+
         private void CollectWrenches()
         {
             if (Simulation == null)

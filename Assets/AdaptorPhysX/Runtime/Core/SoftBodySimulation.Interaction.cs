@@ -833,6 +833,9 @@ namespace AdaptorPhysX
                 StrokeMotion = _strokeMotion,
                 Bounds = _bounds.ToArray(),
                 MaterialPoints = _materialPoints.AsArray().ToArray(),
+                Attachments = _attachments.AsArray().ToArray(),
+                AttachedPoints = _attachedPoints.AsArray().ToArray(),
+                AttachmentPrevious = _attachmentPrevious.ToArray(),
             };
         }
 
@@ -905,6 +908,16 @@ namespace AdaptorPhysX
             {
                 _materialPoints.CopyFromNBC(state.MaterialPoints);
             }
+            _attachments.Clear();
+            _attachedPoints.Clear();
+            _attachmentPrevious.Clear();
+            if (state.Attachments != null)
+            {
+                _attachments.CopyFromNBC(state.Attachments);
+                _attachedPoints.CopyFromNBC(state.AttachedPoints);
+                _attachmentPrevious.AddRange(state.AttachmentPrevious);
+            }
+            DisposeIfCreated(ref _attachmentImpulses);
             DisposeIfCreated(ref _impulsePartial);
             RebuildInteractionNodes();
             _stuck.CopyFrom(state.Stuck);
@@ -958,6 +971,10 @@ namespace AdaptorPhysX
         public float3[] Bounds;
         /// <summary>Material points by handle (TODO SUT-1).</summary>
         public MaterialPoint[] MaterialPoints;
+        /// <summary>Dynamic attachments, their points and target frames at the end of the last step (TODO ECO-13).</summary>
+        internal AttachmentState[] Attachments;
+        internal AttachedPoint[] AttachedPoints;
+        internal float4x4[] AttachmentPrevious;
 
         public int NodeCount => Positions.Length;
     }

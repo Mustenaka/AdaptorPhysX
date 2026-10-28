@@ -365,6 +365,131 @@ namespace AdaptorPhysX.Tests
             Assert.AreEqual(1, body.GrabHandles.Count);
         }
 
+        /// <summary>
+        /// A cube hanging from a dynamic attachment on material points at the nodes of its top layer: the attachment
+        /// carries its weight (TODO ECO-13). Unlike a kinematic frame, the held material keeps its mass, so the constraint
+        /// forces alone carry all of it.
+        /// </summary>
+        [Test]
+        public void DynamicAttachmentCarriesTheWeight()
+        {
+            SoftBodySimulation sim = HangFromAttachment(float.PositiveInfinity, out int attachment, out List<int> points);
+            Steps(sim, 180);
+            Assert.AreEqual(points.Count, sim.HeldPoints(attachment));
+            Assert.IsTrue(sim.TryGetAttachmentWrench(attachment, out ApxWrench wrench));
+            float weight = sim.TotalMass * 9.81f;
+            TestContext.WriteLine($"attachment force {wrench.Force} N, weight {weight:0.0000} N, points {wrench.ContactNodes}, " +
+                                  $"max speed {sim.MaxSpeed:0.0000} m/s");
+            Assert.AreEqual(-weight, wrench.Force.y, 0.01f * weight, $"attachment force {wrench.Force}");
+            Assert.Less(math.length(wrench.Force.xz), 0.01f * weight);
+            Assert.AreEqual(points.Count, wrench.ContactNodes);
+        }
+
+        /// <summary>
+        /// The same cube held with a break force of half the mean load of a point lets go of every point and falls; with
+        /// ten times that load it keeps them all (TODO ECO-13).
+        /// </summary>
+        [Test]
+        public void DynamicAttachmentLetsGoAboveItsBreakForce()
+        {
+            SoftBodySimulation probe = HangFromAttachment(float.PositiveInfinity, out _, out List<int> points);
+            float meanLoad = probe.TotalMass * 9.81f / points.Count;
+
+            SoftBodySimulation weak = HangFromAttachment(0.5f * meanLoad, out int weakAttachment, out _);
+            float start = weak.BoundsMin.y;
+            Steps(weak, 60);
+            TestContext.WriteLine($"mean load {meanLoad:0.0000} N; weak: held {weak.HeldPoints(weakAttachment)}, " +
+                                  $"fell {(start - weak.BoundsMin.y) * 1000:0.0} mm");
+            Assert.AreEqual(0, weak.HeldPoints(weakAttachment));
+            Assert.Less(weak.BoundsMin.y, start - 0.05f, "the cube falls");
+            Assert.IsFalse(weak.TryGetAttachmentWrench(weakAttachment, out _));
+
+            SoftBodySimulation strong = HangFromAttachment(10.0f * meanLoad, out int strongAttachment, out _);
+            Steps(strong, 120);
+            Assert.AreEqual(points.Count, strong.HeldPoints(strongAttachment));
+        }
+
+        /// <summary>
+        /// A cube hanging from its top layer is cut through horizontally: the lower part falls, and the attachment carries
+        /// the weight of the upper part only. The held material points stay on the upper part (TODO ECO-13, SUT-1).
+        /// </summary>
+        [Test]
+        public void AttachmentHoldsTheUpperPartAfterACut()
+        {
+            SoftBodySimulation sim = HangFromAttachment(float.PositiveInfinity, out int attachment, out List<int> points);
+            Steps(sim, 60);
+            float y = 0.5f * (sim.BoundsMin.y + sim.BoundsMax.y) + 0.3f * sim.CellSize;
+            Assert.Greater(sim.Cut(new float3(-0.2f, y, -0.2f), new float3(0.2f, y, -0.2f), new float3(-0.2f, y, 0.2f),
+                new float3(0.2f, y, 0.2f)), 0);
+            Steps(sim, 180);
+            Assert.AreEqual(points.Count, sim.HeldPoints(attachment));
+            Assert.IsTrue(sim.TryGetAttachmentWrench(attachment, out ApxWrench wrench));
+            int upper = sim.MaterialPointPiece(points[0]);
+            foreach (int point in points)
+            {
+                Assert.AreEqual(upper, sim.MaterialPointPiece(point));
+            }
+            // Weight of the upper part: the nodes of the copies whose real corners are in it.
+            var owner = new int[sim.NodeCount];
+            for (int q = 0; q < sim.CopyCount; q++)
+            {
+                int b = q * Lattice.CornerCount;
+                int piece = sim.PieceId[sim.CopyNodes[b + math.tzcnt((int)sim.Copies[q].Mask)]];
+                for (int k = 0; k < Lattice.CornerCount; k++)
+                {
+                    owner[sim.CopyNodes[b + k]] = piece;
+                }
+            }
+            float held = 0.0f;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                held += owner[i] == upper && sim.InverseMass[i] > 0.0f ? 9.81f / sim.InverseMass[i] : 0.0f;
+            }
+            float whole = sim.TotalMass * 9.81f;
+            TestContext.WriteLine($"attachment force {wrench.Force} N, upper part {held:0.0000} N, whole {whole:0.0000} N, " +
+                                  $"pieces {sim.CountPieces()}");
+            Assert.Less(held, 0.8f * whole, "the cut separates a part");
+            Assert.AreEqual(-held, wrench.Force.y, 0.02f * held, $"attachment force {wrench.Force}");
+        }
+
+        /// <summary>
+        /// A 10 cm cube 10 cm above y = 0, without colliders, held by a dynamic attachment (target at the origin) on
+        /// material points at the real nodes of its top layer.
+        /// </summary>
+        private SoftBodySimulation HangFromAttachment(float breakForce, out int attachment, out List<int> points)
+        {
+            var parameters = SoftBodyParameters.Default;
+            parameters.Damping = 3.0f;
+            SoftBodySimulation sim = CreateBox(new float3(Size), parameters, 8, 0.1f);
+            float top = float.MinValue;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                top = math.max(top, sim.RestPositions[i].y);
+            }
+            attachment = sim.AddAttachment(float4x4.identity, 0.0f, breakForce);
+            points = new List<int>();
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                if (sim.NodeReal[i] != 0 && sim.RestPositions[i].y > top - 0.5f * sim.CellSize)
+                {
+                    int point = sim.AddMaterialPoint(sim.Positions[i]);
+                    Assert.GreaterOrEqual(point, 0);
+                    sim.AttachPoint(attachment, point);
+                    points.Add(point);
+                }
+            }
+            return sim;
+        }
+
+        private static void Steps(SoftBodySimulation sim, int frames)
+        {
+            using var none = new NativeArray<ColliderShape>(0, Allocator.Persistent);
+            for (int f = 0; f < frames; f++)
+            {
+                sim.Step(Dt, Substeps, none);
+            }
+        }
+
         [Test]
         public void PinForcesCarryTheWeightOfAPinnedBody()
         {

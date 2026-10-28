@@ -120,6 +120,8 @@ namespace AdaptorPhysX
         private readonly SortedDictionary<int, ApxGrab> _grabs = new SortedDictionary<int, ApxGrab>();
         private int _nextGrab = DefaultGrab + 1;
         private const int DefaultGrab = 0;
+        /// <summary>Targets of the dynamic attachments by handle (<see cref="AddAttachment"/>).</summary>
+        private readonly SortedDictionary<int, Transform> _attachmentTargets = new SortedDictionary<int, Transform>();
         private MeshRenderer _renderer;
         private int _stepFrame = -1;
         private int _stepsThisFrame;
@@ -347,6 +349,7 @@ namespace AdaptorPhysX
             ApplyRigidResponse();
             Simulation.Parameters = BuildParameters();
             bool disturbed = GatherColliders() || _grabs.Count > 0;
+            disturbed |= MoveAttachments();
 
             foreach (ApxGrab grab in _grabs.Values)
             {
@@ -411,6 +414,7 @@ namespace AdaptorPhysX
         {
             Release();
             _grabs.Clear();
+            _attachmentTargets.Clear();
             _restSteps = 0;
             Initialize();
         }
