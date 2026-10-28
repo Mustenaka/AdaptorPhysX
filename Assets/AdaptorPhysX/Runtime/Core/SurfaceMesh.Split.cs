@@ -57,6 +57,7 @@ namespace AdaptorPhysX
             [ReadOnly] public NativeArray<int> EmbedCell;
             [ReadOnly] public NativeArray<int2> CellCopyRange;
             [ReadOnly] public NativeArray<CellCopy> Copies;
+            [ReadOnly] public NativeArray<int> CopyNodes;
             [ReadOnly] public NativeArray<ushort> Severed;
             [ReadOnly] public NativeArray<float> EdgeT;
             [ReadOnly] public NativeArray<float3> EdgeNormal;
@@ -285,10 +286,42 @@ namespace AdaptorPhysX
                 }
                 side /= piece.Count;
 
+                var cells = new FixedList512Bytes<int>();
+                var copies = new FixedList512Bytes<int>();
+                if (piece.Count > cells.Capacity)
+                {
+                    return false;
+                }
+                for (int i = 0; i < piece.Count; i++)
+                {
+                    SplitCorner corner = pool[piece.Start + i];
+                    int cell = corner.Vertex >= 0 ? EmbedCell[corner.Vertex] : FindCell(corner.Rest);
+                    cells.Add(cell);
+                    copies.Add(Resolve(cell, corner.Rest, piece.Signs, ref planes, side));
+                }
+                int referenceCell = FindCell(side);
+                int referenceCopy = Resolve(referenceCell, side, piece.Signs, ref planes, side);
+                int held = Held(ref pool, piece, ref cells, ref copies, referenceCell, referenceCopy);
+                for (int i = 0; i < piece.Count && held < piece.Count; i++)
+                {
+                    int candidate = Held(ref pool, piece, ref cells, ref copies, cells[i], copies[i]);
+                    if (candidate > held)
+                    {
+                        held = candidate;
+                        referenceCell = cells[i];
+                        referenceCopy = copies[i];
+                    }
+                }
+                for (int i = 0; i < piece.Count; i++)
+                {
+                    int together = Together(cells[i], pool[piece.Start + i].Rest, copies[i], referenceCell, referenceCopy);
+                    copies[i] = together >= 0 ? together : copies[i];
+                }
+
                 int first = -1, previous = -1;
                 for (int i = 0; i < piece.Count; i++)
                 {
-                    int index = SkinVertex(pool[piece.Start + i], piece.Signs, ref planes, side, ref vertices, ref keys);
+                    int index = SkinVertex(pool[piece.Start + i], cells[i], copies[i], ref vertices, ref keys);
                     if (index < 0)
                     {
                         return false;
@@ -312,14 +345,74 @@ namespace AdaptorPhysX
                 return true;
             }
 
-            /// <summary>Local vertex of the split triangle, or -1 when the lists are full.</summary>
-            private int SkinVertex(SplitCorner corner, int signs, ref FixedList512Bytes<float4> planes, float3 side,
-                ref FixedList4096Bytes<SplitVertex> vertices, ref FixedList4096Bytes<int4> keys)
+            private int Resolve(int cell, float3 query, int signs, ref FixedList512Bytes<float4> planes, float3 side) =>
+                planes.Length > 0 ? ResolveBySides(cell, query, signs, ref planes, side) : ResolveCopy(cell, query, side);
+
+            /// <summary>See SurfaceMesh.Held.</summary>
+            private int Held(ref FixedList4096Bytes<SplitCorner> pool, SplitPiece piece, ref FixedList512Bytes<int> cells,
+                ref FixedList512Bytes<int> copies, int referenceCell, int referenceCopy)
             {
-                int cell = corner.Vertex >= 0 ? EmbedCell[corner.Vertex] : FindCell(corner.Rest);
-                int copy = planes.Length > 0
-                    ? ResolveBySides(cell, corner.Rest, signs, ref planes, side)
-                    : ResolveCopy(cell, corner.Rest, side);
+                int held = 0;
+                for (int i = 0; i < piece.Count; i++)
+                {
+                    held += Together(cells[i], pool[piece.Start + i].Rest, copies[i], referenceCell, referenceCopy) >= 0 ? 1 : 0;
+                }
+                return held;
+            }
+
+            /// <summary>See SurfaceMesh.Together.</summary>
+            private int Together(int cell, float3 query, int copy, int referenceCell, int referenceCopy)
+            {
+                if (Joined(cell, copy, referenceCell, referenceCopy))
+                {
+                    return copy;
+                }
+                int2 range = CellCopyRange[cell];
+                float3 cellMin = CellMin(cell);
+                int best = -1;
+                float bestDistance = float.MaxValue;
+                for (int k = 0; k < 8; k++)
+                {
+                    int candidate = CopyOwning(range, k);
+                    float distance = math.distancesq(cellMin + (float3)Lattice.CornerOffset(k) * CellSize, query);
+                    if (distance < bestDistance && Joined(cell, candidate, referenceCell, referenceCopy))
+                    {
+                        bestDistance = distance;
+                        best = candidate;
+                    }
+                }
+                return best;
+            }
+
+            /// <summary>See SurfaceMesh.Joined.</summary>
+            private bool Joined(int cellA, int copyA, int cellB, int copyB)
+            {
+                if (cellA == cellB)
+                {
+                    return copyA == copyB;
+                }
+                if (math.any(math.abs(CellCoord[cellA] - CellCoord[cellB]) > 1))
+                {
+                    return true;
+                }
+                for (int a = 0; a < 8; a++)
+                {
+                    int node = CopyNodes[copyA * 8 + a];
+                    for (int b = 0; b < 8; b++)
+                    {
+                        if (CopyNodes[copyB * 8 + b] == node)
+                        {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+
+            /// <summary>Local vertex of the split triangle, or -1 when the lists are full.</summary>
+            private int SkinVertex(SplitCorner corner, int cell, int copy, ref FixedList4096Bytes<SplitVertex> vertices,
+                ref FixedList4096Bytes<int4> keys)
+            {
                 int ordinal = copy - CellCopyRange[cell].x;
                 int4 key = corner.Vertex >= 0
                     ? new int4(corner.Vertex, -1, ordinal, 0)

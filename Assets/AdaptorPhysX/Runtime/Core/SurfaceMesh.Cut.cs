@@ -310,7 +310,9 @@ namespace AdaptorPhysX
             private void FitPlanes(int cell)
             {
                 int severed = Severed[cell];
+                int2 range = CellCopyRange[cell];
                 float3 cellMin = Origin + (float3)CellCoord[cell] * CellSize;
+                var pairs = new FixedList64Bytes<int>();
                 var normals = new FixedList512Bytes<float3>();
                 var sums = new FixedList512Bytes<float3>();
                 var counts = new FixedList64Bytes<int>();
@@ -320,6 +322,7 @@ namespace AdaptorPhysX
                     {
                         continue;
                     }
+                    int pair = CopyPair(range, EdgeCorners[2 * e], EdgeCorners[2 * e + 1]);
                     float3 n = EdgeNormal[cell * Lattice.EdgeCount + e];
                     float t = EdgeT[cell * Lattice.EdgeCount + e];
                     float3 hermite = math.lerp((float3)Lattice.CornerOffset(EdgeCorners[2 * e]),
@@ -328,13 +331,14 @@ namespace AdaptorPhysX
                     int cluster = -1;
                     for (int i = 0; i < normals.Length && cluster < 0; i++)
                     {
-                        if (math.abs(math.dot(n, math.normalize(normals[i]))) > 0.9f)
+                        if (pairs[i] == pair && math.abs(math.dot(n, math.normalize(normals[i]))) > 0.9f)
                         {
                             cluster = i;
                         }
                     }
                     if (cluster < 0)
                     {
+                        pairs.Add(pair);
                         normals.Add(n);
                         sums.Add(float3.zero);
                         counts.Add(0);
@@ -350,18 +354,34 @@ namespace AdaptorPhysX
                 int planes = 0;
                 for (int i = 0; i < normals.Length; i++)
                 {
-                    planes += counts[i] >= 2 ? 1 : 0;
+                    planes += FitsPlane(pairs[i], counts[i]) ? 1 : 0;
                 }
                 Output.Write(planes);
                 for (int i = 0; i < normals.Length; i++)
                 {
-                    if (counts[i] < 2)
+                    if (!FitsPlane(pairs[i], counts[i]))
                     {
                         continue;
                     }
                     float3 n = math.normalize(normals[i]);
                     Output.Write(new float4(n, math.dot(n, sums[i] / counts[i])));
                 }
+            }
+
+            /// <summary><see cref="PlaneGroup"/> of the copies owning corners a and c.</summary>
+            private int CopyPair(int2 range, int a, int c) => PlaneGroup(Ordinal(range, a), Ordinal(range, c));
+
+            /// <summary>Ordinal within the cell of the copy owning a corner.</summary>
+            private int Ordinal(int2 range, int corner)
+            {
+                for (int q = range.x; q < range.x + range.y; q++)
+                {
+                    if (((Copies[q].Mask >> corner) & 1) != 0)
+                    {
+                        return q - range.x;
+                    }
+                }
+                return 0;
             }
 
             private float Sdf(int3 point) => PointSdf[point.x + PointDims.x * (point.y + PointDims.y * point.z)];

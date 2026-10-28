@@ -485,6 +485,7 @@ namespace AdaptorPhysX
                     EmbedCell = _nativeEmbedCell,
                     CellCopyRange = _sim.CellCopyRange,
                     Copies = _sim.Copies.AsArray(),
+                    CopyNodes = _sim.CopyNodes.AsArray(),
                     Severed = _sim.Severed,
                     EdgeT = _sim.EdgeT,
                     EdgeNormal = _sim.EdgeNormal,
@@ -848,10 +849,40 @@ namespace AdaptorPhysX
             }
             side /= piece.Corners.Count;
 
-            int first = -1, previous = -1;
-            for (int i = 0; i < piece.Corners.Count; i++)
+            int count = piece.Corners.Count;
+            Span<int> cells = stackalloc int[count];
+            Span<int> copies = stackalloc int[count];
+            for (int i = 0; i < count; i++)
             {
-                int index = SkinVertex(split, piece, piece.Corners[i], side);
+                SkinCorner corner = piece.Corners[i];
+                cells[i] = corner.Vertex >= 0 ? _embedCell[corner.Vertex] : FindCell(corner.Rest);
+                copies[i] = Resolve(cells[i], corner.Rest, piece, side);
+            }
+            // The copy the corners are held together with: the one at the centre of the piece, unless a corner's
+            // copy holds more of them together.
+            int referenceCell = FindCell(side);
+            int referenceCopy = Resolve(referenceCell, side, piece, side);
+            int held = Held(cells, copies, piece, referenceCell, referenceCopy);
+            for (int i = 0; i < count && held < count; i++)
+            {
+                int candidate = Held(cells, copies, piece, cells[i], copies[i]);
+                if (candidate > held)
+                {
+                    held = candidate;
+                    referenceCell = cells[i];
+                    referenceCopy = copies[i];
+                }
+            }
+            for (int i = 0; i < count; i++)
+            {
+                int together = Together(cells[i], piece.Corners[i].Rest, copies[i], referenceCell, referenceCopy);
+                copies[i] = together >= 0 ? together : copies[i];
+            }
+
+            int first = -1, previous = -1;
+            for (int i = 0; i < count; i++)
+            {
+                int index = SkinVertex(split, piece.Corners[i], cells[i], copies[i]);
                 if (i == 0)
                 {
                     first = index;
@@ -866,13 +897,81 @@ namespace AdaptorPhysX
             }
         }
 
-        /// <summary>Local vertex of the split triangle; split points shared by its pieces are merged.</summary>
-        private int SkinVertex(SplitTriangle split, Piece piece, SkinCorner corner, float3 side)
+        private int Resolve(int cell, float3 query, Piece piece, float3 side) =>
+            piece.Planes.Count > 0 ? ResolveBySides(cell, query, piece, side) : ResolveCopy(cell, query, side);
+
+        /// <summary>Number of corners of the piece that can be evaluated in copies holding together with the reference.</summary>
+        private int Held(Span<int> cells, Span<int> copies, Piece piece, int referenceCell, int referenceCopy)
         {
-            int cell = corner.Vertex >= 0 ? _embedCell[corner.Vertex] : FindCell(corner.Rest);
-            int copy = piece.Planes.Count > 0
-                ? ResolveBySides(cell, corner.Rest, piece, side)
-                : ResolveCopy(cell, corner.Rest, side);
+            int held = 0;
+            for (int i = 0; i < cells.Length; i++)
+            {
+                held += Together(cells[i], piece.Corners[i].Rest, copies[i], referenceCell, referenceCopy) >= 0 ? 1 : 0;
+            }
+            return held;
+        }
+
+        /// <summary>
+        /// <paramref name="copy"/> when it holds together with the reference copy of the piece (<see cref="Joined"/>),
+        /// else the copy of the nearest corner of <paramref name="cell"/> that does, or -1. Each corner of a piece is
+        /// resolved in its own cell against planes fitted per cell, and where a cut turns within a cell (a wavy stroke,
+        /// a second stroke across or along the first) the corners of one piece could land on both sides of it: the
+        /// piece then stretched across the opening incision (TODO BUG-15).
+        /// </summary>
+        private int Together(int cell, float3 query, int copy, int referenceCell, int referenceCopy)
+        {
+            if (Joined(cell, copy, referenceCell, referenceCopy))
+            {
+                return copy;
+            }
+            int2 range = _range[cell];
+            float3 cellMin = CellMin(cell);
+            int best = -1;
+            float bestDistance = float.MaxValue;
+            for (int k = 0; k < 8; k++)
+            {
+                int candidate = CopyOwning(range, k);
+                float distance = math.distancesq(cellMin + (float3)Lattice.CornerOffset(k) * _sim.CellSize, query);
+                if (distance < bestDistance && Joined(cell, candidate, referenceCell, referenceCopy))
+                {
+                    bestDistance = distance;
+                    best = candidate;
+                }
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// Whether two copies hold together: the same copy of one cell, or copies of touching cells that share a node.
+        /// Copies of cells further apart are taken to.
+        /// </summary>
+        private bool Joined(int cellA, int copyA, int cellB, int copyB)
+        {
+            if (cellA == cellB)
+            {
+                return copyA == copyB;
+            }
+            if (math.any(math.abs(_cellCoord[cellA] - _cellCoord[cellB]) > 1))
+            {
+                return true;
+            }
+            for (int a = 0; a < 8; a++)
+            {
+                int node = _copyNodes[copyA * 8 + a];
+                for (int b = 0; b < 8; b++)
+                {
+                    if (_copyNodes[copyB * 8 + b] == node)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /// <summary>Local vertex of the split triangle; split points shared by its pieces are merged.</summary>
+        private int SkinVertex(SplitTriangle split, SkinCorner corner, int cell, int copy)
+        {
             int ordinal = copy - _range[cell].x;
             (int, int, int, int) key = corner.Vertex >= 0
                 ? (corner.Vertex, -1, ordinal, 0)
@@ -1182,10 +1281,6 @@ namespace AdaptorPhysX
         }
 
         /// <summary>
-        /// One plane (n, d) per group of severed edges with parallel Hermite normals. A cell
-        /// crossed by two cuts (cross or wedge apex) yields two planes.
-        /// </summary>
-        /// <summary>
         /// Cells crossed by a cut that did not separate them (where a blade stopped) get a
         /// two-sided face through the Hermite points of each group of parallel severed edges,
         /// so the floor and ends of a partial incision are closed.
@@ -1262,8 +1357,17 @@ namespace AdaptorPhysX
             }
         }
 
+        /// <summary>
+        /// One plane (n, d) per group of severed edges between the same two copies with parallel Hermite normals.
+        /// A cell crossed by two cuts (cross or wedge apex) yields a plane per cut and side of the other, and two
+        /// parallel cuts through one cell (a second stroke along or beside the first) a plane each: grouped by the
+        /// normal alone, their edges gave one plane between the two cuts, and skin next to either was evaluated in
+        /// the copy across it (TODO BUG-15). Edges inside one copy (a crack) need two for a plane.
+        /// </summary>
         private List<float4> FitPlanes(int cell, int severed, float3 cellMin)
         {
+            int2 range = _range[cell];
+            var pairs = new List<int>(2);
             var normals = new List<float3>(2);
             var sums = new List<float3>(2);
             var counts = new List<int>(2);
@@ -1273,18 +1377,21 @@ namespace AdaptorPhysX
                 {
                     continue;
                 }
+                int pair = PlaneGroup(CopyOwning(range, Lattice.EdgeCorners[2 * e]) - range.x,
+                    CopyOwning(range, Lattice.EdgeCorners[2 * e + 1]) - range.x);
                 float3 n = _edgeNormal[cell * Lattice.EdgeCount + e];
                 float3 p = cellMin + HermitePoint(cell, e) * _sim.CellSize;
                 int cluster = -1;
                 for (int i = 0; i < normals.Count && cluster < 0; i++)
                 {
-                    if (math.abs(math.dot(n, math.normalize(normals[i]))) > 0.9f)
+                    if (pairs[i] == pair && math.abs(math.dot(n, math.normalize(normals[i]))) > 0.9f)
                     {
                         cluster = i;
                     }
                 }
                 if (cluster < 0)
                 {
+                    pairs.Add(pair);
                     normals.Add(float3.zero);
                     sums.Add(float3.zero);
                     counts.Add(0);
@@ -1301,7 +1408,7 @@ namespace AdaptorPhysX
             var planes = new List<float4>(normals.Count);
             for (int i = 0; i < normals.Count; i++)
             {
-                if (counts[i] < 2)
+                if (!FitsPlane(pairs[i], counts[i]))
                 {
                     continue;
                 }
@@ -1310,6 +1417,14 @@ namespace AdaptorPhysX
             }
             return planes;
         }
+
+        /// <summary>Group of a severed edge in <see cref="FitPlanes"/>: the ordinals of the copies owning its corners.</summary>
+        private static int PlaneGroup(int ordinalA, int ordinalC) =>
+            math.min(ordinalA, ordinalC) * Lattice.CornerCount + math.max(ordinalA, ordinalC);
+
+        /// <summary>Whether a group of <paramref name="count"/> parallel edges gives a plane: two edges inside one copy, one between copies.</summary>
+        private static bool FitsPlane(int group, int count) =>
+            count >= 2 || group / Lattice.CornerCount != group % Lattice.CornerCount;
 
         private struct CutVertex
         {
