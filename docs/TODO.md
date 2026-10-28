@@ -304,4 +304,5 @@ public sealed class ApxHapticBridge
 | 2026-10-28 | `4bf44ba` | BUG-10 已完成：开放棱统计移到运行时（`MeshUtil.CountOpenEdges`，Burst），网格有边界棱时初始化与烘焙 blueprint 输出警告；新增 EditMode 测试 1 个；基准测试 16 组与基线一致。扫描版兔子 FBX 有 223 条边界棱 |
 | 2026-10-28 | `3476b0f` | 真实网格摸底（DESIGN 6.2 节）：基准测试支持工程内的模型资产，报告记录表面更新的分阶段耗时（`SurfaceMesh.LastTimings`），刀面不再错过落地后倾倒的物体；用 3 个 FBX 测试模型运行，新增 BUG-13（不规则网格落地后轻节点抖动、不能休眠），更新 PERF-2、PERF-6、PERF-7 的现状 |
 | 2026-10-28 | `3e03ef4` | PERF-10 已完成：网格有边界棱时格点内外按广义缠绕数判定（一阶近似的树），孔在 lattice 中封闭；闭合网格仍用射线奇偶；新增 EditMode 测试 1 个；基准测试 16 组与基线一致；扫描版兔子 48 的全切由 3 块（27981 / 3535 / 1）变为 2 块（16698 / 14133） |
-| 2026-10-28 | — | BUG-10 补充：开放棱统计改为焊接距离小于包围盒对角线 1e-6 倍的顶点（`MeshUtil.WeldTolerance`）。此前按位置精确焊接，椭球接缝（θ = 0 与 2π，相差约 1e-8 m）被判为开放，演示中的 Liver Lobe、Dropped Lobe 输出警告并改用缠绕数判定；`OpenMeshWarnsOnInitialize` 增加椭球为 0 条的检查 |
+| 2026-10-28 | `f3da8b2` | BUG-10 补充：开放棱统计改为焊接距离小于包围盒对角线 1e-6 倍的顶点（`MeshUtil.WeldTolerance`）。此前按位置精确焊接，椭球接缝（θ = 0 与 2π，相差约 1e-8 m）被判为开放，演示中的 Liver Lobe、Dropped Lobe 输出警告并改用缠绕数判定；`OpenMeshWarnsOnInitialize` 增加椭球为 0 条的检查 |
+| 2026-10-28 | — | PERF-6 部分：表面网格的顶点分两个流，位置与法线每次更新一次写入（`SetVertexBufferData`），包围盒取 lattice 节点的包围盒，索引一次写入（`SetIndexBufferData`）；标准场景截图与修改前相比至多 122 个像素相差 1–3 个色阶 |

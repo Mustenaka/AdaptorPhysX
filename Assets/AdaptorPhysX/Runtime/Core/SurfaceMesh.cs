@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -25,7 +26,6 @@ namespace AdaptorPhysX
         private readonly int[] _triangles;
         private readonly int[] _embedCell;
         private readonly float3[] _embedU;
-        private readonly Vector3[] _restUv1;
         private readonly int[] _gridToCell;
         private readonly int3[] _cellCoord;
 
@@ -47,8 +47,9 @@ namespace AdaptorPhysX
         private NativeArray<int> _vertexCopy;
         private NativeArray<float3> _vertexU;
         private NativeArray<float3> _vertexRestNormal;
-        private NativeArray<float3> _outPositions;
-        private NativeArray<float3> _outNormals;
+        /// <summary>UV0 and rest position (UV1) of the source vertices, the start of the static vertex stream.</summary>
+        private NativeArray<StaticVertex> _sourceStatic;
+        private NativeArray<DeformedVertex> _outVertices;
         private NativeArray<float3x3> _nodeJacobian;
         private int _version = -1;
         private int _renderedStep = -1;
@@ -58,6 +59,35 @@ namespace AdaptorPhysX
         public const int MinVisiblePieceNodes = 8;
 
         private bool[] _copyVisible = Array.Empty<bool>();
+
+        /// <summary>Stream 0, rewritten every update.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        private struct DeformedVertex
+        {
+            public float3 Position;
+            public float3 Normal;
+        }
+
+        /// <summary>Stream 1, written when the render topology is rebuilt.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        private struct StaticVertex
+        {
+            public float2 Uv0;
+            public float3 Uv1;
+        }
+
+        private static readonly VertexAttributeDescriptor[] VertexLayout =
+        {
+            new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3, 0),
+            new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3, 0),
+            new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.Float32, 2, 1),
+            new VertexAttributeDescriptor(VertexAttribute.TexCoord1, VertexAttributeFormat.Float32, 3, 1),
+        };
+
+        /// <summary>Vertex writes skip index validation and bounds, which are set from the lattice nodes.</summary>
+        private const MeshUpdateFlags VertexWriteFlags = MeshUpdateFlags.DontValidateIndices |
+            MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontResetBoneBounds;
+
         private readonly System.Diagnostics.Stopwatch _timer = new System.Diagnostics.Stopwatch();
 
         /// <summary>Wall-clock duration of the stages of the last <see cref="Update"/> that did work, in milliseconds.</summary>
@@ -97,13 +127,14 @@ namespace AdaptorPhysX
             _cellCoord = sim.CellCoord.ToArray();
             _embedCell = new int[restPositions.Length];
             _embedU = new float3[restPositions.Length];
-            _restUv1 = new Vector3[restPositions.Length];
+            var sourceStatic = new StaticVertex[restPositions.Length];
             for (int v = 0; v < restPositions.Length; v++)
             {
                 _embedCell[v] = FindCell(restPositions[v]);
                 _embedU[v] = (restPositions[v] - CellMin(_embedCell[v])) / sim.CellSize;
-                _restUv1[v] = restPositions[v];
+                sourceStatic[v] = new StaticVertex { Uv0 = uvs[v], Uv1 = restPositions[v] };
             }
+            _sourceStatic = new NativeArray<StaticVertex>(sourceStatic, Allocator.Persistent);
             _nativeTriangles = new NativeArray<int>(triangles, Allocator.Persistent);
             _nativeEmbedCell = new NativeArray<int>(_embedCell, Allocator.Persistent);
             Mesh = new Mesh { name = "ApxSoftBody", indexFormat = IndexFormat.UInt32 };
@@ -115,6 +146,7 @@ namespace AdaptorPhysX
             DisposeArrays();
             if (_nativeTriangles.IsCreated) _nativeTriangles.Dispose();
             if (_nativeEmbedCell.IsCreated) _nativeEmbedCell.Dispose();
+            if (_sourceStatic.IsCreated) _sourceStatic.Dispose();
             if (Mesh == null)
             {
                 return;
@@ -166,15 +198,27 @@ namespace AdaptorPhysX
                 WorldToLocal = worldToLocal,
                 NormalToLocal = math.transpose(math.inverse(new float3x3(
                     worldToLocal.c0.xyz, worldToLocal.c1.xyz, worldToLocal.c2.xyz))),
-                OutPositions = _outPositions,
-                OutNormals = _outNormals,
+                OutVertices = _outVertices,
             }.Schedule(_vertexCopy.Length, 128, jacobians).Complete();
             timings.Skin = Lap();
-            Mesh.SetVertices(_outPositions);
-            Mesh.SetNormals(_outNormals);
-            Mesh.RecalculateBounds();
+            Mesh.SetVertexBufferData(_outVertices, 0, 0, _outVertices.Length, 0, VertexWriteFlags);
+            Mesh.bounds = LocalBounds(worldToLocal);
             timings.Write = Lap();
             LastTimings = timings;
+        }
+
+        /// <summary>
+        /// Bounds of the lattice nodes in the mesh's space, one cell larger: skin vertices are trilinear
+        /// combinations of the nodes of their cell copy (slightly extrapolated near cells they lie just outside).
+        /// </summary>
+        private Bounds LocalBounds(float4x4 worldToLocal)
+        {
+            float3 center = 0.5f * (_sim.BoundsMin + _sim.BoundsMax);
+            float3 extents = 0.5f * (_sim.BoundsMax - _sim.BoundsMin) + _sim.CellSize;
+            var linear = new float3x3(worldToLocal.c0.xyz, worldToLocal.c1.xyz, worldToLocal.c2.xyz);
+            float3 localExtents = math.abs(linear.c0) * extents.x + math.abs(linear.c1) * extents.y +
+                                  math.abs(linear.c2) * extents.z;
+            return new Bounds(math.transform(worldToLocal, center), 2.0f * localExtents);
         }
 
         private float Lap()
@@ -282,7 +326,7 @@ namespace AdaptorPhysX
 
             // Triangles away from cut cells keep their indices (classified in Burst); the rest are split here.
             int[] dynamicTriangles;
-            using (var staticIndices = new NativeList<int>(_triangles.Length, Allocator.TempJob))
+            using var staticIndices = new NativeList<int>(_triangles.Length, Allocator.TempJob);
             using (var dynamicList = new NativeList<int>(256, Allocator.TempJob))
             using (var range = new NativeArray<int2>(_range, Allocator.TempJob))
             {
@@ -294,7 +338,6 @@ namespace AdaptorPhysX
                     StaticIndices = staticIndices,
                     DynamicTriangles = dynamicList,
                 }.Run();
-                b.Skin.AddRange(staticIndices.AsArray().ToArray());
                 dynamicTriangles = dynamicList.AsArray().ToArray();
             }
 
@@ -330,36 +373,63 @@ namespace AdaptorPhysX
                 copies[v] = _range[_embedCell[v]].x;
             }
             b.Copies.CopyTo(copies, baseCount);
-            if (Array.IndexOf(_copyVisible, false) >= 0)
-            {
-                RemoveHiddenTriangles(b.Skin, copies);
-                RemoveHiddenTriangles(b.Cut, copies);
-            }
 
             DisposeArrays();
             _vertexCopy = new NativeArray<int>(copies, Allocator.Persistent);
             _vertexU = Concat(_embedU, b.Us);
             _vertexRestNormal = Concat(_restNormals, b.Normals);
-            _outPositions = new NativeArray<float3>(count, Allocator.Persistent);
-            _outNormals = new NativeArray<float3>(count, Allocator.Persistent);
+            _outVertices = new NativeArray<DeformedVertex>(count, Allocator.Persistent);
             _nodeJacobian = new NativeArray<float3x3>(_sim.NodeCount, Allocator.Persistent);
 
-            var uv0 = new Vector2[count];
-            Array.Copy(_uvs, uv0, baseCount);
-            b.Uv0.CopyTo(uv0, baseCount);
-            var uv1 = new Vector3[count];
-            Array.Copy(_restUv1, uv1, baseCount);
-            b.Uv1.CopyTo(uv1, baseCount);
+            // Index buffer: untouched skin triangles, split skin triangles, cut faces.
+            int staticCount = staticIndices.Length;
+            using var indices = new NativeArray<int>(staticCount + b.Skin.Count + b.Cut.Count, Allocator.TempJob,
+                NativeArrayOptions.UninitializedMemory);
+            NativeArray<int>.Copy(staticIndices.AsArray(), indices, staticCount);
+            if (b.Skin.Count > 0)
+            {
+                NativeArray<int>.Copy(b.Skin.ToArray(), 0, indices, staticCount, b.Skin.Count);
+            }
+            if (b.Cut.Count > 0)
+            {
+                NativeArray<int>.Copy(b.Cut.ToArray(), 0, indices, staticCount + b.Skin.Count, b.Cut.Count);
+            }
+            int skinCount = staticCount + b.Skin.Count, cutCount = b.Cut.Count;
+            if (Array.IndexOf(_copyVisible, false) >= 0)
+            {
+                using var visible = new NativeArray<bool>(_copyVisible, Allocator.TempJob);
+                using var counts = new NativeArray<int>(2, Allocator.TempJob);
+                new RemoveHiddenTrianglesJob
+                {
+                    Indices = indices,
+                    SkinCount = skinCount,
+                    VertexCopy = _vertexCopy,
+                    CopyVisible = visible,
+                    Counts = counts,
+                }.Run();
+                skinCount = counts[0];
+                cutCount = counts[1];
+            }
+
+            var extraStatic = new StaticVertex[extra];
+            for (int i = 0; i < extra; i++)
+            {
+                extraStatic[i] = new StaticVertex { Uv0 = b.Uv0[i], Uv1 = b.Uv1[i] };
+            }
             Mesh.Clear();
-            Mesh.SetVertices(_outPositions);
-            Mesh.SetNormals(_outNormals);
-            Mesh.SetUVs(0, uv0);
-            Mesh.SetUVs(1, uv1);
+            Mesh.SetVertexBufferParams(count, VertexLayout);
+            Mesh.SetVertexBufferData(_sourceStatic, 0, 0, baseCount, 1, VertexWriteFlags);
+            if (extra > 0)
+            {
+                Mesh.SetVertexBufferData(extraStatic, 0, baseCount, extra, 1, VertexWriteFlags);
+            }
+            Mesh.SetIndexBufferParams(skinCount + cutCount, IndexFormat.UInt32);
+            Mesh.SetIndexBufferData(indices, 0, 0, skinCount + cutCount, MeshUpdateFlags.DontRecalculateBounds);
             Mesh.subMeshCount = 2;
-            Mesh.SetTriangles(b.Skin, 0, false);
-            Mesh.SetTriangles(b.Cut, 1, false);
-            SkinTriangleCount = b.Skin.Count / 3;
-            CutTriangleCount = b.Cut.Count / 3;
+            Mesh.SetSubMesh(0, new SubMeshDescriptor(0, skinCount), MeshUpdateFlags.DontRecalculateBounds);
+            Mesh.SetSubMesh(1, new SubMeshDescriptor(skinCount, cutCount), MeshUpdateFlags.DontRecalculateBounds);
+            SkinTriangleCount = skinCount / 3;
+            CutTriangleCount = cutCount / 3;
             timings.Topology = Lap();
         }
 
@@ -399,23 +469,6 @@ namespace AdaptorPhysX
                 array[head.Length + i] = tail[i];
             }
             return array;
-        }
-
-        private void RemoveHiddenTriangles(List<int> indices, int[] vertexCopies)
-        {
-            int write = 0;
-            for (int t = 0; t < indices.Count; t += 3)
-            {
-                if (!_copyVisible[vertexCopies[indices[t]]] || !_copyVisible[vertexCopies[indices[t + 1]]] ||
-                    !_copyVisible[vertexCopies[indices[t + 2]]])
-                {
-                    continue;
-                }
-                indices[write++] = indices[t];
-                indices[write++] = indices[t + 1];
-                indices[write++] = indices[t + 2];
-            }
-            indices.RemoveRange(write, indices.Count - write);
         }
 
         /// <summary>
@@ -1185,9 +1238,47 @@ namespace AdaptorPhysX
             if (_vertexCopy.IsCreated) _vertexCopy.Dispose();
             if (_vertexU.IsCreated) _vertexU.Dispose();
             if (_vertexRestNormal.IsCreated) _vertexRestNormal.Dispose();
-            if (_outPositions.IsCreated) _outPositions.Dispose();
-            if (_outNormals.IsCreated) _outNormals.Dispose();
+            if (_outVertices.IsCreated) _outVertices.Dispose();
             if (_nodeJacobian.IsCreated) _nodeJacobian.Dispose();
+        }
+
+        /// <summary>
+        /// Drops the triangles with a vertex in a hidden copy (fragments, see <see cref="MinVisiblePieceNodes"/>) from the
+        /// skin range [0, SkinCount) and the cut range after it, compacting both in place; Counts receives their lengths.
+        /// </summary>
+        [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+        private struct RemoveHiddenTrianglesJob : IJob
+        {
+            public NativeArray<int> Indices;
+            public int SkinCount;
+            [ReadOnly] public NativeArray<int> VertexCopy;
+            [ReadOnly] public NativeArray<bool> CopyVisible;
+            public NativeArray<int> Counts;
+
+            public void Execute()
+            {
+                int write = 0;
+                for (int t = 0; t < Indices.Length; t += 3)
+                {
+                    if (t == SkinCount)
+                    {
+                        Counts[0] = write;
+                    }
+                    if (!CopyVisible[VertexCopy[Indices[t]]] || !CopyVisible[VertexCopy[Indices[t + 1]]] ||
+                        !CopyVisible[VertexCopy[Indices[t + 2]]])
+                    {
+                        continue;
+                    }
+                    Indices[write++] = Indices[t];
+                    Indices[write++] = Indices[t + 1];
+                    Indices[write++] = Indices[t + 2];
+                }
+                if (SkinCount == Indices.Length)
+                {
+                    Counts[0] = write;
+                }
+                Counts[1] = write - Counts[0];
+            }
         }
 
         /// <summary>Splits skin triangles into those touching a cut cell and the untouched rest.</summary>
@@ -1270,8 +1361,7 @@ namespace AdaptorPhysX
             [ReadOnly] public NativeArray<float3> VertexRestNormal;
             public float4x4 WorldToLocal;
             public float3x3 NormalToLocal;
-            public NativeArray<float3> OutPositions;
-            public NativeArray<float3> OutNormals;
+            [WriteOnly] public NativeArray<DeformedVertex> OutVertices;
 
             public void Execute(int i)
             {
@@ -1289,8 +1379,11 @@ namespace AdaptorPhysX
                 float3 rn = VertexRestNormal[i];
                 float3 normal = rn.x * math.cross(j.c1, j.c2) + rn.y * math.cross(j.c2, j.c0) +
                                 rn.z * math.cross(j.c0, j.c1);
-                OutPositions[i] = math.transform(WorldToLocal, x);
-                OutNormals[i] = math.normalizesafe(math.mul(NormalToLocal, normal), rn);
+                OutVertices[i] = new DeformedVertex
+                {
+                    Position = math.transform(WorldToLocal, x),
+                    Normal = math.normalizesafe(math.mul(NormalToLocal, normal), rn),
+                };
             }
         }
     }
