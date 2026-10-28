@@ -58,6 +58,27 @@ namespace AdaptorPhysX
         public const int MinVisiblePieceNodes = 8;
 
         private bool[] _copyVisible = Array.Empty<bool>();
+        private readonly System.Diagnostics.Stopwatch _timer = new System.Diagnostics.Stopwatch();
+
+        /// <summary>Wall-clock duration of the stages of the last <see cref="Update"/> that did work, in milliseconds.</summary>
+        public struct UpdateTimings
+        {
+            /// <summary>Copying the simulation topology, cut faces and cut planes (render topology rebuild only).</summary>
+            public float CutGeometry;
+            /// <summary>Classifying the skin triangles and splitting those touching cut cells (rebuild only).</summary>
+            public float Split;
+            /// <summary>Vertex attributes and index lists of the rebuilt mesh (rebuild only).</summary>
+            public float Topology;
+            /// <summary>Node Jacobians and skinning jobs.</summary>
+            public float Skin;
+            /// <summary>Writing the deformed positions and normals to the mesh, and its bounds.</summary>
+            public float Write;
+
+            public float Rebuild => CutGeometry + Split + Topology;
+            public float Total => Rebuild + Skin + Write;
+        }
+
+        public UpdateTimings LastTimings { get; private set; }
 
         public Mesh Mesh { get; }
         public int SkinTriangleCount { get; private set; }
@@ -121,9 +142,11 @@ namespace AdaptorPhysX
             }
             _renderedStep = _sim.StepCount;
             _renderedMatrix = worldToLocal;
+            var timings = new UpdateTimings();
+            _timer.Restart();
             if (_version != _sim.TopologyVersion)
             {
-                RebuildTopology();
+                RebuildTopology(ref timings);
             }
             JobHandle jacobians = new NodeJacobianJob
             {
@@ -146,9 +169,19 @@ namespace AdaptorPhysX
                 OutPositions = _outPositions,
                 OutNormals = _outNormals,
             }.Schedule(_vertexCopy.Length, 128, jacobians).Complete();
+            timings.Skin = Lap();
             Mesh.SetVertices(_outPositions);
             Mesh.SetNormals(_outNormals);
             Mesh.RecalculateBounds();
+            timings.Write = Lap();
+            LastTimings = timings;
+        }
+
+        private float Lap()
+        {
+            float ms = (float)_timer.Elapsed.TotalMilliseconds;
+            _timer.Restart();
+            return ms;
         }
 
         /// <summary>Render vertices beyond the source vertices, plus skin and cut index lists.</summary>
@@ -224,7 +257,7 @@ namespace AdaptorPhysX
             public readonly List<bool> Signs = new List<bool>();
         }
 
-        private void RebuildTopology()
+        private void RebuildTopology(ref UpdateTimings timings)
         {
             _version = _sim.TopologyVersion;
             ushort[] previousSevered = _previousSevered;
@@ -245,6 +278,7 @@ namespace AdaptorPhysX
             int baseCount = _restPositions.Length;
             var b = new Builder(baseCount, _triangles.Length + 64) { Range = _range };
             BuildCutGeometry(b);
+            timings.CutGeometry = Lap();
 
             // Triangles away from cut cells keep their indices (classified in Burst); the rest are split here.
             int[] dynamicTriangles;
@@ -287,6 +321,7 @@ namespace AdaptorPhysX
                 }
                 foreach (int t in stale) _splitCache.Remove(t);
             }
+            timings.Split = Lap();
             int extra = b.Copies.Count;
             int count = baseCount + extra;
             var copies = new int[count];
@@ -325,6 +360,7 @@ namespace AdaptorPhysX
             Mesh.SetTriangles(b.Cut, 1, false);
             SkinTriangleCount = b.Skin.Count / 3;
             CutTriangleCount = b.Cut.Count / 3;
+            timings.Topology = Lap();
         }
 
         private void ComputeVisibleCopies()

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using Unity.Mathematics;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -10,8 +11,9 @@ namespace AdaptorPhysX.Benchmarks.Editor
 {
     /// <summary>
     /// Closed test meshes for the benchmark. A mesh is read from <c>Benchmarks/Meshes/&lt;name&gt;.obj</c>;
-    /// without the file, "box" and "liver" are generated. Every mesh is centred and scaled so that its
-    /// longest axis has the requested size.
+    /// without the file, "box" and "liver" are generated. A name starting with "Assets/" is a model or mesh
+    /// asset of the project (for example the FBX test models in Assets/AdaptorPhysX/Arts/Models). Every mesh
+    /// is centred and scaled so that its longest axis has the requested size.
     /// </summary>
     public static class BenchmarkMeshes
     {
@@ -28,6 +30,11 @@ namespace AdaptorPhysX.Benchmarks.Editor
             {
                 ReadObj(path, out positions, out triangles);
                 info.source = path.Replace('\\', '/');
+            }
+            else if (name.StartsWith("Assets/"))
+            {
+                ReadModelAsset(name, out positions, out triangles);
+                info.source = name;
             }
             else if (name == "box")
             {
@@ -98,6 +105,39 @@ namespace AdaptorPhysX.Benchmarks.Editor
                 }
             }
             positions = points.ToArray();
+            triangles = indices.ToArray();
+        }
+
+        /// <summary>
+        /// Vertices and triangles (all submeshes) of the first mesh of a model or mesh asset. Vertices are taken
+        /// to the model's root space, so the axis conversion of an FBX child (rotation, scale) applies.
+        /// </summary>
+        public static void ReadModelAsset(string path, out Vector3[] positions, out int[] triangles)
+        {
+            var model = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            MeshFilter filter = model != null ? model.GetComponentInChildren<MeshFilter>(true) : null;
+            Mesh mesh = filter != null ? filter.sharedMesh : AssetDatabase.LoadAssetAtPath<Mesh>(path);
+            if (mesh == null)
+            {
+                throw new FileNotFoundException($"No mesh in {path}.");
+            }
+            if (!mesh.isReadable)
+            {
+                throw new InvalidOperationException($"{path}: enable Read/Write in the import settings.");
+            }
+            Matrix4x4 toRoot = filter != null
+                ? model.transform.worldToLocalMatrix * filter.transform.localToWorldMatrix
+                : Matrix4x4.identity;
+            positions = mesh.vertices;
+            for (int i = 0; i < positions.Length; i++)
+            {
+                positions[i] = toRoot.MultiplyPoint3x4(positions[i]);
+            }
+            var indices = new List<int>();
+            for (int s = 0; s < mesh.subMeshCount; s++)
+            {
+                indices.AddRange(mesh.GetTriangles(s));
+            }
             triangles = indices.ToArray();
         }
 

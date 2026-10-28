@@ -60,6 +60,7 @@ namespace AdaptorPhysX.Benchmarks.Editor
         {
             public double Sweep, Step, Render, Topology;
             public int Severed;
+            public SurfaceMesh.UpdateTimings Stages;
         }
 
         [MenuItem("AdaptorPhysX/Run Benchmarks")]
@@ -390,13 +391,18 @@ namespace AdaptorPhysX.Benchmarks.Editor
 
                 // Full cut: a vertical blade taller than the body crosses it along x. The blade plane runs
                 // through the middle of the central cell layer of the rest lattice, as in the results of
-                // DESIGN §6.1.
+                // DESIGN §6.1, or through the middle of the body when that layer has left it (a body that
+                // tipped over on landing).
                 var scalpel = new GameObject("Benchmark Scalpel").AddComponent<ApxScalpel>();
                 created.Add(scalpel.gameObject);
                 Bounds bounds = body.WorldBounds;
                 float margin = 2.0f * sim.CellSize;
                 float3 restMiddle = sim.Grid.Origin + ((float3)(sim.Grid.Dims / 2) + 0.5f) * sim.CellSize;
                 float z = math.transform(sim.RestToWorld, restMiddle).z;
+                if (z < bounds.min.z || z > bounds.max.z)
+                {
+                    z = bounds.center.z;
+                }
                 scalpel.edgeStart = new Vector3(0.0f, bounds.extents.y + margin, 0.0f);
                 scalpel.edgeEnd = new Vector3(0.0f, -bounds.extents.y - margin, 0.0f);
                 var from = new Vector3(bounds.min.x - margin, bounds.center.y, z);
@@ -417,6 +423,7 @@ namespace AdaptorPhysX.Benchmarks.Editor
                     sweep = Stats.Of(cutting.Select(f => f.Sweep).ToList()),
                     topology = Stats.Of(cutting.Select(f => f.Topology).ToList()),
                     renderRebuild = Stats.Of(cutting.Select(f => f.Render).ToList()),
+                    renderRebuildStages = RenderStages.Of(cutting.Select(f => f.Stages).ToList()),
                     firstCutFrameMs = cutting.Count > 0 ? Stats.Round(cutting[0].Sweep + cutting[0].Step + cutting[0].Render) : 0.0,
                     pieces = pieces.Count,
                     largestPieceNodes = pieces.Take(4).ToArray(),
@@ -472,6 +479,7 @@ namespace AdaptorPhysX.Benchmarks.Editor
                 frame.Step = Lap(timer);
                 body.UpdateRender();
                 frame.Render = Lap(timer);
+                frame.Stages = body.Surface.LastTimings;
                 frames.Add(frame);
             }
             managedBytes = GC.CollectionCount(0) == collections
@@ -488,6 +496,7 @@ namespace AdaptorPhysX.Benchmarks.Editor
                 steps = frames.Count,
                 step = Stats.Of(frames.Select(f => f.Step).ToList()),
                 render = Stats.Of(frames.Select(f => f.Render).ToList()),
+                renderStages = RenderStages.Of(frames.Select(f => f.Stages).ToList()),
                 managedKBPerStep = managedBytes < 0.0 ? -1.0 : Stats.Round(managedBytes / 1024.0),
                 maxSpeed = Math.Round(sim.MaxSpeed, 6),
                 finite = true,

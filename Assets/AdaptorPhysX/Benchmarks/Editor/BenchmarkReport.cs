@@ -119,6 +119,8 @@ namespace AdaptorPhysX.Benchmarks.Editor
         public Stats step;
         /// <summary>Surface mesh update (skinning, render topology rebuild after a cut).</summary>
         public Stats render;
+        /// <summary>Mean duration of the stages of the surface update (<see cref="SurfaceMesh.UpdateTimings"/>).</summary>
+        public RenderStages renderStages;
         /// <summary>Managed heap growth per step; -1 when a garbage collection ran during the phase.</summary>
         public double managedKBPerStep;
         /// <summary>False if any node position is NaN or infinite.</summary>
@@ -152,6 +154,8 @@ namespace AdaptorPhysX.Benchmarks.Editor
         public Stats topology;
         /// <summary>Surface update on cutting frames (includes the render topology rebuild).</summary>
         public Stats renderRebuild;
+        /// <summary>Mean duration of the stages of the surface update on cutting frames.</summary>
+        public RenderStages renderRebuildStages;
         /// <summary>Sweep + step + render of the first cutting frame (includes first-use costs).</summary>
         public double firstCutFrameMs;
         public int pieces;
@@ -159,6 +163,40 @@ namespace AdaptorPhysX.Benchmarks.Editor
         public int copies;
         public int nodes;
         public int cutTriangles;
+    }
+
+    /// <summary>Means of <see cref="SurfaceMesh.UpdateTimings"/> over a set of frames.</summary>
+    [Serializable]
+    public sealed class RenderStages
+    {
+        public double cutGeometry;
+        public double split;
+        public double topology;
+        public double skin;
+        public double write;
+
+        public static RenderStages Of(List<SurfaceMesh.UpdateTimings> samples)
+        {
+            var stages = new RenderStages();
+            if (samples.Count == 0)
+            {
+                return stages;
+            }
+            foreach (SurfaceMesh.UpdateTimings t in samples)
+            {
+                stages.cutGeometry += t.CutGeometry;
+                stages.split += t.Split;
+                stages.topology += t.Topology;
+                stages.skin += t.Skin;
+                stages.write += t.Write;
+            }
+            stages.cutGeometry = Stats.Round(stages.cutGeometry / samples.Count);
+            stages.split = Stats.Round(stages.split / samples.Count);
+            stages.topology = Stats.Round(stages.topology / samples.Count);
+            stages.skin = Stats.Round(stages.skin / samples.Count);
+            stages.write = Stats.Round(stages.write / samples.Count);
+            return stages;
+        }
     }
 
     [Serializable]
