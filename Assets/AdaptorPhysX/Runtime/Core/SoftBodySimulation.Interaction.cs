@@ -823,11 +823,7 @@ namespace AdaptorPhysX
             StrokeDistance = new NativeArray<float>(state.StrokeDistance, Allocator.Persistent);
             _contactNode = new NativeArray<byte>(state.ContactNode, Allocator.Persistent);
             _weights = new NativeArray<float>(count, Allocator.Persistent);
-            _contactPartner = new NativeArray<int>(count * Contacts.MaxPerNode, Allocator.Persistent);
-            _contactDistance = new NativeArray<float>(count * Contacts.MaxPerNode, Allocator.Persistent);
-            _contactCount = new NativeArray<int>(count, Allocator.Persistent);
-            _snapshot = new NativeArray<float3>(count, Allocator.Persistent);
-            _bucketEntries = new NativeArray<int>(count, Allocator.Persistent);
+            AllocateContacts();
             DisposeIfCreated(ref _tetRotation);
             _tetRotation = new NativeArray<quaternion>(state.TetRotation, Allocator.Persistent);
             FramesStart.CopyFrom(state.FramesStart);
