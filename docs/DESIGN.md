@@ -557,8 +557,11 @@
 - `ColliderForceEqualsTheWeightOfARestingBody`：1 kg 的物体静止在 Box 上，碰撞体受力 −9.790 N，重量 9.810 N（偏差 0.2%）。
   阻尼使每个子步的重力位移乘以 (1 − c h)，c = 2 s⁻¹、h = 1/960 s 时偏差约 0.2%。
 
-运动学帧（HAP-2；抓取为帧 0，`pinColliders[p]` 为帧 p + 1）：
+运动学帧（HAP-2；`BeginGrab(Ray, float, out Vector3)` 的抓取为帧 0，`pinColliders[p]` 为帧 p + 1，其余抓取取钉住区域之后
+未被占用的帧。帧数初始为 32，`Attach` 用到更大的编号时加倍，TODO ECO-13）：
 
+- 抓取帧为抓取点处的坐标系，朝向由 `BeginGrab(Ray, float, Quaternion, out Vector3)` 给出；`MoveGrab(int, Vector3, Quaternion)`
+  改变位置与朝向，被抓取的节点随帧平移和转动（`TwoGrabsHoldTheBodyAndOneTurnsIt`）。同一物体可以同时有多处抓取。
 - 运动学节点的有效逆质量为 0，约束求解不移动它们。约束作用在运动学节点 k 上的力为 ∇_k C λ / h²；每个子步一次迭代、
   λ 从 0 开始，本子步的 Δλ 即 λ（第 3 节的 2×2 系统中体积项为 dH，偏量项为 dD，偏量项的梯度已乘 C_D）。
 - `SolveCellsJob` 在物体有运动学节点时（`AccumulateFrames`）检查每组体素是否有逆质量为 0 的角点；有时把 6 个四面体的

@@ -100,7 +100,10 @@ namespace AdaptorPhysX
         public SoftBodySimulation Simulation { get; private set; }
         public SurfaceMesh Surface { get; private set; }
         public InitializeTimings LastInitializeTimings { get; private set; }
-        public bool IsGrabbing { get; private set; }
+        /// <summary>Whether the grab of <see cref="BeginGrab(Ray, float, out Vector3)"/> holds the tissue.</summary>
+        public bool IsGrabbing => _grabs.ContainsKey(DefaultGrab);
+        /// <summary>Handles of the grabs holding the tissue (0: the grab of BeginGrab(Ray, float, out Vector3)).</summary>
+        public IReadOnlyCollection<int> GrabHandles => _grabs.Keys;
         /// <summary>True while the body is at rest and skips its steps.</summary>
         public bool IsSleeping => _restSteps >= SleepSteps;
 
@@ -113,8 +116,10 @@ namespace AdaptorPhysX
         private readonly List<ColliderShape> _shapes = new List<ColliderShape>();
         private readonly Collider[] _overlap = new Collider[64];
         private float4x4[] _pinFrames;
-        private float3 _grabTarget;
-        private float3 _grabTargetPrevious;
+        /// <summary>Grabs by handle (see <see cref="ApxGrab"/>); handle 0 is the grab of BeginGrab(Ray, float, out Vector3).</summary>
+        private readonly SortedDictionary<int, ApxGrab> _grabs = new SortedDictionary<int, ApxGrab>();
+        private int _nextGrab = DefaultGrab + 1;
+        private const int DefaultGrab = 0;
         private MeshRenderer _renderer;
         private int _stepFrame = -1;
         private int _stepsThisFrame;
@@ -287,7 +292,7 @@ namespace AdaptorPhysX
             float3[] restPositions, float3[] restNormals, Vector2[] restUvs, int[] restTriangles)
         {
             _pinFrames = new float4x4[pinColliders.Length];
-            for (int p = 0; p < pinColliders.Length && p + 1 < SoftBodySimulation.MaxKinematicFrames; p++)
+            for (int p = 0; p < pinColliders.Length; p++)
             {
                 Collider pin = pinColliders[p];
                 if (pin == null)
@@ -341,12 +346,15 @@ namespace AdaptorPhysX
             Simulation.CompleteStep();
             ApplyRigidResponse();
             Simulation.Parameters = BuildParameters();
-            bool disturbed = GatherColliders() || IsGrabbing;
+            bool disturbed = GatherColliders() || _grabs.Count > 0;
 
-            Simulation.FramesStart[SoftBodySimulation.GrabFrame] = float4x4.Translate(_grabTargetPrevious);
-            Simulation.FramesEnd[SoftBodySimulation.GrabFrame] = float4x4.Translate(_grabTarget);
-            _grabTargetPrevious = _grabTarget;
-            for (int p = 0; p < _pinFrames.Length && p + 1 < SoftBodySimulation.MaxKinematicFrames; p++)
+            foreach (ApxGrab grab in _grabs.Values)
+            {
+                Simulation.FramesStart[grab.Frame] = grab.Previous;
+                Simulation.FramesEnd[grab.Frame] = grab.Target;
+                grab.Previous = grab.Target;
+            }
+            for (int p = 0; p < _pinFrames.Length; p++)
             {
                 if (pinColliders[p] == null)
                 {
@@ -402,7 +410,7 @@ namespace AdaptorPhysX
         public void Rebuild()
         {
             Release();
-            IsGrabbing = false;
+            _grabs.Clear();
             _restSteps = 0;
             Initialize();
         }
@@ -436,8 +444,73 @@ namespace AdaptorPhysX
         /// <summary>Resumes stepping a sleeping body.</summary>
         public void WakeUp() => _restSteps = 0;
 
-        /// <summary>Grabs the material under the ray within <paramref name="radius"/> (rest space).</summary>
+        /// <summary>
+        /// Grabs the material under the ray within <paramref name="radius"/> (rest space): the grab of
+        /// <see cref="MoveGrab(Vector3)"/>, <see cref="EndGrab()"/> and <c>TryGetGrabWrench(out ApxWrench)</c>.
+        /// A grab of these already held is let go first.
+        /// </summary>
         public bool BeginGrab(Ray ray, float radius, out Vector3 point)
+        {
+            EndGrab(DefaultGrab);
+            return StartGrab(DefaultGrab, SoftBodySimulation.GrabFrame, ray, radius, quaternion.identity, out point);
+        }
+
+        /// <summary>
+        /// Grabs the material under the ray within <paramref name="radius"/> (rest space) with a further grab, held in a
+        /// frame at the picked point turned by <paramref name="rotation"/>: the grabbed tissue follows the frame's position
+        /// and rotation (<see cref="MoveGrab(int, Vector3, Quaternion)"/>). Returns the grab's handle, or -1 when the ray
+        /// picks no tissue. Any number of grabs can hold a body at once; each has a kinematic frame after the pin regions'.
+        /// </summary>
+        public int BeginGrab(Ray ray, float radius, Quaternion rotation, out Vector3 point)
+        {
+            int frame = pinColliders.Length + 1;
+            while (UsesFrame(frame))
+            {
+                frame++;
+            }
+            int handle = _nextGrab;
+            if (!StartGrab(handle, frame, ray, radius, rotation, out point))
+            {
+                return -1;
+            }
+            _nextGrab++;
+            return handle;
+        }
+
+        /// <summary>Moves the grab of <see cref="BeginGrab(Ray, float, out Vector3)"/>; its rotation stays.</summary>
+        public void MoveGrab(Vector3 target)
+        {
+            if (_grabs.TryGetValue(DefaultGrab, out ApxGrab grab))
+            {
+                grab.Target = float4x4.TRS(target, new quaternion(grab.Target), new float3(1.0f));
+            }
+        }
+
+        /// <summary>Moves and turns the frame of a grab; the tissue follows during the next step.</summary>
+        public void MoveGrab(int grab, Vector3 position, Quaternion rotation)
+        {
+            if (_grabs.TryGetValue(grab, out ApxGrab state))
+            {
+                state.Target = float4x4.TRS(position, rotation, new float3(1.0f));
+            }
+        }
+
+        /// <summary>Lets go of the grab of <see cref="BeginGrab(Ray, float, out Vector3)"/>.</summary>
+        public void EndGrab() => EndGrab(DefaultGrab);
+
+        /// <summary>Lets go of a grab; its handle is not used again.</summary>
+        public void EndGrab(int grab)
+        {
+            if (!_grabs.TryGetValue(grab, out ApxGrab state))
+            {
+                return;
+            }
+            Simulation?.Detach(state.Frame);
+            _grabs.Remove(grab);
+            WakeUp();
+        }
+
+        private bool StartGrab(int handle, int frame, Ray ray, float radius, quaternion rotation, out Vector3 point)
         {
             point = default;
             if (Simulation == null)
@@ -450,21 +523,22 @@ namespace AdaptorPhysX
                 return false;
             }
             point = Simulation.Positions[node];
-            _grabTarget = point;
-            _grabTargetPrevious = point;
-            Simulation.Attach(Simulation.ConnectedNodes(node, radius), SoftBodySimulation.GrabFrame,
-                float4x4.Translate(point));
-            IsGrabbing = true;
+            float4x4 pose = float4x4.TRS(point, rotation, new float3(1.0f));
+            Simulation.Attach(Simulation.ConnectedNodes(node, radius), frame, pose);
+            _grabs[handle] = new ApxGrab { Handle = handle, Frame = frame, Previous = pose, Target = pose };
             return true;
         }
 
-        public void MoveGrab(Vector3 target) => _grabTarget = target;
-
-        public void EndGrab()
+        private bool UsesFrame(int frame)
         {
-            Simulation?.Detach(SoftBodySimulation.GrabFrame);
-            IsGrabbing = false;
-            WakeUp();
+            foreach (ApxGrab grab in _grabs.Values)
+            {
+                if (grab.Frame == frame)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private SoftBodyParameters BuildParameters() => new SoftBodyParameters

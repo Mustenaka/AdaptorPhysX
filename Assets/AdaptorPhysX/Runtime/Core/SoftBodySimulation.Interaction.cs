@@ -37,9 +37,9 @@ namespace AdaptorPhysX
         private bool _framesDirty = true;
         private bool _framesActive;
         /// <summary>Per frame: its nodes in the last step (0 when it took no part), and their weight and its torque about the origin.</summary>
-        private readonly int[] _frameStepNodes = new int[MaxKinematicFrames];
-        private readonly float3[] _frameWeight = new float3[MaxKinematicFrames];
-        private readonly float3[] _frameWeightTorque = new float3[MaxKinematicFrames];
+        private int[] _frameStepNodes = new int[InitialKinematicFrames];
+        private float3[] _frameWeight = new float3[InitialKinematicFrames];
+        private float3[] _frameWeightTorque = new float3[InitialKinematicFrames];
 
         // Dynamic rigid bodies of the colliders (two-way coupling) and the shapes' start poses.
         private NativeArray<RigidBodyState> _rigidBodies;
@@ -124,10 +124,10 @@ namespace AdaptorPhysX
             _noInts = new NativeArray<int>(1, Allocator.Persistent);
             _noImpulses = new NativeArray<ColliderImpulse>(1, Allocator.Persistent);
             _impulseTotal = new NativeArray<ColliderImpulse>(0, Allocator.Persistent);
-            _frameTotal = new NativeArray<ColliderImpulse>(MaxKinematicFrames, Allocator.Persistent);
-            _frameOrigins = new NativeArray<float3>(MaxKinematicFrames, Allocator.Persistent);
-            _frameNodes = new NativeArray<int>(MaxKinematicFrames, Allocator.Persistent);
-            _frameMass = new NativeArray<float4>(MaxKinematicFrames, Allocator.Persistent);
+            _frameTotal = new NativeArray<ColliderImpulse>(InitialKinematicFrames, Allocator.Persistent);
+            _frameOrigins = new NativeArray<float3>(InitialKinematicFrames, Allocator.Persistent);
+            _frameNodes = new NativeArray<int>(InitialKinematicFrames, Allocator.Persistent);
+            _frameMass = new NativeArray<float4>(InitialKinematicFrames, Allocator.Persistent);
             _partnerCells = new NativeList<PartnerCell>(0, Allocator.Persistent);
             _partnerCorner = new NativeList<float3>(0, Allocator.Persistent);
             _partnerVelocity = new NativeList<float3>(0, Allocator.Persistent);
@@ -399,7 +399,7 @@ namespace AdaptorPhysX
                     Nodes = _frameNodes,
                 }.Run();
                 _framesActive = false;
-                for (int f = 0; f < MaxKinematicFrames; f++)
+                for (int f = 0; f < KinematicFrameCount; f++)
                 {
                     _framesActive |= _frameNodes[f] > 0;
                 }
@@ -409,13 +409,14 @@ namespace AdaptorPhysX
             solve.KinematicId = KinematicId;
             solve.FrameOrigins = _frameOrigins;
             solve.InverseDt = 1.0f / h;
+            solve.FrameCount = KinematicFrameCount;
             if (!_framesActive)
             {
                 solve.FrameImpulses = _noImpulses;
-                System.Array.Clear(_frameStepNodes, 0, MaxKinematicFrames);
+                System.Array.Clear(_frameStepNodes, 0, _frameStepNodes.Length);
                 return;
             }
-            int length = _slices.Length * MaxKinematicFrames;
+            int length = _slices.Length * KinematicFrameCount;
             if (!_framePartial.IsCreated || _framePartial.Length != length)
             {
                 DisposeIfCreated(ref _framePartial);
@@ -436,7 +437,7 @@ namespace AdaptorPhysX
             // rigidly, x = M l + o, so their weight m g has the torque (M sum m l) x g.
             float massScale = math.max(Parameters.Density, 1e-6f) / _massDensity;
             float3 gravity = Parameters.Gravity;
-            for (int f = 0; f < MaxKinematicFrames; f++)
+            for (int f = 0; f < KinematicFrameCount; f++)
             {
                 _frameStepNodes[f] = _frameNodes[f];
                 float4x4 end = FramesEnd[f];
@@ -448,6 +449,48 @@ namespace AdaptorPhysX
             }
         }
 
+        /// <summary>Number of kinematic frames (see <see cref="EnsureKinematicFrames"/>).</summary>
+        public int KinematicFrameCount => FramesStart.Length;
+
+        /// <summary>
+        /// Adds kinematic frames up to at least <paramref name="count"/> (doubling the number); new frames are at the
+        /// identity and hold no nodes. <see cref="Attach"/> calls it.
+        /// </summary>
+        public void EnsureKinematicFrames(int count)
+        {
+            CompleteStep();
+            int old = KinematicFrameCount;
+            if (count <= old)
+            {
+                return;
+            }
+            int size = math.max(count, 2 * old);
+            Grow(ref FramesStart, size, float4x4.identity);
+            Grow(ref FramesEnd, size, float4x4.identity);
+            Grow(ref _frameTotal, size, default);
+            Grow(ref _frameOrigins, size, default);
+            Grow(ref _frameNodes, size, default);
+            Grow(ref _frameMass, size, default);
+            // Allocated again with the new number of frames at the next step.
+            DisposeIfCreated(ref _framePartial);
+            System.Array.Resize(ref _frameStepNodes, size);
+            System.Array.Resize(ref _frameWeight, size);
+            System.Array.Resize(ref _frameWeightTorque, size);
+            _framesDirty = true;
+        }
+
+        private static void Grow<T>(ref NativeArray<T> array, int size, T fill) where T : struct
+        {
+            var grown = new NativeArray<T>(size, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            NativeArray<T>.Copy(array, grown, array.Length);
+            for (int i = array.Length; i < size; i++)
+            {
+                grown[i] = fill;
+            }
+            array.Dispose();
+            array = grown;
+        }
+
         /// <summary>
         /// The nodes of kinematic frame <paramref name="frame"/> (all frames for -1) changed: their mass is
         /// counted again before the next step, and the frame reports no force until then.
@@ -455,7 +498,7 @@ namespace AdaptorPhysX
         private void KinematicFramesChanged(int frame)
         {
             _framesDirty = true;
-            if (frame >= 0 && frame < MaxKinematicFrames)
+            if (frame >= 0 && frame < KinematicFrameCount)
             {
                 _frameStepNodes[frame] = 0;
             }
@@ -602,7 +645,7 @@ namespace AdaptorPhysX
         {
             CompleteStep();
             wrench = default;
-            if (frame < 0 || frame >= MaxKinematicFrames || _frameStepNodes[frame] == 0 || _impulseDt <= 0.0f)
+            if (frame < 0 || frame >= KinematicFrameCount || _frameStepNodes[frame] == 0 || _impulseDt <= 0.0f)
             {
                 return false;
             }
@@ -832,8 +875,12 @@ namespace AdaptorPhysX
             AllocateContacts();
             DisposeIfCreated(ref _tetRotation);
             _tetRotation = new NativeArray<quaternion>(state.TetRotation, Allocator.Persistent);
-            FramesStart.CopyFrom(state.FramesStart);
-            FramesEnd.CopyFrom(state.FramesEnd);
+            EnsureKinematicFrames(state.FramesStart.Length);
+            for (int f = 0; f < KinematicFrameCount; f++)
+            {
+                FramesStart[f] = f < state.FramesStart.Length ? state.FramesStart[f] : float4x4.identity;
+                FramesEnd[f] = f < state.FramesEnd.Length ? state.FramesEnd[f] : float4x4.identity;
+            }
             _cellRest.CopyFrom(state.CellRest);
             _cellScale.CopyFrom(state.CellScale);
             DisposeIfCreated(ref _cellRestBase);
@@ -862,7 +909,7 @@ namespace AdaptorPhysX
             RebuildInteractionNodes();
             _stuck.CopyFrom(state.Stuck);
             KinematicFramesChanged(-1);
-            System.Array.Clear(_frameStepNodes, 0, MaxKinematicFrames);
+            System.Array.Clear(_frameStepNodes, 0, _frameStepNodes.Length);
             TopologyVersion++;
         }
     }

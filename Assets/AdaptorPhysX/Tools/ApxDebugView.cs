@@ -171,7 +171,7 @@ namespace AdaptorPhysX.Tools
                 bool nodes = Has(ApxDebugLayers.Nodes);
                 if (lattice || nodes)
                 {
-                    Colorize(v, sim);
+                    Colorize(v, sim, body.pinColliders.Length);
                 }
                 v.LatticeDrawn = lattice;
                 if (lattice)
@@ -295,7 +295,7 @@ namespace AdaptorPhysX.Tools
             v.Topology = sim.TopologyVersion;
         }
 
-        private void Colorize(BodyView v, SoftBodySimulation sim)
+        private void Colorize(BodyView v, SoftBodySimulation sim, int pins)
         {
             for (int i = 0; i < sim.NodeCount; i++)
             {
@@ -309,7 +309,7 @@ namespace AdaptorPhysX.Tools
                     case ApxNodeColoring.Frame:
                         int frame = sim.KinematicId[i];
                         c = frame < 0 ? new Color(0.85f, 0.85f, 0.85f)
-                            : frame == SoftBodySimulation.GrabFrame ? new Color(1.0f, 0.9f, 0.1f)
+                            : frame == SoftBodySimulation.GrabFrame || frame > pins ? new Color(1.0f, 0.9f, 0.1f)
                             : Color.HSVToRGB(Mathf.Repeat(0.55f + 0.07f * frame, 1.0f), 0.8f, 1.0f);
                         break;
                     case ApxNodeColoring.Speed:
@@ -400,9 +400,12 @@ namespace AdaptorPhysX.Tools
             {
                 DrawWrench(pair.Value, new Color(1.0f, 0.25f, 0.2f));
             }
-            if (body.TryGetGrabWrench(out ApxWrench grab))
+            foreach (int handle in body.GrabHandles)
             {
-                DrawWrench(grab, new Color(1.0f, 0.9f, 0.1f));
+                if (body.TryGetGrabWrench(handle, out ApxWrench grab))
+                {
+                    DrawWrench(grab, new Color(1.0f, 0.9f, 0.1f));
+                }
             }
             for (int p = 0; p < body.pinColliders.Length; p++)
             {

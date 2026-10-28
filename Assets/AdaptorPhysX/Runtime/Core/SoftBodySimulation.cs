@@ -68,7 +68,8 @@ namespace AdaptorPhysX
     /// </summary>
     public sealed partial class SoftBodySimulation : IDisposable
     {
-        public const int MaxKinematicFrames = 32;
+        /// <summary>Kinematic frames allocated at first; <see cref="Attach"/> adds frames when a later one is used.</summary>
+        public const int InitialKinematicFrames = 32;
         public const int GrabFrame = 0;
         /// <summary>Piece contacts are resolved every this many substeps.</summary>
         public const int ContactInterval = 2;
@@ -332,9 +333,9 @@ namespace AdaptorPhysX
             _foldBucketStart = new NativeArray<int>(Contacts.BucketCount + 1, Allocator.Persistent);
             _foldHashScale = new NativeArray<float>(2, Allocator.Persistent);
             _foldNodes = new NativeList<int>(0, Allocator.Persistent);
-            FramesStart = new NativeArray<float4x4>(MaxKinematicFrames, Allocator.Persistent);
-            FramesEnd = new NativeArray<float4x4>(MaxKinematicFrames, Allocator.Persistent);
-            for (int i = 0; i < MaxKinematicFrames; i++)
+            FramesStart = new NativeArray<float4x4>(InitialKinematicFrames, Allocator.Persistent);
+            FramesEnd = new NativeArray<float4x4>(InitialKinematicFrames, Allocator.Persistent);
+            for (int i = 0; i < InitialKinematicFrames; i++)
             {
                 FramesStart[i] = float4x4.identity;
                 FramesEnd[i] = float4x4.identity;
@@ -924,10 +925,14 @@ namespace AdaptorPhysX
             return healed[0];
         }
 
-        /// <summary>Attaches nodes to kinematic frame <paramref name="frame"/> at their current positions.</summary>
+        /// <summary>
+        /// Attaches nodes to kinematic frame <paramref name="frame"/> at their current positions; frames beyond
+        /// <see cref="KinematicFrameCount"/> are added.
+        /// </summary>
         public void Attach(IReadOnlyList<int> nodes, int frame, float4x4 frameToWorld)
         {
             CompleteStep();
+            EnsureKinematicFrames(frame + 1);
             float4x4 worldToFrame = math.inverse(frameToWorld);
             FramesStart[frame] = frameToWorld;
             FramesEnd[frame] = frameToWorld;

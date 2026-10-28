@@ -562,9 +562,11 @@ namespace AdaptorPhysX
         [ReadOnly] public NativeArray<int> KinematicId;
         /// <summary>Torque reference point of each frame.</summary>
         [ReadOnly] public NativeArray<float3> FrameOrigins;
-        /// <summary>Slices * MaxKinematicFrames sums of the momentum the frames gave the tissue.</summary>
+        /// <summary>Slices * FrameCount sums of the momentum the frames gave the tissue.</summary>
         [NativeDisableParallelForRestriction] public NativeArray<ColliderImpulse> FrameImpulses;
         public float InverseDt;
+        /// <summary>Number of kinematic frames: the stride of FrameImpulses.</summary>
+        public int FrameCount;
 
         public void Execute(int index)
         {
@@ -614,7 +616,7 @@ namespace AdaptorPhysX
             }
             // The frame gives the tissue the opposite of what the constraints exert on its node.
             float3 impulse = -d * InverseDt;
-            int index = slice * SoftBodySimulation.MaxKinematicFrames + frame;
+            int index = slice * FrameCount + frame;
             ColliderImpulse sum = FrameImpulses[index];
             sum.Add(x, FrameOrigins[frame], impulse, math.length(impulse));
             FrameImpulses[index] = sum;

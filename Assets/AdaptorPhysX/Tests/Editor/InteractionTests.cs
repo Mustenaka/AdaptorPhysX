@@ -256,6 +256,115 @@ namespace AdaptorPhysX.Tests
             Assert.IsFalse(body.TryGetGrabWrench(out _), "no grab force after the grab ended");
         }
 
+        /// <summary>
+        /// A kinematic frame beyond the initial 32 is added when nodes are attached to it, and it carries them like the
+        /// first ones: the top layer of a hanging cube held by frame 40 bears its weight (TODO ECO-13).
+        /// </summary>
+        [Test]
+        public void KinematicFrameBeyondTheInitialOnesCarriesItsNodes()
+        {
+            var parameters = SoftBodyParameters.Default;
+            parameters.Damping = 3.0f;
+            SoftBodySimulation sim = CreateBox(new float3(Size), parameters, 8, 0.1f);
+            Assert.AreEqual(SoftBodySimulation.InitialKinematicFrames, sim.KinematicFrameCount);
+            float top = float.MinValue;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                top = math.max(top, sim.RestPositions[i].y);
+            }
+            var held = new List<int>();
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                if (sim.RestPositions[i].y > top - 0.5f * sim.CellSize)
+                {
+                    held.Add(i);
+                }
+            }
+            const int frame = 40;
+            sim.Attach(held, frame, float4x4.identity);
+            Assert.GreaterOrEqual(sim.KinematicFrameCount, frame + 1);
+            using var none = new NativeArray<ColliderShape>(0, Allocator.Persistent);
+            for (int f = 0; f < 180; f++)
+            {
+                sim.Step(Dt, Substeps, none);
+            }
+            Assert.IsTrue(sim.TryGetFrameWrench(frame, out ApxWrench wrench));
+            float weight = sim.TotalMass * 9.81f;
+            TestContext.WriteLine($"frame force {wrench.Force} N, weight {weight:0.0000} N, nodes {wrench.ContactNodes}");
+            Assert.AreEqual(-weight, wrench.Force.y, 0.01f * weight, $"frame force {wrench.Force}");
+            Assert.AreEqual(held.Count, wrench.ContactNodes);
+        }
+
+        /// <summary>
+        /// Two grabs hold a cube lifted off the floor and share its weight; one of them turns a quarter turn about the
+        /// vertical, and the tissue it holds turns with it (TODO ECO-13).
+        /// </summary>
+        [Test]
+        public void TwoGrabsHoldTheBodyAndOneTurnsIt()
+        {
+            GameObject floor = InScene(new GameObject("Floor"));
+            floor.transform.position = new Vector3(0.0f, -0.1f, 0.0f);
+            floor.transform.localScale = new Vector3(0.6f, 0.2f, 0.6f);
+            Collider floorCollider = floor.AddComponent<BoxCollider>();
+            ApxSoftBody body = CreateBody("Lifted", new Vector3(Size, Size, Size), new Vector3(0.0f, 0.5f * Size + 0.002f, 0.0f), 8);
+            body.damping = 3.0f;
+            Physics.SyncTransforms();
+            body.Initialize();
+            for (int f = 0; f < 60; f++)
+            {
+                body.Simulate(Dt);
+                body.UpdateRender();
+            }
+            int left = body.BeginGrab(new Ray(new Vector3(-0.03f, 1.0f, 0.0f), Vector3.down), 0.02f, Quaternion.identity, out Vector3 leftPoint);
+            int right = body.BeginGrab(new Ray(new Vector3(0.03f, 1.0f, 0.0f), Vector3.down), 0.02f, Quaternion.identity, out Vector3 rightPoint);
+            Assert.GreaterOrEqual(left, 0);
+            Assert.GreaterOrEqual(right, 0);
+            Assert.AreNotEqual(left, right);
+            Assert.AreEqual(2, body.GrabHandles.Count);
+            SoftBodySimulation sim = body.Simulation;
+            int frame = sim.KinematicId[sim.PickNode(new float3(0.03f, 1.0f, 0.0f), new float3(0.0f, -1.0f, 0.0f), sim.CellSize)];
+            var turned = new List<int>();
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                if (sim.KinematicId[i] == frame && math.lengthsq(((float3)sim.Positions[i] - (float3)rightPoint).xz) > 1e-6f)
+                {
+                    turned.Add(i);
+                }
+            }
+            Assert.Greater(turned.Count, 0);
+            var before = new List<float3>();
+            foreach (int i in turned)
+            {
+                before.Add(sim.Positions[i] - (float3)rightPoint);
+            }
+            for (int f = 0; f < 300; f++)
+            {
+                Vector3 lift = Vector3.up * (0.04f * math.saturate(f / 60.0f));
+                body.MoveGrab(left, leftPoint + lift, Quaternion.identity);
+                body.MoveGrab(right, rightPoint + lift, Quaternion.Euler(0.0f, 90.0f * math.saturate(f / 120.0f), 0.0f));
+                body.Simulate(Dt);
+                body.UpdateRender();
+            }
+            AssertFinite(sim);
+            Assert.IsFalse(body.TryGetColliderWrench(floorCollider, out _), "the lifted body still touches the floor");
+            Assert.IsTrue(body.TryGetGrabWrench(left, out ApxWrench a));
+            Assert.IsTrue(body.TryGetGrabWrench(right, out ApxWrench b));
+            float weight = sim.TotalMass * 9.81f;
+            TestContext.WriteLine($"grab forces {a.Force} + {b.Force} N, weight {weight:0.0000} N");
+            Assert.AreEqual(-weight, a.Force.y + b.Force.y, 0.02f * weight);
+            Quaternion quarter = Quaternion.Euler(0.0f, 90.0f, 0.0f);
+            Vector3 target = rightPoint + Vector3.up * 0.04f;
+            float worst = 0.0f;
+            for (int k = 0; k < turned.Count; k++)
+            {
+                worst = math.max(worst, math.distance(sim.Positions[turned[k]], (float3)(target + quarter * (Vector3)before[k])));
+            }
+            Assert.Less(worst, 1e-5f, "the nodes of the turned grab follow its frame");
+            body.EndGrab(left);
+            Assert.IsFalse(body.TryGetGrabWrench(left, out _));
+            Assert.AreEqual(1, body.GrabHandles.Count);
+        }
+
         [Test]
         public void PinForcesCarryTheWeightOfAPinnedBody()
         {

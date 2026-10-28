@@ -69,10 +69,17 @@ namespace AdaptorPhysX
         /// grabbed nodes plus their weight, with the torque about the grab target. False when not grabbing
         /// or before the first step of the grab.
         /// </summary>
-        public bool TryGetGrabWrench(out ApxWrench wrench)
+        public bool TryGetGrabWrench(out ApxWrench wrench) => TryGetGrabWrench(DefaultGrab, out wrench);
+
+        /// <summary>
+        /// Force and torque the tissue exerted on grab <paramref name="grab"/> (a handle from
+        /// <see cref="BeginGrab(Ray, float, Quaternion, out Vector3)"/>) in the last step, as for the other grab.
+        /// </summary>
+        public bool TryGetGrabWrench(int grab, out ApxWrench wrench)
         {
             wrench = default;
-            return IsGrabbing && Simulation != null && Simulation.TryGetFrameWrench(SoftBodySimulation.GrabFrame, out wrench);
+            return Simulation != null && _grabs.TryGetValue(grab, out ApxGrab state) &&
+                   Simulation.TryGetFrameWrench(state.Frame, out wrench);
         }
 
         /// <summary>
@@ -84,7 +91,6 @@ namespace AdaptorPhysX
         {
             wrench = default;
             return Simulation != null && pinIndex >= 0 && pinIndex < pinColliders.Length &&
-                   pinIndex + 1 < SoftBodySimulation.MaxKinematicFrames &&
                    Simulation.TryGetFrameWrench(pinIndex + 1, out wrench);
         }
 
@@ -328,9 +334,8 @@ namespace AdaptorPhysX
             return new ApxSoftBodyState
             {
                 Simulation = Simulation.CaptureState(),
-                IsGrabbing = IsGrabbing,
-                GrabTarget = _grabTarget,
-                GrabTargetPrevious = _grabTargetPrevious,
+                Grabs = CloneGrabs(_grabs.Values),
+                NextGrab = _nextGrab,
                 RestSteps = _restSteps,
                 PinFrames = (float4x4[])_pinFrames.Clone(),
             };
@@ -347,9 +352,12 @@ namespace AdaptorPhysX
                 return;
             }
             Simulation.RestoreState(state.Simulation);
-            IsGrabbing = state.IsGrabbing;
-            _grabTarget = state.GrabTarget;
-            _grabTargetPrevious = state.GrabTargetPrevious;
+            _grabs.Clear();
+            foreach (ApxGrab grab in CloneGrabs(state.Grabs))
+            {
+                _grabs[grab.Handle] = grab;
+            }
+            _nextGrab = state.NextGrab;
             _restSteps = state.RestSteps;
             if (state.PinFrames.Length == _pinFrames.Length)
             {
@@ -361,6 +369,16 @@ namespace AdaptorPhysX
             _forceModels.Clear();
             _estimators.Clear();
             _stepBodies.Clear();
+        }
+
+        private static ApxGrab[] CloneGrabs(IEnumerable<ApxGrab> grabs)
+        {
+            var copies = new List<ApxGrab>();
+            foreach (ApxGrab grab in grabs)
+            {
+                copies.Add(new ApxGrab { Handle = grab.Handle, Frame = grab.Frame, Previous = grab.Previous, Target = grab.Target });
+            }
+            return copies.ToArray();
         }
 
         /// <summary>Whether <see cref="blueprint"/> was baked for the current mesh, resolution and scale.</summary>
@@ -389,10 +407,21 @@ namespace AdaptorPhysX
     public sealed class ApxSoftBodyState
     {
         public SoftBodyState Simulation;
-        public bool IsGrabbing;
-        public float3 GrabTarget;
-        public float3 GrabTargetPrevious;
+        public ApxGrab[] Grabs;
+        public int NextGrab;
         public int RestSteps;
         public float4x4[] PinFrames;
+    }
+
+    /// <summary>
+    /// A grab of an <see cref="ApxSoftBody"/>: its handle, its kinematic frame, and the frame's pose at the start and end of
+    /// the next step.
+    /// </summary>
+    public sealed class ApxGrab
+    {
+        public int Handle;
+        public int Frame;
+        public float4x4 Previous;
+        public float4x4 Target;
     }
 }
