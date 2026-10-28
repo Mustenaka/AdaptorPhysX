@@ -883,6 +883,7 @@ namespace AdaptorPhysX
                 Origin = Grid.Origin,
                 CellSize = h,
                 CellMass = _massDensity * h * h * h,
+                MinNodeMass = _massDensity * h * h * h / 16.0f,
                 HasOld = hasOld,
                 OldRange = CellCopyRange,
                 OldCopies = Copies.AsArray(),

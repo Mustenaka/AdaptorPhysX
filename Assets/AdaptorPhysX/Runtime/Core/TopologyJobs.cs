@@ -32,6 +32,13 @@ namespace AdaptorPhysX
         public float3 Origin;
         public float CellSize;
         public float CellMass;
+        /// <summary>
+        /// Least node mass. A corner of a single nearly empty cell (fill 1/8, the voxelizer's least) weighs 1/64 of a
+        /// cell, against up to a whole cell for the other corners of its tetrahedra; with 16 substeps such corners
+        /// moved back and forth between substeps once the body was deformed, with 32 substeps or this floor they do
+        /// not (TODO BUG-13).
+        /// </summary>
+        public float MinNodeMass;
 
         public bool HasOld;
         [ReadOnly] public NativeArray<int2> OldRange;
@@ -161,6 +168,10 @@ namespace AdaptorPhysX
                 int node = nodeOf[r];
                 NewCopyNodes[s] = node;
                 NodeMass[node] += CellMass * NewCopies[q].Weight / Lattice.CornerCount;
+            }
+            for (int i = 0; i < NodeMass.Length; i++)
+            {
+                NodeMass[i] = math.max(NodeMass[i], MinNodeMass);
             }
         }
 

@@ -50,6 +50,11 @@
   co-rotational 约束在 E = 1 MPa、分辨率 32 时保持静止（`StiffMaterialOnFineLatticeStaysAtRest`）。
 - 参数换算：`μ = E/(2(1+ν))`，`λ = max(λ_Lamé, 10⁻³ μ)`，能量在小应变下线性化为各向同性线弹性。
   `SelfWeightCompressionMatchesYoungsModulus` 测试用自重压缩的解析解校验刚度（容差 30%）。
+- 节点质量为所在各副本的“体素质量 × 副本权重 / 8”之和（4.2 节），下限为体素质量的 1/16（`TopologyJob.MinNodeMass`）。
+  只属于一个几乎为空的体素（填充率取下限 1/8）的角点只有体素质量的 1/64，同一四面体的其他角点可达一个体素的质量；
+  16 子步时这类角点在物体形变后于相邻子步之间来回运动，每一帧末的位置几乎不变，速度却达 0.5 m/s，物体不能休眠
+  （bunny 48 落地 150 步、关闭 `selfCollision`：23 个节点超过 0.05 m/s，最大 0.49 m/s；32 子步时没有）。
+  加下限后为 0 个、最大 0.002 m/s；bunny 48 的总质量增加 0.45%（703.4 → 706.6 g）。下限取 1/32 时最大 0.029 m/s（TODO BUG-13）。
 - 预应力与皮肤层：静止形状按 `X → S X` 收缩，逆静止矩阵取 `Dm⁻¹ S⁻¹`，体积乘 `det S`。
   - 体素内部 `S = (1 − preStrain) I`，两端钉住时组织处于拉伸状态。
   - 深度小于 `skinThickness` 的体素为皮肤层，`S = b n nᵀ + s (I − n nᵀ)`：法向 `b = 1 − preStrain`，
