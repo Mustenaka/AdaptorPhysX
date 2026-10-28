@@ -17,6 +17,10 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 |---|---|---|---|
 | ![S8](docs/images/S8_bodies_stacked.png) | ![S9](docs/images/S9_ball_on_tissue.png) | ![S10](docs/images/S10a_ring_pressed.png) | ![S11c](docs/images/S11c_paddle_lifting.png) |
 
+| 真实网格：扫描版兔子、Fertility、龙 | Fertility 全切后拉开 | 龙横切后拉开 | 镊子提起兔子的耳朵 |
+|---|---|---|---|
+| ![S12a](docs/images/S12a_real_meshes.png) | ![S12b](docs/images/S12b_fertility_cut.png) | ![S12c](docs/images/S12c_dragon_cut.png) | ![S12d](docs/images/S12d_bunny_lifted.png) |
+
 | 调试显示：lattice 按块着色与断棱 | 受力与包围盒 | 侧倾 30°、前倾 20° 的刀刃 |
 |---|---|---|
 | ![D1](docs/images/D1_block_lattice_cuts.png) | ![D2](docs/images/D2_contact_forces.png) | ![D3](docs/images/D3_blade_pose.png) |
@@ -94,6 +98,10 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 | Putty、Putty Press | 塑性材料被球压一次后保留压痕 |
 | Wet Tissue、Sticky Paddle | 带粘附的平板压在组织上后抬起，组织表面随之上移，超过粘附距离后脱离 |
 
+真实网格演示 `Assets/Samples/RealMeshDemo/RealMeshDemo.unity`（菜单 `AdaptorPhysX/Build Real Mesh Demo Scene` 重新生成），
+操作相同。场景中是 `Assets/AdaptorPhysX/Arts/Models` 中的三个 FBX 测试模型（分辨率 40）：扫描版斯坦福兔子（底部有孔，
+按广义缠绕数体素化）、Fertility（亏格 4）、斯坦福龙（87 万三角形，FBX 没有可用的法线，初始化时重新计算）。
+
 ## 在自己的场景中使用
 
 1. 在带 `MeshFilter` + `MeshRenderer` 的对象上添加 `ApxSoftBody`。网格需开启 Read/Write，最好闭合：有孔的网格
@@ -143,6 +151,7 @@ Assets/AdaptorPhysX/Tests/          EditMode 与 PlayMode 测试
 Assets/AdaptorPhysX/Benchmarks/     基准测试（编辑器，JSON 输出）
 Assets/Samples/SurgeryDemo/         演示场景、脚本、场景生成器、标准场景截图工具
 Assets/Samples/InteractionDemo/     交互演示场景（S8–S11）、场景生成器与截图工具
+Assets/Samples/RealMeshDemo/        真实网格演示场景（S12）、场景生成器与截图工具
 Benchmarks/                         基准网格下载脚本；网格与结果不提交
 docs/                               设计说明、路线图、待办清单（TODO.md）、截图
 ```
@@ -159,7 +168,8 @@ docs/                               设计说明、路线图、待办清单（TO
 
 截图工具按脚本执行 `docs/ROADMAP.md` 中的标准场景 S1–S6，输出 PNG，并在日志中记录每个阶段的块大小与耗时。
 交互场景 S8–S11 用 `AdaptorPhysX.Samples.Editor.InteractionDemoCapture.CaptureBatch`（参数相同），
-编辑器内为菜单 `AdaptorPhysX/Capture Interaction Scenarios`。
+编辑器内为菜单 `AdaptorPhysX/Capture Interaction Scenarios`；真实网格场景 S12 用
+`AdaptorPhysX.Samples.Editor.RealMeshDemoCapture.CaptureBatch`，菜单 `AdaptorPhysX/Capture Real Mesh Scenarios`。
 
 ## 基准测试
 
