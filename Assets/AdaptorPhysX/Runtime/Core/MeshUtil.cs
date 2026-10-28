@@ -119,69 +119,136 @@ namespace AdaptorPhysX
         public static void Subdivide(List<float3> positions, List<float3> normals, List<Vector2> uvs, List<int> triangles,
             float maxEdge, int maxPasses = 8)
         {
-            float maxSq = maxEdge * maxEdge;
-            for (int pass = 0; pass < maxPasses; pass++)
+            var uv = new float2[uvs.Count];
+            for (int i = 0; i < uv.Length; i++)
             {
-                var midpoints = new Dictionary<long, int>();
-                var output = new List<int>(triangles.Count * 2);
-                bool changed = false;
+                uv[i] = uvs[i];
+            }
+            using var nativePositions = new NativeList<float3>(positions.Count, Allocator.TempJob);
+            using var nativeNormals = new NativeList<float3>(normals.Count, Allocator.TempJob);
+            using var nativeUvs = new NativeList<float2>(uv.Length, Allocator.TempJob);
+            using var nativeTriangles = new NativeList<int>(triangles.Count, Allocator.TempJob);
+            using (var array = new NativeArray<float3>(positions.ToArray(), Allocator.Temp)) nativePositions.AddRange(array);
+            using (var array = new NativeArray<float3>(normals.ToArray(), Allocator.Temp)) nativeNormals.AddRange(array);
+            using (var array = new NativeArray<float2>(uv, Allocator.Temp)) nativeUvs.AddRange(array);
+            using (var array = new NativeArray<int>(triangles.ToArray(), Allocator.Temp)) nativeTriangles.AddRange(array);
+            new SubdivideJob
+            {
+                Positions = nativePositions,
+                Normals = nativeNormals,
+                Uvs = nativeUvs,
+                Triangles = nativeTriangles,
+                MaxEdgeSq = maxEdge * maxEdge,
+                MaxPasses = maxPasses,
+            }.Run();
+            positions.Clear();
+            positions.AddRange(nativePositions.AsArray().ToArray());
+            normals.Clear();
+            normals.AddRange(nativeNormals.AsArray().ToArray());
+            uvs.Clear();
+            foreach (float2 v in nativeUvs.AsArray().ToArray())
+            {
+                uvs.Add(v);
+            }
+            triangles.Clear();
+            triangles.AddRange(nativeTriangles.AsArray().ToArray());
+        }
 
-                int Mid(int a, int b)
-                {
-                    if (math.distancesq(positions[a], positions[b]) <= maxSq)
-                    {
-                        return -1;
-                    }
-                    long key = a < b ? ((long)a << 32) | (uint)b : ((long)b << 32) | (uint)a;
-                    if (!midpoints.TryGetValue(key, out int m))
-                    {
-                        m = positions.Count;
-                        positions.Add(0.5f * (positions[a] + positions[b]));
-                        normals.Add(math.normalizesafe(normals[a] + normals[b]));
-                        uvs.Add(0.5f * (uvs[a] + uvs[b]));
-                        midpoints.Add(key, m);
-                    }
-                    return m;
-                }
+        /// <summary>
+        /// Each pass splits the edges longer than the limit at their midpoints, created in the order the
+        /// triangles meet them, and replaces every triangle by its 1–4 parts.
+        /// </summary>
+        [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+        private struct SubdivideJob : IJob
+        {
+            public NativeList<float3> Positions;
+            public NativeList<float3> Normals;
+            public NativeList<float2> Uvs;
+            public NativeList<int> Triangles;
+            public float MaxEdgeSq;
+            public int MaxPasses;
 
-                for (int t = 0; t < triangles.Count; t += 3)
+            public void Execute()
+            {
+                var midpoints = new NativeParallelHashMap<long, int>(math.max(Triangles.Length, 64), Allocator.Temp);
+                var output = new NativeList<int>(Triangles.Length * 2, Allocator.Temp);
+                for (int pass = 0; pass < MaxPasses; pass++)
                 {
-                    int a = triangles[t], b = triangles[t + 1], c = triangles[t + 2];
-                    int ab = Mid(a, b), bc = Mid(b, c), ca = Mid(c, a);
-                    int splits = (ab >= 0 ? 1 : 0) + (bc >= 0 ? 1 : 0) + (ca >= 0 ? 1 : 0);
-                    changed |= splits > 0;
-                    if (splits == 0)
+                    midpoints.Clear();
+                    output.Clear();
+                    bool changed = false;
+                    for (int t = 0; t < Triangles.Length; t += 3)
                     {
-                        output.AddRange(new[] { a, b, c });
-                    }
-                    else if (splits == 3)
-                    {
-                        output.AddRange(new[] { a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca });
-                    }
-                    else
-                    {
-                        // Rotate so that the split edges come first: (a,b) always split.
-                        while (ab < 0 || (splits == 2 && bc < 0))
+                        int a = Triangles[t], b = Triangles[t + 1], c = Triangles[t + 2];
+                        int ab = Mid(a, b, ref midpoints), bc = Mid(b, c, ref midpoints), ca = Mid(c, a, ref midpoints);
+                        int splits = (ab >= 0 ? 1 : 0) + (bc >= 0 ? 1 : 0) + (ca >= 0 ? 1 : 0);
+                        changed |= splits > 0;
+                        if (splits == 0)
                         {
-                            (a, b, c) = (b, c, a);
-                            (ab, bc, ca) = (bc, ca, ab);
+                            Add(ref output, a, b, c);
                         }
-                        if (splits == 1)
+                        else if (splits == 3)
                         {
-                            output.AddRange(new[] { a, ab, c, ab, b, c });
+                            Add(ref output, a, ab, ca);
+                            Add(ref output, ab, b, bc);
+                            Add(ref output, ca, bc, c);
+                            Add(ref output, ab, bc, ca);
                         }
                         else
                         {
-                            output.AddRange(new[] { ab, b, bc, a, ab, bc, a, bc, c });
+                            // Rotate so that the split edges come first: (a,b) always split.
+                            while (ab < 0 || (splits == 2 && bc < 0))
+                            {
+                                (a, b, c) = (b, c, a);
+                                (ab, bc, ca) = (bc, ca, ab);
+                            }
+                            if (splits == 1)
+                            {
+                                Add(ref output, a, ab, c);
+                                Add(ref output, ab, b, c);
+                            }
+                            else
+                            {
+                                Add(ref output, ab, b, bc);
+                                Add(ref output, a, ab, bc);
+                                Add(ref output, a, bc, c);
+                            }
                         }
                     }
+                    Triangles.Clear();
+                    Triangles.AddRange(output.AsArray());
+                    if (!changed)
+                    {
+                        break;
+                    }
                 }
-                triangles.Clear();
-                triangles.AddRange(output);
-                if (!changed)
+                output.Dispose();
+                midpoints.Dispose();
+            }
+
+            private int Mid(int a, int b, ref NativeParallelHashMap<long, int> midpoints)
+            {
+                if (math.distancesq(Positions[a], Positions[b]) <= MaxEdgeSq)
                 {
-                    return;
+                    return -1;
                 }
+                long key = a < b ? ((long)a << 32) | (uint)b : ((long)b << 32) | (uint)a;
+                if (!midpoints.TryGetValue(key, out int m))
+                {
+                    m = Positions.Length;
+                    Positions.Add(0.5f * (Positions[a] + Positions[b]));
+                    Normals.Add(math.normalizesafe(Normals[a] + Normals[b]));
+                    Uvs.Add(0.5f * (Uvs[a] + Uvs[b]));
+                    midpoints.Add(key, m);
+                }
+                return m;
+            }
+
+            private static void Add(ref NativeList<int> output, int a, int b, int c)
+            {
+                output.Add(a);
+                output.Add(b);
+                output.Add(c);
             }
         }
 

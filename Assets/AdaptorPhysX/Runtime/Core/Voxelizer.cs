@@ -88,19 +88,35 @@ namespace AdaptorPhysX
             using var distance = new NativeArray<float>(pointCount, Allocator.TempJob);
             using var order = new NativeArray<int>(closed ? 0 : triangles.Length / 3, Allocator.TempJob);
             using var nodes = new NativeList<WindingNode>(Allocator.TempJob);
+            using var rowStart = new NativeArray<int>(closed ? pd.y * pd.z + 1 : 1, Allocator.TempJob);
+            using var rowTriangles = new NativeList<int>(Allocator.TempJob);
+            using var slabStart = new NativeArray<int>(pd.z + 1, Allocator.TempJob);
+            using var slabTriangles = new NativeList<int>(Allocator.TempJob);
 
             JobHandle parity;
             if (closed)
             {
-                parity = new InsideParityJob
+                JobHandle rows = new BinRowTrianglesJob
                 {
                     Vertices = verts,
                     Triangles = tris,
                     Origin = grid.Origin,
                     CellSize = cellSize,
                     PointDims = pd,
+                    RowStart = rowStart,
+                    RowTriangles = rowTriangles,
+                }.Schedule();
+                parity = new InsideParityJob
+                {
+                    Vertices = verts,
+                    Triangles = tris,
+                    RowStart = rowStart,
+                    RowTriangles = rowTriangles.AsDeferredJobArray(),
+                    Origin = grid.Origin,
+                    CellSize = cellSize,
+                    PointDims = pd,
                     Inside = inside,
-                }.Schedule(pd.y * pd.z, 4);
+                }.Schedule(pd.y * pd.z, 4, rows);
             }
             else
             {
@@ -117,15 +133,27 @@ namespace AdaptorPhysX
                     Inside = inside,
                 }.Schedule(pointCount, 64, tree);
             }
-            var near = new NearDistanceJob
+            JobHandle slabs = new BinSlabTrianglesJob
             {
                 Vertices = verts,
                 Triangles = tris,
                 Origin = grid.Origin,
                 CellSize = cellSize,
                 PointDims = pd,
-                Distance = distance,
+                SlabStart = slabStart,
+                SlabTriangles = slabTriangles,
             }.Schedule();
+            var near = new NearDistanceJob
+            {
+                Vertices = verts,
+                Triangles = tris,
+                SlabStart = slabStart,
+                SlabTriangles = slabTriangles.AsDeferredJobArray(),
+                Origin = grid.Origin,
+                CellSize = cellSize,
+                PointDims = pd,
+                Distance = distance,
+            }.Schedule(pd.z, 1, slabs);
             JobHandle.CombineDependencies(parity, near).Complete();
 
             grid.Sdf = new float[pointCount];
@@ -212,12 +240,75 @@ namespace AdaptorPhysX
             return math.max(insideSamples, 1) / 8.0f;
         }
 
+        /// <summary>Offsets of the parity rays from the grid rows, in cells: they keep rays off shared triangle edges.</summary>
+        private const float RayOffsetY = 1.37e-4f, RayOffsetZ = 2.91e-4f;
+
+        /// <summary>
+        /// Lists, for every grid point row (y, z), the triangles whose yz bounds contain its parity ray, with a
+        /// margin of a thousandth of a cell: a superset of the triangles the ray can hit.
+        /// </summary>
+        [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+        private struct BinRowTrianglesJob : IJob
+        {
+            [ReadOnly] public NativeArray<float3> Vertices;
+            [ReadOnly] public NativeArray<int> Triangles;
+            public float3 Origin;
+            public float CellSize;
+            public int3 PointDims;
+            /// <summary>Row r's triangles are RowTriangles[RowStart[r] .. RowStart[r + 1]).</summary>
+            public NativeArray<int> RowStart;
+            public NativeList<int> RowTriangles;
+
+            public void Execute()
+            {
+                for (int pass = 0; pass < 2; pass++)
+                {
+                    var cursor = new NativeArray<int>(pass == 0 ? 0 : RowStart.Length - 1, Allocator.Temp);
+                    for (int t = 0; t < Triangles.Length; t += 3)
+                    {
+                        float3 a = Vertices[Triangles[t]], b = Vertices[Triangles[t + 1]], c = Vertices[Triangles[t + 2]];
+                        float2 lo = (math.min(a, math.min(b, c)).yz - Origin.yz) / CellSize;
+                        float2 hi = (math.max(a, math.max(b, c)).yz - Origin.yz) / CellSize;
+                        var offset = new float2(RayOffsetY, RayOffsetZ);
+                        int2 r0 = math.max((int2)math.ceil(lo - offset - 1e-3f), 0);
+                        int2 r1 = math.min((int2)math.floor(hi - offset + 1e-3f), PointDims.yz - 1);
+                        for (int k = r0.y; k <= r1.y; k++)
+                        {
+                            for (int j = r0.x; j <= r1.x; j++)
+                            {
+                                int row = j + PointDims.y * k;
+                                if (pass == 0)
+                                {
+                                    RowStart[row + 1]++;
+                                }
+                                else
+                                {
+                                    RowTriangles[RowStart[row] + cursor[row]++] = t / 3;
+                                }
+                            }
+                        }
+                    }
+                    if (pass == 0)
+                    {
+                        for (int r = 1; r < RowStart.Length; r++)
+                        {
+                            RowStart[r] += RowStart[r - 1];
+                        }
+                        RowTriangles.ResizeUninitialized(RowStart[RowStart.Length - 1]);
+                    }
+                    cursor.Dispose();
+                }
+            }
+        }
+
         /// <summary>Even-odd ray parity along +x for every grid point row.</summary>
         [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
         private struct InsideParityJob : IJobParallelFor
         {
             [ReadOnly] public NativeArray<float3> Vertices;
             [ReadOnly] public NativeArray<int> Triangles;
+            [ReadOnly] public NativeArray<int> RowStart;
+            [ReadOnly] public NativeArray<int> RowTriangles;
             public float3 Origin;
             public float CellSize;
             public int3 PointDims;
@@ -227,12 +318,12 @@ namespace AdaptorPhysX
             {
                 int j = row % PointDims.y;
                 int k = row / PointDims.y;
-                // Tiny irrational offsets keep rays off shared triangle edges.
-                float ry = Origin.y + j * CellSize + CellSize * 1.37e-4f;
-                float rz = Origin.z + k * CellSize + CellSize * 2.91e-4f;
+                float ry = Origin.y + j * CellSize + CellSize * RayOffsetY;
+                float rz = Origin.z + k * CellSize + CellSize * RayOffsetZ;
                 var hits = new NativeList<float>(16, Allocator.Temp);
-                for (int t = 0; t < Triangles.Length; t += 3)
+                for (int e = RowStart[row]; e < RowStart[row + 1]; e++)
                 {
+                    int t = 3 * RowTriangles[e];
                     float3 a = Vertices[Triangles[t]];
                     float3 b = Vertices[Triangles[t + 1]];
                     float3 c = Vertices[Triangles[t + 2]];
@@ -460,44 +551,105 @@ namespace AdaptorPhysX
             }
         }
 
-        /// <summary>Exact distance to the surface for grid points within 1.5 cells of a triangle.</summary>
+        /// <summary>Grid points within 1.5 cells of triangle t (the range of the exact distance), clamped to the grid.</summary>
+        private static void NearRange(NativeArray<float3> vertices, NativeArray<int> triangles, int t, float3 origin,
+            float cellSize, int3 pointDims, out int3 p0, out int3 p1)
+        {
+            float3 a = vertices[triangles[t]];
+            float3 b = vertices[triangles[t + 1]];
+            float3 c = vertices[triangles[t + 2]];
+            float3 lo = math.min(a, math.min(b, c)) - 1.5f * cellSize;
+            float3 hi = math.max(a, math.max(b, c)) + 1.5f * cellSize;
+            p0 = math.max((int3)math.ceil((lo - origin) / cellSize), 0);
+            p1 = math.min((int3)math.floor((hi - origin) / cellSize), pointDims - 1);
+        }
+
+        /// <summary>Lists, for every z layer of grid points, the triangles whose distance range (<see cref="NearRange"/>) includes it.</summary>
         [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
-        private struct NearDistanceJob : IJob
+        private struct BinSlabTrianglesJob : IJob
         {
             [ReadOnly] public NativeArray<float3> Vertices;
             [ReadOnly] public NativeArray<int> Triangles;
             public float3 Origin;
             public float CellSize;
             public int3 PointDims;
-            public NativeArray<float> Distance;
+            /// <summary>Layer z's triangles are SlabTriangles[SlabStart[z] .. SlabStart[z + 1]).</summary>
+            public NativeArray<int> SlabStart;
+            public NativeList<int> SlabTriangles;
 
             public void Execute()
             {
-                float far = FarCells * CellSize;
-                for (int i = 0; i < Distance.Length; i++)
+                for (int pass = 0; pass < 2; pass++)
                 {
-                    Distance[i] = far;
+                    var cursor = new NativeArray<int>(pass == 0 ? 0 : SlabStart.Length - 1, Allocator.Temp);
+                    for (int t = 0; t < Triangles.Length; t += 3)
+                    {
+                        NearRange(Vertices, Triangles, t, Origin, CellSize, PointDims, out int3 p0, out int3 p1);
+                        if (p0.x > p1.x || p0.y > p1.y)
+                        {
+                            continue;
+                        }
+                        for (int z = p0.z; z <= p1.z; z++)
+                        {
+                            if (pass == 0)
+                            {
+                                SlabStart[z + 1]++;
+                            }
+                            else
+                            {
+                                SlabTriangles[SlabStart[z] + cursor[z]++] = t / 3;
+                            }
+                        }
+                    }
+                    if (pass == 0)
+                    {
+                        for (int z = 1; z < SlabStart.Length; z++)
+                        {
+                            SlabStart[z] += SlabStart[z - 1];
+                        }
+                        SlabTriangles.ResizeUninitialized(SlabStart[SlabStart.Length - 1]);
+                    }
+                    cursor.Dispose();
                 }
-                for (int t = 0; t < Triangles.Length; t += 3)
+            }
+        }
+
+        /// <summary>Exact distance to the surface for grid points within 1.5 cells of a triangle, one z layer per index.</summary>
+        [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+        private struct NearDistanceJob : IJobParallelFor
+        {
+            [ReadOnly] public NativeArray<float3> Vertices;
+            [ReadOnly] public NativeArray<int> Triangles;
+            [ReadOnly] public NativeArray<int> SlabStart;
+            [ReadOnly] public NativeArray<int> SlabTriangles;
+            public float3 Origin;
+            public float CellSize;
+            public int3 PointDims;
+            [NativeDisableParallelForRestriction] public NativeArray<float> Distance;
+
+            public void Execute(int z)
+            {
+                float far = FarCells * CellSize;
+                int layer = PointDims.x * PointDims.y;
+                for (int i = 0; i < layer; i++)
                 {
+                    Distance[z * layer + i] = far;
+                }
+                for (int e = SlabStart[z]; e < SlabStart[z + 1]; e++)
+                {
+                    int t = 3 * SlabTriangles[e];
                     float3 a = Vertices[Triangles[t]];
                     float3 b = Vertices[Triangles[t + 1]];
                     float3 c = Vertices[Triangles[t + 2]];
-                    float3 lo = math.min(a, math.min(b, c)) - 1.5f * CellSize;
-                    float3 hi = math.max(a, math.max(b, c)) + 1.5f * CellSize;
-                    int3 p0 = math.max((int3)math.ceil((lo - Origin) / CellSize), 0);
-                    int3 p1 = math.min((int3)math.floor((hi - Origin) / CellSize), PointDims - 1);
-                    for (int z = p0.z; z <= p1.z; z++)
+                    NearRange(Vertices, Triangles, t, Origin, CellSize, PointDims, out int3 p0, out int3 p1);
+                    for (int y = p0.y; y <= p1.y; y++)
                     {
-                        for (int y = p0.y; y <= p1.y; y++)
+                        for (int x = p0.x; x <= p1.x; x++)
                         {
-                            for (int x = p0.x; x <= p1.x; x++)
-                            {
-                                float3 p = Origin + new float3(x, y, z) * CellSize;
-                                float dist = math.distance(p, Geometry.ClosestPointOnTriangle(p, a, b, c));
-                                int index = x + PointDims.x * (y + PointDims.y * z);
-                                Distance[index] = math.min(Distance[index], dist);
-                            }
+                            float3 p = Origin + new float3(x, y, z) * CellSize;
+                            float dist = math.distance(p, Geometry.ClosestPointOnTriangle(p, a, b, c));
+                            int index = x + PointDims.x * (y + PointDims.y * z);
+                            Distance[index] = math.min(Distance[index], dist);
                         }
                     }
                 }
