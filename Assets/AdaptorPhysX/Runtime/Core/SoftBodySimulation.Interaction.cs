@@ -768,6 +768,8 @@ namespace AdaptorPhysX
                 StrokeSide = StrokeSide.ToArray(),
                 StrokeTravel = StrokeTravel.ToArray(),
                 StrokeDistance = StrokeDistance.ToArray(),
+                StrokeStartSevered = StrokeStartSevered.ToArray(),
+                StrokeKept = StrokeKept.ToArray(),
                 ContactNode = _contactNode.ToArray(),
                 Stuck = _stuck.ToArray(),
                 TetRotation = _tetRotation.ToArray(),
@@ -801,6 +803,8 @@ namespace AdaptorPhysX
                 throw new System.ArgumentException("The state belongs to another lattice.", nameof(state));
             }
             Severed.CopyFrom(state.Severed);
+            StrokeStartSevered.CopyFrom(state.StrokeStartSevered);
+            StrokeKept.CopyFrom(state.StrokeKept);
             EdgeT.CopyFrom(state.EdgeT);
             EdgeNormal.CopyFrom(state.EdgeNormal);
             CellCopyRange.CopyFrom(state.CellCopyRange);
@@ -874,6 +878,8 @@ namespace AdaptorPhysX
         public byte[] NodeReal;
         public int[] PieceId;
         public sbyte[] StrokeSide;
+        public ushort[] StrokeStartSevered;
+        public ushort[] StrokeKept;
         public float[] StrokeTravel;
         public float[] StrokeDistance;
         public byte[] ContactNode;

@@ -147,6 +147,12 @@ namespace AdaptorPhysX
         public NativeArray<sbyte> StrokeSide;
         public NativeArray<float> StrokeTravel;
         public NativeArray<float> StrokeDistance;
+        /// <summary>
+        /// Per cell: the severed edges when the current stroke began, and the edges the stroke keeps intact
+        /// instead of cutting a fragment off an earlier cut surface (see <see cref="CutJob"/>).
+        /// </summary>
+        public NativeArray<ushort> StrokeStartSevered;
+        public NativeArray<ushort> StrokeKept;
         private int _stroke;
         private float _strokeTravel;
         private float3 _strokeNormal;
@@ -299,6 +305,8 @@ namespace AdaptorPhysX
             _tetVolume = new NativeArray<float>(volumes, Allocator.Persistent);
 
             Severed = new NativeArray<ushort>(cellCount, Allocator.Persistent);
+            StrokeStartSevered = new NativeArray<ushort>(cellCount, Allocator.Persistent);
+            StrokeKept = new NativeArray<ushort>(cellCount, Allocator.Persistent);
             EdgeT = new NativeArray<float>(cellCount * Lattice.EdgeCount, Allocator.Persistent);
             EdgeNormal = new NativeArray<float3>(cellCount * Lattice.EdgeCount, Allocator.Persistent);
             CellCopyRange = new NativeArray<int2>(cellCount, Allocator.Persistent);
@@ -340,6 +348,8 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref _tetRotation);
             DisposeIfCreated(ref _cellScale);
             DisposeIfCreated(ref Severed);
+            DisposeIfCreated(ref StrokeStartSevered);
+            DisposeIfCreated(ref StrokeKept);
             DisposeIfCreated(ref EdgeT);
             DisposeIfCreated(ref EdgeNormal);
             DisposeIfCreated(ref CellCopyRange);
@@ -761,6 +771,11 @@ namespace AdaptorPhysX
                 _strokeTravel = 0.0f;
                 _strokeNormal = float3.zero;
                 _strokeMotion = float3.zero;
+                StrokeStartSevered.CopyFrom(Severed);
+                for (int i = 0; i < StrokeKept.Length; i++)
+                {
+                    StrokeKept[i] = 0;
+                }
             }
             _stroke = stroke;
             // Overlap consecutive sweeps so edges of tissue that moves relative to the blade between
@@ -821,6 +836,8 @@ namespace AdaptorPhysX
                 EdgeT = EdgeT,
                 EdgeNormal = EdgeNormal,
                 SeveredCount = count,
+                PriorSevered = StrokeStartSevered,
+                Kept = StrokeKept,
             }.Run();
             int severed = count[0];
             if (severed > 0)

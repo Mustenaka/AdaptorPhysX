@@ -364,6 +364,10 @@ namespace AdaptorPhysX
         public NativeArray<float> EdgeT;
         public NativeArray<float3> EdgeNormal;
         public NativeArray<int> SeveredCount;
+        /// <summary>Severed edges when the stroke began: the cut surfaces of earlier strokes.</summary>
+        [ReadOnly] public NativeArray<ushort> PriorSevered;
+        /// <summary>Edges the stroke keeps intact (<see cref="KeepChips"/>); they are not cut again in the stroke.</summary>
+        public NativeArray<ushort> Kept;
 
         /// <summary>Normals of the swept triangles (see <see cref="Triangle"/>), not normalized.</summary>
         private float3 _n0, _n1, _n2, _n3;
@@ -422,6 +426,7 @@ namespace AdaptorPhysX
             }
 
             int severedCount = 0;
+            var fresh = new NativeList<int3>(64, Allocator.Temp);
             for (int i = 0; i < cut.Length; i++)
             {
                 int c = cut[i];
@@ -429,7 +434,7 @@ namespace AdaptorPhysX
                 LabelBetweenSides(c, range);
                 for (int e = 0; e < Lattice.EdgeCount; e++)
                 {
-                    if ((Severed[c] & (1 << e)) != 0)
+                    if (((Severed[c] | Kept[c]) & (1 << e)) != 0)
                     {
                         continue;
                     }
@@ -488,10 +493,13 @@ namespace AdaptorPhysX
                     t = math.clamp(t, 0.05f, 0.95f);
                     float3 restNormal = RestNormal(owner, k0, k1, t, crossed < 2 ? _tailNormal : _bladeNormal);
                     SeverShared(c, e, t, restNormal);
+                    fresh.Add(new int3(c, e, owner));
                     severedCount++;
                 }
             }
             cut.Dispose();
+            severedCount -= KeepChips(fresh);
+            fresh.Dispose();
             SeveredCount[0] = severedCount;
         }
 
@@ -756,7 +764,149 @@ namespace AdaptorPhysX
             return math.lengthsq(n) > 0.5f ? n : worldNormal;
         }
 
-        private void SeverShared(int cell, int edge, float t, float3 restNormal)
+        /// <summary>
+        /// Fewest real nodes of a part a later stroke may cut off next to an earlier cut surface: twice the least
+        /// piece that is rendered (<see cref="SurfaceMesh.MinVisiblePieceNodes"/>). A sliver shaved off a wall is one
+        /// layer of nodes and a cell or two long; a strip cut off along the whole incision has many more.
+        /// </summary>
+        private const int ChipNodes = 2 * SurfaceMesh.MinVisiblePieceNodes;
+
+        /// <summary>
+        /// Restores the edges this sweep severed around a part of fewer than <see cref="ChipNodes"/> real nodes
+        /// next to the cut surface of an earlier stroke, and keeps them for the rest of the stroke; returns their
+        /// number. A blade drawn again along an incision, or beside it, passes through its walls where they have
+        /// moved since and shaves off slivers thinner than a cell. The lattice holds such a sliver as a few nodes
+        /// with mostly virtual corners: it flaps about or is too small to render, and the planes and copies around
+        /// it left holes and stretched skin in the walls (TODO BUG-15). Parts cut off by the stroke alone are left alone.
+        /// </summary>
+        private int KeepChips(NativeList<int3> fresh)
+        {
+            if (fresh.Length == 0)
+            {
+                return 0;
+            }
+            // Per node: 1 in a chip, 2 in a part that is no chip.
+            var marks = new NativeArray<byte>(Positions.Length, Allocator.Temp);
+            var part = new FixedList512Bytes<int4>();
+            bool any = false;
+            for (int i = 0; i < fresh.Length; i++)
+            {
+                int3 f = fresh[i];
+                for (int end = 0; end < 2; end++)
+                {
+                    int k = EdgeCorners[2 * f.y + end];
+                    int node = CopyNodes[f.z * 8 + k];
+                    if (marks[node] != 0)
+                    {
+                        continue;
+                    }
+                    bool chip = FloodPart(node, CellCoord[f.x] + Lattice.CornerOffset(k), ref part);
+                    for (int j = 0; j < part.Length; j++)
+                    {
+                        marks[part[j].x] = (byte)(chip ? 1 : 2);
+                    }
+                    any |= chip;
+                }
+            }
+            int restored = 0;
+            if (any)
+            {
+                for (int i = 0; i < fresh.Length; i++)
+                {
+                    int3 f = fresh[i];
+                    int np = CopyNodes[f.z * 8 + EdgeCorners[2 * f.y]];
+                    int nr = CopyNodes[f.z * 8 + EdgeCorners[2 * f.y + 1]];
+                    if (marks[np] == 1 || marks[nr] == 1)
+                    {
+                        KeepShared(f.x, f.y);
+                        restored++;
+                    }
+                }
+            }
+            marks.Dispose();
+            return restored;
+        }
+
+        /// <summary>
+        /// Collects the real nodes joined to <paramref name="node"/> (at grid point <paramref name="point"/>) by
+        /// intact edges, (node, grid point) per entry, until there are <see cref="ChipNodes"/>. True when the part
+        /// has fewer nodes and one of them ends an edge severed before the stroke.
+        /// </summary>
+        private bool FloodPart(int node, int3 point, ref FixedList512Bytes<int4> part)
+        {
+            part.Clear();
+            part.Add(new int4(node, point));
+            bool prior = false;
+            for (int head = 0; head < part.Length; head++)
+            {
+                int n = part[head].x;
+                int3 p = part[head].yzw;
+                for (int k = 0; k < Lattice.CornerCount; k++)
+                {
+                    int3 cc = p - Lattice.CornerOffset(k);
+                    if (math.any(cc < 0) || math.any(cc >= Dims))
+                    {
+                        continue;
+                    }
+                    int cell = GridToCell[cc.x + Dims.x * (cc.y + Dims.y * cc.z)];
+                    if (cell < 0)
+                    {
+                        continue;
+                    }
+                    int2 range = CellCopyRange[cell];
+                    int copy = -1;
+                    for (int q = range.x; q < range.x + range.y && copy < 0; q++)
+                    {
+                        if (((Copies[q].Mask >> k) & 1) != 0 && CopyNodes[q * 8 + k] == n)
+                        {
+                            copy = q;
+                        }
+                    }
+                    if (copy < 0)
+                    {
+                        continue;
+                    }
+                    int mask = Copies[copy].Mask;
+                    for (int e = 0; e < Lattice.EdgeCount; e++)
+                    {
+                        int k0 = EdgeCorners[2 * e], k1 = EdgeCorners[2 * e + 1];
+                        int other = k0 == k ? k1 : k1 == k ? k0 : -1;
+                        if (other < 0)
+                        {
+                            continue;
+                        }
+                        prior |= (PriorSevered[cell] & (1 << e)) != 0;
+                        if ((Severed[cell] & (1 << e)) != 0 || ((mask >> other) & 1) == 0)
+                        {
+                            continue;
+                        }
+                        int m = CopyNodes[copy * 8 + other];
+                        bool seen = false;
+                        for (int j = 0; j < part.Length && !seen; j++)
+                        {
+                            seen = part[j].x == m;
+                        }
+                        if (seen)
+                        {
+                            continue;
+                        }
+                        part.Add(new int4(m, cc + Lattice.CornerOffset(other)));
+                        if (part.Length >= ChipNodes)
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return prior;
+        }
+
+        private void SeverShared(int cell, int edge, float t, float3 restNormal) => MarkShared(cell, edge, false, t, restNormal);
+
+        /// <summary>Restores a severed edge on all cells sharing it and keeps it for the rest of the stroke.</summary>
+        private void KeepShared(int cell, int edge) => MarkShared(cell, edge, true, 0.0f, float3.zero);
+
+        private void MarkShared(int cell, int edge, bool keep, float t, float3 restNormal)
         {
             int axis = edge / 4;
             int start = EdgeCorners[2 * edge];
@@ -787,6 +937,12 @@ namespace AdaptorPhysX
                         {
                             localEdge = e;
                         }
+                    }
+                    if (keep)
+                    {
+                        Severed[n] = (ushort)(Severed[n] & ~(1 << localEdge));
+                        Kept[n] = (ushort)(Kept[n] | (1 << localEdge));
+                        continue;
                     }
                     Severed[n] = (ushort)(Severed[n] | (1 << localEdge));
                     EdgeT[n * 12 + localEdge] = t;
