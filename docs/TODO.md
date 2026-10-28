@@ -3,8 +3,8 @@
 本文件列出与 Obi 生态、医疗仿真需求相比尚缺的功能，以及基准测试与代码检查中发现的缺陷，并逐项对照当前实现。
 每个条目有固定编号，新对话中直接引用编号（例如“处理 BUG-2”）。
 
-- 建立时的对照基准：提交 `17fde10`（2026-10-26），分支 `dev/softbody`；各条目的现状随之后的提交更新，最后一次全面核对为 2026-10-28（`c97ec2c`）。文件行号以 `0ba4a57` 为准。
-- 里程碑编号（M1–M5）见 `docs/ROADMAP.md`；算法与数据结构见 `docs/DESIGN.md`。
+- 建立时的对照基准：提交 `17fde10`（2026-10-26），分支 `dev/softbody`；各条目的现状随之后的提交更新，最后一次全面核对为 2026-10-28（`f5cc1d5`，同时对照 Obi 7.2 的 solver、后端接口、softbody、附着与抓取组件、rope 的 pinhole、blueprint 编辑器）。文件行号以 `0ba4a57` 为准。
+- 里程碑编号（M1–M7）见 `docs/ROADMAP.md`；算法与数据结构见 `docs/DESIGN.md`。
 
 ## 状态定义
 
@@ -60,12 +60,16 @@
 | ECO-1 | 不同物体之间的碰撞 | 同一 solver 内全部物体互相碰撞 | 已实现（DESIGN 9.4 节）：每轮步进开始时复制对方附近的体素副本，节点按对方静止 SDF 在形变四面体上的插值推出，按质量分担，`collideWithBodies` 与 `collisionLayers` 过滤；相互接触的物体同步推进子步，每个子步刷新副本（BUG-8）。`StackedBodiesRestOnEachOther`：小块停在大块上（中心 57.6 mm，关闭接触时 18.4 mm）；S8 中肝叶停在组织块上；`SqueezedBodiesKeepTheirContactUnderASustainedLoad` 通过。限制：切面不在对方 SDF 中；相互接触的两个物体通常只有一个休眠；被推物体放在摩擦地面上时推动体穿过对方（BUG-8，`PinnedBodyPushesAnotherAlongAFloorWithFriction`，标为 `[Ignore]`） | 已完成 | `PinnedBodyPushesAnotherWithoutPassingThrough`：一个物体由钉住区域（`pinColliders`）以 0.1 m/s 推向放在无摩擦地面上的另一个物体，被推物体能平移；挤压期间任一节点穿入对方表面的深度不超过 1h（深度按物体间接触的定义：对方静止 SDF 在形变四面体上插值，除以梯度长度），被推物体重心沿挤压方向位移大于 1h；关闭物体间接触时推动体进入对方超过 1h、被推物体位移小于 1h。结果：最深节点 4.33 mm（h = 5 mm），被推物体前移 75.5 mm；关闭接触时 27.7 mm、0 mm。验收原为地面摩擦 0.6，该场景改列 BUG-8 |
 | ECO-2 | 碰撞体类型 | 支持 MeshCollider 与距离场 | 已实现（DESIGN 9.1 节）：MeshCollider 运行时按网格烘焙距离场；`ApxDistanceField` 资产（编辑器中烘焙）经 `ApxColliderMaterial` 用于任意 Collider。测试：`DistanceFieldMatchesTheBoxDistance`（距离场本身）、`DistanceFieldFloorHoldsTheBodyLikeABoxCollider`（直接构造的距离场地面）、`MeshColliderAndFieldAssetFloorsHoldTheBodyLikeABoxCollider`（组件路径 `TryMakeFieldShape`：MeshCollider 运行时烘焙；`ApxDistanceField` 资产经序列化复制后使用，Collider 比资产网格高 50 mm，只用于范围查询）。S10 环形器械（MeshCollider 与 `Ring Field` 资产）压入组织，下降量 4.4 mm | 已完成 | `MeshColliderAndFieldAssetFloorsHoldTheBodyLikeABoxCollider`：10 cm 立方体（分辨率 8）落到 MeshCollider 地面、`ApxDistanceField` 资产地面上，最低节点高度与 Box 碰撞体之差均为 0.000 mm（要求小于 0.5 mm） |
 | ECO-3 | 与刚体的双向耦合 | 有 | 已实现（DESIGN 9.3 节）：非运动学 Rigidbody 在步内由软体逐子步推进，步末把组织造成的位移、转动与速度修正加到 PhysX 的结果上（`twoWayCoupling`）。`RigidBodyRestsOnPinnedTissueAndBendsIt`：组织对钢球的力 0.976 N（重量 0.981 N），关闭耦合时钢球穿过组织；S9。限制：Rigidbody 的 Freeze 约束不参与 | 已完成 | 组织能推动带 Rigidbody 的器械 |
-| ECO-4 | GPU 后端 | Obi 7 有 Compute Shader 后端 | 没有 | 未开始 | 属于 M4 |
+| ECO-4 | GPU 后端 | Obi 7 有 Compute Shader 后端 | 没有 | 未开始 | 属于 M4。开始前完成 PERF-9（确定求解方法）与 ENG-7（求解后端接口） |
 | ECO-5 | 布料、绳、流体 | 有 | 已冻结（ROADMAP 决策 3）。医疗场景用途：膜与筋膜（布料）、缝线与血管（绳）、出血（流体） | 未开始 | 需先修改 ROADMAP 决策 3 |
 | ECO-6 | 粘附与塑性 | 碰撞材质有 stickiness，softbody 有 plasticity | 已实现（DESIGN 9.5 节）：`ApxColliderMaterial.stickiness`、`stickDistance`（接触过的节点被拉回，超过粘附距离后脱离）；`plasticYield`、`plasticCreep`、`plasticRecovery`、`maxPlasticDeformation`（每个体素的塑性伸长，体积不变）。`StickyInstrumentPullsTheSurfaceAfterIt`（粘附时表面上移 1.00 mm，无粘附时 −0.05 mm）、`PressedPlasticBodyKeepsADent`（压痕 11.5 mm，弹性 0.12 mm）；S11 | 已完成 | 湿组织粘附器械；按压后保留残余形变 |
 | ECO-7 | 编辑器工具 | blueprint 预计算；用笔刷绘制质量、钉住区域 | blueprint 已实现（DESIGN 9.7 节）：`ApxSoftBodyBlueprint` 资产保存细分网格与体素化结果，检视面板“Bake Blueprint”，匹配时 Start 不细分、不体素化，结果逐位一致（`BlueprintGivesTheSameSimulationWithoutVoxelizing`）。未实现：在编辑器中用笔刷绘制钉住区域与材料（钉住区域仍用 Collider 选取） | 部分完成 | 体素化结果存为资产，Start 不再体素化；在编辑器中绘制钉住区域与材料 |
 | ECO-8 | 状态快照与撤销 | 有 | 已实现（DESIGN 9.6 节）：`SoftBodySimulation` / `ApxSoftBody` 的 `CaptureState`、`RestoreState`，含切割拓扑、塑性与抓取状态。`RestoredStateRepeatsTheSameSteps`：切割、恢复后再步进的节点位置与保存后直接步进逐位一致；`RestoredBodyRendersItsTopology`。限制：`ApxSoftBody` 的快照不含碰撞体上一步的位姿（`_previousShapes`，用于子步内插值）与 Rigidbody 的状态；`RestoredStateRepeatsTheSameSteps` 只在仿真层、对静止地面测试，有运动器械或刚体耦合时恢复后能否逐位重复没有测试（与 MED-14 回放相关） | 已完成 | 保存与恢复仿真状态（含切割拓扑），恢复后 `positionsHash` 与保存时一致 |
-| ECO-9 | 整体移动与 Transform 变化 | 有 `Teleport`；solver 可在自身局部空间求解，移动 solver 所在对象时其中的物体随之移动 | 节点位置存储在世界空间（DESIGN 第 1 节），静止空间在初始化时取 `lossyScale`（`ApxSoftBody.cs:228`、`257`）。初始化后修改物体 Transform 的位置、旋转、缩放都不影响仿真与渲染：渲染按当前的 `worldToLocalMatrix` 把世界坐标写回局部坐标（`SurfaceMesh.Update`），显示的位置与大小不变；钉住区域为子物体时，只有钉住节点随之移动。以上均没有提示；缩放改变后需调用 `Rebuild()`（切割丢弃）。没有整体平移、旋转物体（含切割后的拓扑）的接口，README 与 DESIGN 第 7 节未说明 | 未开始 | 整体移动接口：节点位置、速度、运动学帧与四面体旋转（见 BUG-7）一并变换。EditMode 测试：静止物体整体平移并绕竖直轴旋转 90° 后，无重力 30 帧最大位移小于 0.1 mm；切割后的物体移动后块数不变；初始化后修改缩放时输出警告 |
+| ECO-9 | 整体移动与 Transform 变化 | 有 `Teleport`；solver 可在自身局部空间求解，移动 solver 所在对象时其中的物体随之移动 | 节点位置存储在世界空间（DESIGN 第 1 节），静止空间在初始化时取 `lossyScale`（`ApxSoftBody.cs:228`、`257`）。初始化后修改物体 Transform 的位置、旋转、缩放都不影响仿真与渲染：渲染按当前的 `worldToLocalMatrix` 把世界坐标写回局部坐标（`SurfaceMesh.Update`），显示的位置与大小不变；钉住区域为子物体时，只有钉住节点随之移动。以上均没有提示；缩放改变后需调用 `Rebuild()`（切割丢弃）。没有整体平移、旋转物体（含切割后的拓扑）的接口，README 与 DESIGN 第 7 节未说明。节点坐标为单精度世界坐标，远离原点时舍入误差增大：HAP-3 的压痕场景移到 y = 10 m 时，1 mm 深度的夹持力只有压头力的 22%（原点处两者相差 0.1–0.7 mN）。Obi 的物体在 solver 的局部空间求解，solver 移动时按 `worldLinearInertiaScale`、`worldAngularInertiaScale` 传递部分惯性 | 未开始 | 整体移动接口：节点位置、速度、运动学帧与四面体旋转（见 BUG-7）一并变换。EditMode 测试：静止物体整体平移并绕竖直轴旋转 90° 后，无重力 30 帧最大位移小于 0.1 mm；切割后的物体移动后块数不变；初始化后修改缩放时输出警告。在参考空间（物体或一组相互接触的物体共用）的局部坐标中求解，参考空间移动时传递的惯性比例可配置；HAP-3 的压痕场景移到 y = 10 m 后，夹持力与压头力之差小于 1 mN |
+| ECO-10 | 事件 | `ObiSolver.OnCollision`、`OnParticleCollision` 输出每步的接触列表；`ObiContactEventDispatcher` 把接触整理为开始、持续、结束三类事件 | 没有事件。切割结果只能由调用方轮询：`ApxScalpel` 的本刀路断棱数、`CountPieces`、`PieceSizes`；碰撞体接触只能逐个查询 `TryGetColliderWrench` | 未开始 | 步末在主线程触发：切割（本步断棱数、刀路编号）、块数变化（新块的编号与实节点数）、碰撞体接触开始与结束（附 HAP-1 的力）、休眠与唤醒。EditMode 测试：box 全切触发一次块数变化事件，两块的节点数与 `PieceSizes` 一致；球压入后抬起，开始与结束事件各一次。MED-13、SUT-8 使用这些事件 |
+| ECO-11 | 空间查询 | `ObiSolver.EnqueueSpatialQuery`：球、盒、射线等形状与粒子的相交查询，在求解步中批量执行 | 运行时没有查询接口。射线拾取只在工具程序集中（`ApxTool.PickSurface`），返回最近的节点 | 未开始 | 运行时程序集提供：射线与形变后表面求交，返回交点、法线、块编号与 SUT-1 的材料点；球形区域内的节点查询。EditMode 测试：形变后的物体上射线交点到渲染网格三角形的距离小于 0.1h；`ApxTool.PickSurface` 改用该接口 |
+| ECO-12 | 渲染插值 | solver 参数 `interpolation`：显示帧按上两步的结果插值或外推，之后触发 `OnInterpolate` | 在 `ApxSoftBody.FixedUpdate` 中步进，`LateUpdate` 显示最后一步的结果。显示帧率高于物理步频率时（例如 VR 的 72–120 Hz、`fixedDeltaTime` 为 0.02 s），相邻显示帧之间节点位置不变或一次跳过一步；开启插值的 Rigidbody 与组织的显示位置不一致 | 未开始 | 可选的插值模式：表面顶点按上两步的节点位置与 `Time` 中的插值系数计算，不改变仿真结果（`positionsHash` 不变）。EditMode 测试：匀速平移的物体在相邻显示帧之间的显示位移恒定 |
+| ECO-13 | 附着约束 | `ObiParticleAttachment`：Static（粒子为运动学，跟随 Transform）与 Dynamic（带柔度的约束，可约束朝向，约束力超过 `breakThreshold` 时断开）；`ObiContactGrabber` 抓取与碰撞体接触的粒子；`ObiStitcher` 连接两个物体的粒子 | 钉住与抓取都把节点设为运动学节点并绑定到运动学帧（`pinColliders`、`BeginGrab`），最多 32 帧（`MaxKinematicFrames`），帧上节点等同固定连接；抓取帧只有平移，每个物体一个（MED-10）；没有带柔度或可断开的连接 | 未开始 | 依赖 SUT-1。附着由一组材料点与一个 Transform 定义，类型为 Static 或 Dynamic；Dynamic 有柔度、可选的朝向约束与断开力阈值，约束力按 HAP-2 的方式输出。钉住与抓取改用附着实现，附着数不受 32 的限制，抓取帧随器械转动。不使用附着时 `positionsHash` 与基线一致；EditMode 测试：Dynamic 附着的支座反力等于自重（误差小于 1%）；拉力超过阈值时附着断开并触发 ECO-10 的事件 |
 
 ## 3. 医疗仿真需求
 
@@ -84,7 +88,7 @@
 
 | 编号 | 需求 | 现状 | 状态 | 验收 |
 |---|---|---|---|---|
-| MED-7 | 切口精度 | 分辨率上限 64（`ApxSoftBody.cs:22` 的 Inspector 范围），0.15 m 的物体约 2.3 mm 一个体素；薄于一个体素的结构无法分离（DESIGN 4.3 节）；刀路在体素内弯曲时切口为折线（DESIGN 第 7 节） | 未开始 | 切口附近局部加密 lattice；弯曲刀路的切口误差小于设定值 |
+| MED-7 | 切口精度 | 分辨率上限 64（`ApxSoftBody.cs:22` 的 Inspector 范围），0.15 m 的物体约 2.3 mm 一个体素；薄于一个体素的结构无法分离（DESIGN 4.3 节）；刀路在体素内弯曲时切口为折线（DESIGN 第 7 节）。2026-10-28 起不属于 M6，排在 PERF-9 与 M4 之后：分辨率 96–128 时 CPU 每步 31–238 ms（DESIGN 6.3 节） | 未开始 | 切口附近局部加密 lattice；弯曲刀路的切口误差小于设定值 |
 | MED-8 | 切割阻力与切割力 | 扫掠面与棱相交即断开，组织不先压陷；没有切割力输出 | 未开始 | 切入前组织压陷，切入条件取决于刀锋参数与组织韧性；输出刀刃受力 |
 | MED-9 | 器械种类 | 只有线段刀刃（`ApxScalpel`）。缺：剪刀（两刃闭合）、电刀与超声刀（删除体素）、穿刺针（插入不切开）、夹闭器与吻合器。缝合见 3.3 节 | 未开始 | 每种器械一个标准场景截图与 EditMode 测试 |
 | MED-10 | 镊子夹持 | 半径内节点设为运动学节点（`BeginGrab`），等同固定连接；每个物体只有一个抓取帧（`SoftBodySimulation.GrabFrame`），帧只有平移（`ApxSoftBody.Simulate` 中的 `float4x4.Translate`）：两把器械不能同时夹持同一物体，夹持处不能扭转 | 未开始 | 两钳口夹持，接触带摩擦，拉力超过阈值时滑脱；同一物体可同时有两处夹持，夹持帧随器械转动 |
@@ -203,7 +207,7 @@ public sealed class ApxHapticBridge
 
 | 编号 | 需求 | 现状 | 状态 | 验收 |
 |---|---|---|---|---|
-| MED-13 | 评分事件与指标 | 没有。需要：切口长度、深度、位置，组织损伤量，超力事件，缝合指标（SUT-8） | 未开始 | 事件 API 与一个标准场景的评分输出 |
+| MED-13 | 评分事件与指标 | 没有。需要：切口长度、深度、位置，组织损伤量，超力事件，缝合指标（SUT-8）。事件来源见 ECO-10 | 未开始 | 事件 API 与一个标准场景的评分输出 |
 | MED-14 | 输入录制与回放 | 同一机器、同一构建下结果逐位一致（`SameInputsGiveBitIdenticalResults`）；基准测试输出节点位置哈希。没有录制与回放 API | 部分完成 | 录制器械位姿与操作序列，回放后 `positionsHash` 与录制时一致 |
 
 ### 3.6 平台
@@ -238,11 +242,11 @@ public sealed class ApxHapticBridge
 | PERF-2 | 基准矩阵的其余维度 | 未覆盖：分辨率 96/128（`resolution` 可由代码设置，Inspector 范围为 4–64）；子步 8/32（`-apxSubsteps` 已支持，未运行）；抓取状态；Armadillo、Thingi10K、真实器官分割网格。2026-10-28：工程内的模型资产可作为基准网格（网格名为 `Assets/...` 路径，顶点取到模型根节点的空间），已运行 3 个 FBX 测试模型（DESIGN 6.2 节）；静止 lattice 中间层的 z 离开落地后倾倒的物体时，刀面改取物体包围盒中心。分辨率 96、128 已运行（2026-10-28，DESIGN 6.3 节，box、Fertility、龙的 FBX）：每步 31–238 ms，切割帧的仿真拓扑重建 62–660 ms，落下后体积比 0.895–0.945，切割帧渲染 37–100 ms；Fertility 128 全切未分开（BUG-14）。未覆盖：子步 8/32、抓取状态、Armadillo、Thingi10K、器官分割网格 | 部分完成 | 上述维度各有一组结果 |
 | PERF-3 | 指标缺口 | Native 内存只有 Unity 总分配量的差值（编辑器中为近似值）；托管分配为 Mono 堆增长量，期间发生 GC 时记为 -1；首次 JIT 耗时在预热中，未单独记录 | 部分完成 | 记录仿真与表面网格的 Native 内存；首次切割帧耗时单独记录 |
 | PERF-4 | batchmode、Player（IL2CPP）与 ARM 数据 | 6.1 节数据来自交互式编辑器（Debug、Jobs Debugger 开启）。batchmode 已运行（`ApxBenchmark.RunBatch`，2026-10-27，16 组，结果文件在 `Benchmarks/Results/`，不提交）；Windows Player（IL2CPP）与 Quest 未测 | 部分完成 | batchmode 运行一次；Windows Player（IL2CPP、Release）与 Quest 各一组结果 |
-| PERF-5 | 仿真拓扑局部重建 | 每个切割帧全量重建：1428 个体素 1.2 ms，77220 个体素 51 ms（6.1 节） | 未开始 | 77220 个体素时切割帧扫掠小于 5 ms；属于 M3 |
+| PERF-5 | 仿真拓扑局部重建 | 每个切割帧全量重建：1428 个体素 1.2 ms，77220 个体素 51 ms（6.1 节）；分辨率 96–128（5.9 万–57.7 万个体素）62–660 ms（6.3 节） | 未开始 | 77220 个体素时切割帧扫掠小于 5 ms；属于 M3，同时是 M6 的剩余条目 |
 | PERF-6 | 表面更新与渲染拓扑重建 | 龙（43.5 万顶点）每帧表面更新 8–11 ms，切割帧表面重建 p95 200–460 ms；box、liver、bunny 分辨率 64 时 p95 约 160 ms。真实网格摸底（DESIGN 6.2 节，2026-10-28）：Fertility（24 万顶点）切割帧重建 p50 / p95 在分辨率 16 时为 556 / 1144 ms、64 时为 90 / 198 ms，龙的 FBX 16 时为 1222 / 2025 ms，交互中刀每经过一帧就卡顿这么久。分阶段耗时（`SurfaceMesh.LastTimings`）：高面数网格以托管代码的三角形拆分为主（龙 16 为 400 ms，网格拓扑上传 42 ms），粗网格、高分辨率以切面几何为主（box 64 为 36.5 ms）；龙每帧顶点写入 6–10 ms、蒙皮 1–3 ms。2026-10-28 已改（DESIGN 第 5 节）：顶点分两个流，位置与法线每次更新一次写入（`SetVertexBufferData`），包围盒取 lattice 节点的包围盒，索引一次写入（`SetIndexBufferData`）；触及切开体素的皮肤三角形在 Burst 中并行拆分（`SplitTrianglesJob`、`MergeSplitsJob`），去掉托管的拆分缓存，容量不足的三角形仍用托管代码（两者结果相同，`SplitJobMatchesTheManagedSplit`）。同一时段前后对比（DESIGN 6.2 节）：切割帧重建 p50 / p95 龙的 FBX 16 由 2231 / 3941 ms 降至 85 / 164 ms，Fertility 16 由 1176 / 2857 降至 77 / 165 ms，dragon 64 由 269 / 483 降至 77 / 126 ms，box 64 由 106 / 383 降至 72 / 216 ms；每帧表面更新龙由 13–15 ms 降至 3.6–5.2 ms。剩余：网格拓扑上传（高面数网格约 40 ms）、切面几何（托管代码，复制仿真数组并遍历全部体素，box 64 为 57 ms）、拆分 10–40 ms；未达到验收的 16 ms，顶点也未在 GPU 上写入。2026-10-28 第二部分（DESIGN 第 5 节）：切面、裂缝面、拟合平面、阻挡三角形与可见副本移到 Burst（`CutGeometryJob`、`MergeCutGeometryJob`、`VisibleCopiesJob`），托管快照只在需要托管拆分时复制；源顶点的单元坐标与静止法线常驻，重建时不再复制；表面更新的计时分出网格上传（`Upload`）。同一批 batchmode 运行的前后对比（相隔约 20 分钟，静止步耗时相近）：切割帧重建 p50 / p95 box 64 由 63.9 / 184.9 ms 降至 22.6 / 49.3 ms（切面几何 51.0 → 3.3 ms），bunny 64 由 66.2 / 212.9 降至 16.1 / 29.8 ms，liver 64 由 41.3 / 179.9 降至 14.9 / 22.5 ms。高面数网格剩下网格上传（Mesh API，龙约 16–25 ms：每次重建整体写入约 10 MB 索引与 9 MB 静态顶点）与拆分（10–45 ms；这段时间另一个编辑器同时在运行，同一代码的拆分耗时在 30–45 ms 之间波动）。去掉 `Mesh.Clear()`、只调整缓冲大小的对照没有稳定收益，未采用。测试 `SplitJobMatchesTheManagedSplit` 改为 `RebuildJobsMatchTheManagedRebuild`，同时比较切面几何 | 部分完成 | 切割帧表面重建 p95 小于 16 ms；顶点在 GPU 上写入（M4） |
 | PERF-7 | 初始化耗时 | box 64 的 4.78 s 中表面细分 3.67 s（`MeshUtil.Subdivide`，托管 List）；龙 64 的 3.93 s 中体素化 2.43 s（`InsideParityJob` 每行遍历全部三角形）。使用 ECO-7 的 blueprint 时两项均跳过；不使用 blueprint 时仍为上述耗时。真实网格（DESIGN 6.2 节）：扫描版兔子 64 的 4.42 s 中准备（含细分）3.20 s；分辨率 128 时体素化约 5 s。2026-10-28 已改（DESIGN 第 2 节）：射线奇偶判定按 (y, z) 行把三角形分桶，近表面距离按 z 层并行，表面细分移到 Burst；节点位置哈希与体素数不变（基准测试 16 组与基线一致，3 个 FBX 模型 12 组前后相同）。同一批 batchmode 运行的前后对比（不使用 blueprint）：box 64 初始化 6.44 → 2.29 s（细分 5.05 → 0.76 s），dragon 64 7.48 → 1.70 s（体素化 4.52 → 0.59 s），Fertility 64 3.73 → 1.38 s，扫描版兔子 64 6.97 → 2.64 s（细分 4.90 → 0.59 s；缠绕数判定未改，体素化仍为 1.7 s）。剩余：体素化后的托管循环（填充率、深度、法线，逐体素）、缠绕数判定、`SurfaceMesh` 构造时逐顶点查找所在体素 | 部分完成 | 两项各降低一个数量级；或由 ECO-7 的 blueprint 缓存替代 |
-| PERF-8 | 自适应 lattice | 分辨率上限 64，lattice 均匀 | 未开始 | 与 MED-7 一起验收 |
-| PERF-9 | 减少子步数的求解方法 | 16 子步、每子步 1 次迭代。候选：Chebyshev 加速、Vertex Block Descent | 未开始 | 评估报告：相同精度下的耗时对比（与 BUG-3 的体积损失一起比较） |
+| PERF-8 | 自适应 lattice | 分辨率上限 64，lattice 均匀 | 未开始 | 与 MED-7 一起验收，排在 PERF-9 与 M4 之后 |
+| PERF-9 | 减少子步数的求解方法 | 16 子步、每子步 1 次迭代，λ 每子步从 0 开始。默认参数下 lattice 的实际刚度低于名义杨氏模量：压痕力为 Hertz 解的 9–32%（HAP-3），落下后体积比 box 64 为 0.972、box 128 为 0.898（BUG-3），有摩擦时漂移 1–2 mm（BUG-2）。候选：子步之间沿用 λ（warm start）、Chebyshev 加速、Vertex Block Descent | 未开始 | 评估报告：相同耗时下比较各方法的 Hertz 压痕力（HAP-3 的测试）、落下后体积比（BUG-3）与摩擦漂移（BUG-2）。结论决定 M4（ECO-4、ENG-7）的求解方法，以及 CFG-4、CFG-10、MED-1、MED-6 的开始时间 |
 | PERF-10 | 开放网格的内外判定 | 已实现（DESIGN 第 2 节）：网格有边界棱时（BUG-10 的统计）格点内外改用广义缠绕数判定（Barill 等 2018 的一阶近似：三角形按重心 Morton 码排序后二分成树，叶节点 8 个三角形，距离大于节点半径 2 倍时用偶极子近似，否则精确计算立体角），缠绕数绝对值大于 1/2 为内部，孔在 lattice 中封闭，渲染表面保留孔；闭合网格仍用射线奇偶，结果不变。扫描版兔子 FBX（223 条边界棱）分辨率 64：两种判定在底部 34 行、817 个格点上不同（奇偶判定在经过孔的行上把 491 个外部格点判为内部、326 个内部格点判为外部），缠绕数判定没有这类行错误；体素化 761 ms（奇偶 675 ms），分辨率 128 时 5.7 s（主要为单线程的近表面距离，见 PERF-7）。限制：SDF 的大小仍为到最近三角形的距离，孔处为到孔边缘的距离 | 已完成 | `OpenMeshIsVoxelizedLikeTheClosedMesh`：去掉 −x 面的盒子（16 条边界棱）按缠绕数判定的格点内外与闭合盒子完全相同、体素相同，奇偶判定有错误的格点；闭合盒子按缠绕数判定与奇偶判定相同。扫描版兔子的判定差异只在孔所在的格点行；基准测试 16 组与基线一致 |
 
 ## 6. 发布与工程
@@ -251,6 +255,8 @@ public sealed class ApxHapticBridge
 |---|---|---|---|---|
 | ENG-1 | 以 UPM 包发布 | 插件在 `Assets/AdaptorPhysX`，没有 `package.json`、版本号与 CHANGELOG；示例在 `Assets/Samples`，不是包内的 `Samples~` | 未开始 | 另一个空工程用 git URL（`?path=`）引用包后编译通过，示例可从 Package Manager 导入，包内 EditMode 测试可运行 |
 | ENG-2 | 自动运行测试 | EditMode 与 PlayMode 测试只在本机 batchmode 或编辑器中手动运行（README）；没有 CI | 未开始 | 推送后自动运行 EditMode 与 PlayMode 测试并保存结果文件；运行环境的配置（含 Unity 许可证）写入 README |
+| ENG-6 | Unity 6 支持 | 工程为 Unity 2022.3.54f1 与内置渲染管线。Obi 7.2 的最低版本为 Unity 6000.0.82f1 | 未开始 | Unity 6 LTS 打开工程后编译通过，EditMode 与 PlayMode 测试通过，标准场景 S1–S12 截图正常；Burst 版本变化使 `positionsHash` 改变时重写基线并在提交中说明。迁移时机待定（ROADMAP“待决定”第 1 项），可与 MED-15 一起进行 |
+| ENG-7 | 求解后端接口 | 求解直接写在 `SoftBodySimulation` 与各个 job 中，`ApxSoftBody`、`SurfaceMesh` 直接读写其中的 NativeArray。Obi 7 先定义 `IObiBackend`、`ISolverImpl`，Burst、Compute 与空后端各实现一套 | 未开始 | 定义求解后端接口（步进、切割、接触数据、渲染与力的读取），现有 Burst 实现放在接口之后，`positionsHash` 与基线一致。ECO-4 的前提 |
 | ENG-3 | 基准测试基线 | 已实现（DESIGN 第 8 节）：`Benchmarks/baseline.json` 入库，记录每组 4 个阶段的 `positionsHash`、全切块数、断棱数、最大的 4 块节点数，以及环境（Unity 版本、CPU、操作系统、托管代码优化、Burst）、设置与网格的顶点数、三角形数（`BenchmarkBaseline`）。基准测试结束时比较两者共有的组，列出不一致的字段；设置或网格不同时不比较；环境不同时给出警告（哈希只在同一机器、同一构建下可比）；`-apxFailOnBaselineDifference` 时不一致则退出码为 1。基线来自 `1f9bcaa`（运行时代码与 `b891564` 相同），在交互式编辑器中运行，16 组与 BUG-12 修复后在工程副本上用 batchmode 运行的结果逐项相同，说明两种运行方式的哈希可比 | 已完成 | 基线文件（例如 `Benchmarks/baseline.json`：每组 4 个阶段的 `positionsHash`、块数、断棱数，以及机器与构建信息）入库；基准测试运行后与基线比较，列出不一致的组 |
 | ENG-4 | 标准场景截图与里程碑验收 | 此前 `docs/images` 中 S1–S6 的截图来自 `1ef1a09`（2026-10-26），早于 BUG-1、BUG-4、BUG-6、BUG-7；S8–S11 来自 `1e35fa0`，早于 BUG-8 的同步子步（`2aec0fe`）。2026-10-27 按 `7389533` 在 batchmode 中重新截取 S1–S6、S8–S11 并更新 `docs/images`：S3 原截图中各块仍贴在一起，看不出切口，截图工具在 S3 之后拉开后侧三块，新增 S3b（5 块分离，切面完整）。与此前的截图相比，S1–S6 除背景中组织块的位置外差别在几千像素以内，S8 中肝叶位置略有变化，S10、S11 逐像素相同；ROADMAP“当前结果”各项仍成立（S8 补充两个物体之后都进入休眠）。S3b 中皮肤边缘与切面交界处有 1–2 像素的台阶（DESIGN 第 7 节，每个体素一个拟合平面）。之后 BUG-11、BUG-12 更新了有切口变化的截图。M1、M2 的人工验收（ROADMAP 决策 5）：2026-10-28 用户试用后确认基本形状上的柔体与交互作为第一个版本通过，已记入 ROADMAP；真实网格不在此次验收范围内（M6） | 已完成 | 用当前提交重新截取 S1–S6、S8–S11，更新 `docs/images` 与 ROADMAP“当前结果”列；M1、M2 的人工验收结果记入 ROADMAP |
 | ENG-5 | 交互工具与调试显示 | 已实现（DESIGN 第 10 节，程序集 `AdaptorPhysX.Tools`，参照 Obi 的粒子渲染组件与 blueprint 编辑器的显示模式）：相机绕中心点旋转、平移、向指针缩放、框选与预设视角（`ApxCameraRig`）；手术刀的航向、侧倾、前倾与竖直深度可调，按下后移动 3 mm 才起刀、航向取刀路方向，可在组织旁起刀，Shift 沿航向直线切割（`ApxScalpelTool`，`ApxBladePose`）；镊子滚轮提起、Shift 松开后保持（`ApxForcepsTool`）；测量点随节点移动（`ApxMeasureTool`）；调试图层：网格、包围盒、lattice、节点、断棱与切口张开量、受力箭头与数值、刀刃与扫掠面，节点按块、运动学帧或速度着色，X-ray 与隐藏表面（`ApxDebugView`）；暂停与单步；面板显示工具状态、按键与各物体统计。两个演示场景改用这些工具（删除 `SurgeryDemoController`），标准场景截图与修改前逐像素相同，截图工具新增 D1–D3。EditMode 测试 6 个（`ToolTests`）。限制：刀的参考方向为世界竖直轴，不按表面法线；镊子只有平移（MED-10）；只支持旧输入系统；单步为一帧的固定步；人工试用中发现手动切割的切口呈锯齿（BUG-11，已修复：固定指针平面、稳定绳、侧别断棱的切口点） | 已完成 | 相机旋转、平移、缩放与预设视角；刀刃朝向可调，切割按该朝向进行；调试图层在 Game 与 Scene 视图中可见；EditMode 测试覆盖刀刃几何、相机数学、三种工具与 lattice、断棱图层 |
@@ -265,11 +271,17 @@ public sealed class ApxHapticBridge
 | 4 | 跨物体碰撞、MeshCollider 与 SDF 器械、局部重建（ECO-1、ECO-2、PERF-5、PERF-6） | 部分完成（ECO-1、ECO-2 已完成，摩擦地面上的推动见 BUG-8；同时完成 ECO-3、ECO-6、ECO-8，ECO-7 部分完成） |
 | 5 | 力反馈计算接口（HAP-1 至 HAP-7，按编号顺序） | 部分完成（HAP-1 至 HAP-4 已完成） |
 | 6 | 体素材料标签 → 非线性与粘弹性材料 → 撕裂（MED-5、MED-1、MED-2、MED-6） | 未开始 |
-| 7 | 缝合：SUT-1、SUT-5、SUT-9 先行；SUT-2 至 SUT-4、SUT-6 依赖穿刺（MED-9）与缝线（ECO-5） | 未开始 |
-| 8 | 真实网格（ROADMAP M6）：ENG-3、BUG-10 → 用高面数测试模型摸底 → PERF-10、PERF-7、PERF-6 → PERF-5、PERF-2、MED-7；BUG-3 / PERF-9 在高分辨率下评估 | 进行中 |
+| 7 | 缝合：SUT-1、SUT-5、SUT-9 并入第 9 项；SUT-2 至 SUT-4、SUT-6 依赖穿刺（MED-9）与缝线（ECO-5） | 未开始 |
+| 8 | 真实网格（ROADMAP M6）：ENG-3、BUG-10 → 用高面数测试模型摸底 → PERF-10、PERF-7、PERF-6 → PERF-5、BUG-13 剩余部分（bunny 64 落地后耳朵持续运动）。2026-10-28 收窄为分辨率不超过 64；PERF-2 的高分辨率数据已记录，MED-7、PERF-8 移到 PERF-9 与 M4 之后 | 进行中（ENG-3、BUG-10、PERF-10 已完成；PERF-6、PERF-7、BUG-13 部分完成；PERF-5 未开始） |
+| 9 | 组织操作闭环（ROADMAP M7）：SUT-1 → ECO-13 → MED-17 → MED-10 → SUT-5、SUT-9 → ECO-10、MED-13 评分示例、MED-14；ECO-11 在需要从表面选取材料点时实现 | 未开始 |
+| 10 | 求解方法评估（PERF-9，与 BUG-3、BUG-2 一起），与第 9 项并行 | 未开始 |
+| 11 | 运行时与平台：ECO-9（局部参考空间）、ECO-12（渲染插值）、ENG-6（Unity 6）与 MED-15（URP）、ENG-7（求解后端接口，M4 之前） | 未开始 |
 
 第 2 项排在参数化之前：BUG-1 与 BUG-2 影响切割结果与基准测试中的“全切结果”列，后续改动需要以此为对照。
 2026-10-28 起第 8 项优先：基本形状上的柔体与交互作为第一个版本通过人工验收（ROADMAP M1、M2），下一阶段的目标为真实网格。
+第 8 项完成后第 9 项为主线，第 10 项并行。第 9 项中只有 MED-17 改变单物体基准的结果（落下阶段，需重写基线），其余条目在不使用附着时 `positionsHash` 不变；第 10 项的对比在 MED-17 之后进行时以重写后的基线为准。
+暂缓：M4（ECO-4，等第 10 项的结论与 ENG-7）；MED-1 至 MED-3、MED-6、CFG-4、CFG-10（等第 10 项的结论）；HAP-5 至 HAP-7（没有设备）；ECO-5。
+ENG-6 与 MED-15 的时机、缝线的实现方式见 ROADMAP“待决定”。
 
 ## 变更记录
 
@@ -324,4 +336,5 @@ public sealed class ApxHapticBridge
 | 2026-10-28 | `64038e9` | 新增 BUG-15（第二刀经过已张开的切口时出现破面），部分完成：切面平面按所隔的两个副本分组拟合，同一皮肤块的顶点用相连的副本求值；削下碎块的问题待修复 |
 | 2026-10-28 | `2098023` | BUG-15 已完成：后一刀不从已有切面上切下少于 16 个实节点的部分（`CutJob.KeepChips`）；新增 EditMode 测试 3 个（`RecutTests`）；单刀的基准测试 16 组与基线一致；更新有变化的 5 张截图。新增 BUG-16（第二刀擦过切口壁时留下细缝，原因未查明） |
 | 2026-10-28 | `1959136` | BUG-16 部分完成：刀路结束时恢复贴着已有切面、未分离的断棱（`EndStroke`、`HealStrokeJob`）；`RecutTests` 新增 3 个用例，倾斜一例改为检查破洞；摆动、斜着切进壁面的缺口仍在。新增 BUG-17（切口贴着体素棱经过时切面上的三角形小孔，原因已确认）。单刀的基准测试 16 组与基线一致 |
-| 2026-10-28 | — | BUG-17 已完成：同一块、在体素内只被落在切面内的断棱隔开的副本按一个区域生成切面（`SurfaceMesh.CutRegions`、`SeparatedNearby`）；新增 EditMode 测试 2 个（`SoftBodyTests`），`RebuildJobsMatchTheManagedRebuild` 的比较移到共用的辅助方法；演示场景单刀切面开口棱 24 → 0；基准测试 16 组与基线一致 |
+| 2026-10-28 | `f5cc1d5` | BUG-17 已完成：同一块、在体素内只被落在切面内的断棱隔开的副本按一个区域生成切面（`SurfaceMesh.CutRegions`、`SeparatedNearby`）；新增 EditMode 测试 2 个（`SoftBodyTests`），`RebuildJobsMatchTheManagedRebuild` 的比较移到共用的辅助方法；演示场景单刀切面开口棱 24 → 0；基准测试 16 组与基线一致 |
+| 2026-10-28 | — | 对照代码、文档与 Obi 7.2 全面核对：新增 ECO-10（事件）、ECO-11（空间查询）、ECO-12（渲染插值）、ECO-13（附着约束）、ENG-6（Unity 6）、ENG-7（求解后端接口）；ECO-9 增加局部参考空间求解与远离原点时的力误差；PERF-9 补充精度数据、候选方法与评估指标；PERF-5、PERF-8、MED-7、ECO-4、MED-13 补充依赖与顺序；建议顺序第 8 项收窄为分辨率不超过 64，新增第 9–11 项；ROADMAP 新增 M7 与“待决定”。运行时代码未改动 |
