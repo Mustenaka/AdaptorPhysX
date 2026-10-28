@@ -597,6 +597,79 @@ namespace AdaptorPhysX.Tests
             Assert.Less(before - TopPieceCenter(sim, cutHeight), 0.01f, "top piece sank into the bottom piece");
         }
 
+        [Test]
+        public void SaggingArmRestsOnTheBodyInsteadOfPassingThrough()
+        {
+            // A C shape of three boxes: lower arm, back and upper arm (0.1 x 0.02 x 0.06 m, 20 mm above the lower
+            // arm), cell 5 mm, on a floor with friction. The soft upper arm sags under its weight onto the lower
+            // arm: a fold of one piece. Pushed apart along the line between two nodes, nodes that had passed each
+            // other under the load were held on the wrong side: the upper arm went through the lower arm and 1103
+            // of the 3864 nodes kept moving faster than 0.05 m/s (TODO BUG-13).
+            FoldCShape(true, out int upper, out int below, out int fast, out float maxSpeed, out int nodes);
+            Assert.Less(below, 0.01f * upper, $"{below} of {upper} upper-arm nodes inside the lower arm");
+            Assert.Less(fast, 0.01f * nodes, $"{fast} of {nodes} nodes faster than 0.05 m/s");
+            Assert.Less(maxSpeed, 0.1f, "nodes shake");
+
+            FoldCShape(false, out upper, out below, out _, out _, out _);
+            Assert.Greater(below, 0.1f * upper, "without contacts the upper arm should pass through the lower arm");
+        }
+
+        /// <summary>
+        /// The C shape of <see cref="SaggingArmRestsOnTheBodyInsteadOfPassingThrough"/> after 240 frames on the floor:
+        /// upper-arm nodes inside their own surface (rest SDF at most 0) below the top of the lower arm, and the nodes
+        /// faster than 0.05 m/s.
+        /// </summary>
+        private void FoldCShape(bool selfCollision, out int upper, out int below, out int fast, out float maxSpeed, out int nodes)
+        {
+            var vertices = new List<float3>();
+            var triangles = new List<int>();
+            void AddBox(float3 center, float3 size)
+            {
+                Mesh mesh = MeshUtil.CreateBox(size, 4);
+                int first = vertices.Count;
+                foreach (Vector3 v in mesh.vertices) vertices.Add((float3)v + center);
+                foreach (int t in mesh.triangles) triangles.Add(first + t);
+                Object.DestroyImmediate(mesh);
+            }
+            const float top = 0.02f;
+            AddBox(new float3(0.0f, 0.01f, 0.0f), new float3(0.1f, 0.02f, 0.06f));
+            AddBox(new float3(-0.04f, 0.03f, 0.0f), new float3(0.02f, 0.06f, 0.06f));
+            AddBox(new float3(0.0f, 0.05f, 0.0f), new float3(0.1f, 0.02f, 0.06f));
+            // The boxes overlap: inside is where the winding number says so.
+            VoxelGrid grid = Voxelizer.Voxelize(vertices.ToArray(), triangles.ToArray(), 0.005f, closed: false);
+            var parameters = SoftBodyParameters.Default;
+            parameters.SelfCollision = selfCollision;
+            var sim = new SoftBodySimulation(grid, parameters, float4x4.identity);
+            _sims.Add(sim);
+            float lowest = float.MaxValue;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                lowest = math.min(lowest, sim.Positions[i].y);
+            }
+            using var floor = new NativeArray<ColliderShape>(new[]
+            {
+                ColliderShape.Box(new float3(0.0f, lowest - 0.5f, 0.0f), quaternion.identity, new float3(1.0f, 0.5f, 1.0f), 0.6f),
+            }, Allocator.Persistent);
+            StepFrames(sim, 240, floor);
+
+            AssertFinite(sim);
+            upper = below = fast = 0;
+            maxSpeed = 0.0f;
+            nodes = sim.NodeCount;
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                float speed = math.length(sim.Velocities[i]);
+                maxSpeed = math.max(maxSpeed, speed);
+                fast += speed > 0.05f ? 1 : 0;
+                float3 rest = sim.RestPositions[i];
+                if (rest.y > 0.03f && rest.x > 0.0f)
+                {
+                    upper++;
+                    below += sim.NodeSdf[i] <= 0.0f && sim.Positions[i].y < top ? 1 : 0;
+                }
+            }
+        }
+
         private static float TopPieceCenter(SoftBodySimulation sim, float cutHeight)
         {
             // Rest positions are body-centred; the body centre sits at 0.001 + Size / 2.

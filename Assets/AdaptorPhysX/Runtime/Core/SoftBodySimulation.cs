@@ -89,6 +89,7 @@ namespace AdaptorPhysX
             public SolveCellsJob Solve;
             public NodeStepJob Node;
             public CopyPositionsJob Copy;
+            public FoldContactJob Fold;
             public bool Contacts;
             public int Substeps;
             public float Dt;
@@ -161,6 +162,19 @@ namespace AdaptorPhysX
         private NativeArray<float3> _snapshot;
         private NativeArray<int> _bucketStart;
         private NativeArray<int> _bucketEntries;
+        // Fold contacts (see FindFoldCandidatesJob): bounding sphere, velocity and piece of every copy, their hash,
+        // the candidate cells of every node, the nodes that have some, and their push in the current substep.
+        private NativeArray<float4> _foldCells;
+        private NativeArray<float3> _foldCellVelocity;
+        private NativeArray<int> _foldCellPiece;
+        private NativeArray<int> _foldBucketStart;
+        private NativeArray<int> _foldEntries;
+        private NativeArray<float> _foldHashScale;
+        private NativeArray<int> _foldCandidate;
+        private NativeArray<float> _foldCandidateGap;
+        private NativeArray<int> _foldCandidateCount;
+        private NativeArray<float3> _foldPush;
+        private NativeList<int> _foldNodes;
 
         public NativeArray<float4x4> FramesStart;
         public NativeArray<float4x4> FramesEnd;
@@ -293,6 +307,9 @@ namespace AdaptorPhysX
 
             _bounds = new NativeArray<float3>(3, Allocator.Persistent);
             _bucketStart = new NativeArray<int>(Contacts.BucketCount + 1, Allocator.Persistent);
+            _foldBucketStart = new NativeArray<int>(Contacts.BucketCount + 1, Allocator.Persistent);
+            _foldHashScale = new NativeArray<float>(2, Allocator.Persistent);
+            _foldNodes = new NativeList<int>(0, Allocator.Persistent);
             FramesStart = new NativeArray<float4x4>(MaxKinematicFrames, Allocator.Persistent);
             FramesEnd = new NativeArray<float4x4>(MaxKinematicFrames, Allocator.Persistent);
             for (int i = 0; i < MaxKinematicFrames; i++)
@@ -331,6 +348,9 @@ namespace AdaptorPhysX
             DisposeNodes();
             DisposeIfCreated(ref _bounds);
             DisposeIfCreated(ref _bucketStart);
+            DisposeIfCreated(ref _foldBucketStart);
+            DisposeIfCreated(ref _foldHashScale);
+            if (_foldNodes.IsCreated) _foldNodes.Dispose();
             DisposeIfCreated(ref FramesStart);
             DisposeIfCreated(ref FramesEnd);
             DisposeInteraction();
@@ -489,6 +509,7 @@ namespace AdaptorPhysX
                 ContactDistance = _contactDistance,
                 ContactCount = _contactCount,
                 Contacts = p.SelfCollision,
+                FoldPush = _foldPush,
                 Dt = h,
                 Gravity = p.Gravity,
                 DampingFactor = math.max(0.0f, 1.0f - p.Damping * h),
@@ -513,10 +534,25 @@ namespace AdaptorPhysX
 
             bool contacts = p.SelfCollision;
             var copy = new CopyPositionsJob { Source = Positions, Destination = _snapshot };
+            var fold = new FoldContactJob
+            {
+                Nodes = _foldNodes.AsDeferredJobArray(),
+                Positions = Positions,
+                Weights = _weights,
+                NodeSdf = _nodeSdf,
+                Copies = Copies.AsArray(),
+                CopyNodes = CopyNodes.AsArray(),
+                Candidate = _foldCandidate,
+                CandidateCount = _foldCandidateCount,
+                MaxPush = CellSize,
+                // Both sides of a fold push out of each other, each by its share of the same overlap.
+                Relaxation = 0.5f,
+                Push = _foldPush,
+            };
             if (contacts)
             {
                 float searchRadius = 1.8f * CellSize;
-                handle = new BuildContactHashJob
+                JobHandle pairs = new BuildContactHashJob
                 {
                     Positions = Positions,
                     ContactNode = _contactNode,
@@ -524,7 +560,7 @@ namespace AdaptorPhysX
                     BucketStart = _bucketStart,
                     Entries = _bucketEntries,
                 }.Schedule(handle);
-                handle = new FindContactsJob
+                pairs = new FindContactsJob
                 {
                     Positions = Positions,
                     RestPositions = RestPositions,
@@ -535,11 +571,11 @@ namespace AdaptorPhysX
                     InverseCellSize = 1.0f / searchRadius,
                     SearchRadius = searchRadius,
                     ContactDistance = 0.8f * CellSize,
-                    NeighbourRestDistance = 1.8f * CellSize,
                     Partner = _contactPartner,
                     Distance = _contactDistance,
                     Count = _contactCount,
-                }.Schedule(NodeCount, 128, handle);
+                }.Schedule(NodeCount, 128, pairs);
+                handle = JobHandle.CombineDependencies(pairs, ScheduleFoldCandidates(handle, dt));
             }
 
             handle = ConfigureInteraction(ref node, handle, dt, substeps, fields, rigidBodies);
@@ -548,12 +584,77 @@ namespace AdaptorPhysX
                 Solve = solve,
                 Node = node,
                 Copy = copy,
+                Fold = fold,
                 Contacts = contacts,
                 Substeps = substeps,
                 Dt = dt,
                 H = h,
                 Handle = handle,
             };
+        }
+
+        /// <summary>
+        /// The cells of its own piece every outer contact node may enter during the step of
+        /// <paramref name="dt"/>, far from it at rest (see <see cref="FindFoldCandidatesJob"/>).
+        /// </summary>
+        private JobHandle ScheduleFoldCandidates(JobHandle handle, float dt)
+        {
+            float margin = 0.5f * CellSize;
+            handle = new FoldCellsJob
+            {
+                Copies = Copies.AsArray(),
+                CopyNodes = CopyNodes.AsArray(),
+                Positions = Positions,
+                Velocities = Velocities,
+                ContactNode = _contactNode,
+                PieceId = PieceId,
+                Cells = _foldCells,
+                CellVelocity = _foldCellVelocity,
+                CellPiece = _foldCellPiece,
+            }.Schedule(CopyCount, 256, handle);
+            handle = new BuildFoldHashJob
+            {
+                Cells = _foldCells,
+                CellVelocity = _foldCellVelocity,
+                CellPiece = _foldCellPiece,
+                Margin = margin,
+                StepDt = dt,
+                MaxReach = 3.0f * CellSize,
+                Scale = _foldHashScale,
+                BucketStart = _foldBucketStart,
+                Entries = _foldEntries,
+            }.Schedule(handle);
+            handle = new FindFoldCandidatesJob
+            {
+                Positions = Positions,
+                Velocities = Velocities,
+                RestPositions = RestPositions,
+                ContactNode = _contactNode,
+                PieceId = PieceId,
+                NodeSdf = _nodeSdf,
+                MinNodeSdf = -0.75f * CellSize,
+                Copies = Copies.AsArray(),
+                CellCoord = CellCoord,
+                Cells = _foldCells,
+                CellVelocity = _foldCellVelocity,
+                CellPiece = _foldCellPiece,
+                BucketStart = _foldBucketStart,
+                Entries = _foldEntries,
+                Scale = _foldHashScale,
+                Origin = Grid.Origin,
+                CellSize = CellSize,
+                StepDt = dt,
+                Margin = margin,
+                Candidate = _foldCandidate,
+                CandidateGap = _foldCandidateGap,
+                Count = _foldCandidateCount,
+            }.Schedule(NodeCount, 128, handle);
+            return new FoldNodesJob
+            {
+                CandidateCount = _foldCandidateCount,
+                Nodes = _foldNodes,
+                Push = _foldPush,
+            }.Schedule(handle);
         }
 
         /// <summary>
@@ -571,11 +672,15 @@ namespace AdaptorPhysX
             node.FinishTimePrev = (s - 1) / (float)substeps;
             node.FinishTime = s / (float)substeps;
             node.PredictTime = (s + 1) / (float)substeps;
-            // Piece contacts every few substeps: each resolution costs two dependent jobs.
-            node.Contacts = _step.Contacts && s > 0 && (s % ContactInterval == 0 || s == substeps);
-            if (node.Contacts)
+            // Fold contacts every substep, piece contacts every few: each costs a job between the solve and
+            // the node job. With fold contacts every second substep only, a soft part falling onto the body
+            // pushes through them, and contact and elasticity push the outer nodes back and forth.
+            node.Folds = _step.Contacts && s > 0;
+            node.Contacts = node.Folds && (s % ContactInterval == 0 || s == substeps);
+            if (node.Folds)
             {
-                handle = _step.Copy.Schedule(NodeCount, 512, handle);
+                JobHandle folds = _step.Fold.Schedule(_foldNodes, 64, handle);
+                handle = node.Contacts ? JobHandle.CombineDependencies(folds, _step.Copy.Schedule(NodeCount, 512, handle)) : folds;
             }
             handle = node.Schedule(NodeCount, NodeBatch, handle);
             _step.Handle = ScheduleRigidCoupling(handle, s, substeps, _step.H, _step.Dt);
@@ -883,6 +988,7 @@ namespace AdaptorPhysX
                 Origin = Grid.Origin,
                 CellSize = h,
                 CellMass = _massDensity * h * h * h,
+                MinNodeMass = _massDensity * h * h * h / 16.0f,
                 HasOld = hasOld,
                 OldRange = CellCopyRange,
                 OldCopies = Copies.AsArray(),
@@ -994,11 +1100,7 @@ namespace AdaptorPhysX
                 NodeReal = NodeReal,
                 ContactNode = _contactNode,
             }.Run();
-            _contactPartner = new NativeArray<int>(count * Contacts.MaxPerNode, Allocator.Persistent);
-            _contactDistance = new NativeArray<float>(count * Contacts.MaxPerNode, Allocator.Persistent);
-            _contactCount = new NativeArray<int>(count, Allocator.Persistent);
-            _snapshot = new NativeArray<float3>(count, Allocator.Persistent);
-            _bucketEntries = new NativeArray<int>(count, Allocator.Persistent);
+            AllocateContacts();
             nodeParent.Dispose();
             nodeRest.Dispose();
             nodeMass.Dispose();
@@ -1009,6 +1111,25 @@ namespace AdaptorPhysX
             new BoundsJob { Positions = Positions, Velocities = Velocities, NodeReal = NodeReal, Bounds = _bounds }.Run();
             TopologyVersion++;
             LastTopologyMilliseconds = (float)timer.Elapsed.TotalMilliseconds;
+        }
+
+        /// <summary>Per-node and per-copy arrays of the piece and fold contacts, for the current topology.</summary>
+        private void AllocateContacts()
+        {
+            int count = NodeCount;
+            _contactPartner = new NativeArray<int>(count * Contacts.MaxPerNode, Allocator.Persistent);
+            _contactDistance = new NativeArray<float>(count * Contacts.MaxPerNode, Allocator.Persistent);
+            _contactCount = new NativeArray<int>(count, Allocator.Persistent);
+            _snapshot = new NativeArray<float3>(count, Allocator.Persistent);
+            _bucketEntries = new NativeArray<int>(count, Allocator.Persistent);
+            _foldCells = new NativeArray<float4>(CopyCount, Allocator.Persistent);
+            _foldCellVelocity = new NativeArray<float3>(CopyCount, Allocator.Persistent);
+            _foldCellPiece = new NativeArray<int>(CopyCount, Allocator.Persistent);
+            _foldEntries = new NativeArray<int>(CopyCount, Allocator.Persistent);
+            _foldCandidate = new NativeArray<int>(count * Contacts.MaxFoldCells, Allocator.Persistent);
+            _foldCandidateGap = new NativeArray<float>(count * Contacts.MaxFoldCells, Allocator.Persistent);
+            _foldCandidateCount = new NativeArray<int>(count, Allocator.Persistent);
+            _foldPush = new NativeArray<float3>(count, Allocator.Persistent);
         }
 
         private void DisposeNodes()
@@ -1032,6 +1153,14 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref _contactCount);
             DisposeIfCreated(ref _snapshot);
             DisposeIfCreated(ref _bucketEntries);
+            DisposeIfCreated(ref _foldCells);
+            DisposeIfCreated(ref _foldCellVelocity);
+            DisposeIfCreated(ref _foldCellPiece);
+            DisposeIfCreated(ref _foldEntries);
+            DisposeIfCreated(ref _foldCandidate);
+            DisposeIfCreated(ref _foldCandidateGap);
+            DisposeIfCreated(ref _foldCandidateCount);
+            DisposeIfCreated(ref _foldPush);
             DisposeInteractionNodes();
         }
 

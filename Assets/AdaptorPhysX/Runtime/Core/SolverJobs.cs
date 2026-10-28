@@ -36,6 +36,9 @@ namespace AdaptorPhysX
         [ReadOnly] public NativeArray<float> ContactDistance;
         [ReadOnly] public NativeArray<int> ContactCount;
         public bool Contacts;
+        /// <summary>Push of every node out of folds of its own piece in this substep (see <see cref="FoldContactJob"/>).</summary>
+        [ReadOnly] public NativeArray<float3> FoldPush;
+        public bool Folds;
         /// <summary>Values of the distance-field shapes.</summary>
         [ReadOnly] public NativeArray<float> Fields;
         /// <summary>Collider impulses per (node block, shape); see <see cref="SoftBodySimulation.NodeBatch"/>.</summary>
@@ -95,6 +98,10 @@ namespace AdaptorPhysX
                 if (Contacts)
                 {
                     x += ContactCorrection(i);
+                }
+                if (Folds)
+                {
+                    x += FoldPush[i];
                 }
                 if (BodyContacts)
                 {
@@ -257,6 +264,138 @@ namespace AdaptorPhysX
                 delta += d / length * ((d0 - length) * wi / (wi + Weights[j]));
             }
             return 0.8f * delta;
+        }
+    }
+
+    /// <summary>
+    /// Push out of folds, before the node job of every substep: each outer node is held outside the cells of
+    /// its own piece that lie far from it at rest (see <see cref="FindFoldCandidatesJob"/>). As in the contact
+    /// between bodies (<see cref="BodyContacts"/>), their rest SDF is linear on each deformed tetrahedron; the
+    /// node is pushed along its gradient until that surface and the node's own (its rest SDF away from it)
+    /// touch, and takes its mass-weighted share. The corners of the cell are pushed back by their own fold
+    /// contacts, so the share is relaxed. Reads the solved positions, which the node job then moves: each node
+    /// writes only its own push (Jacobi). Runs over the nodes with candidates only (<see cref="FoldNodesJob"/>):
+    /// a body without folds would otherwise pass over all its nodes every substep.
+    /// </summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal struct FoldContactJob : IJobParallelForDefer
+    {
+        /// <summary>Nodes with fold candidates in this step.</summary>
+        [ReadOnly] public NativeArray<int> Nodes;
+        [ReadOnly] public NativeArray<float3> Positions;
+        [ReadOnly] public NativeArray<float> Weights;
+        [ReadOnly] public NativeArray<float> NodeSdf;
+        [ReadOnly] public NativeArray<CellCopy> Copies;
+        [ReadOnly] public NativeArray<int> CopyNodes;
+        [ReadOnly] public NativeArray<int> Candidate;
+        [ReadOnly] public NativeArray<int> CandidateCount;
+        /// <summary>Largest push per substep.</summary>
+        public float MaxPush;
+        public float Relaxation;
+        [NativeDisableParallelForRestriction] public NativeArray<float3> Push;
+
+        public void Execute(int index)
+        {
+            int i = Nodes[index];
+            int count = CandidateCount[i];
+            float wi = Weights[i];
+            Push[i] = float3.zero;
+            if (count == 0 || wi <= 0.0f)
+            {
+                return;
+            }
+            float3 x = Positions[i];
+            float best = 0.0f, partnerWeight = 0.0f;
+            float3 normal = float3.zero;
+            for (int k = 0; k < count; k++)
+            {
+                int q = Candidate[i * Contacts.MaxFoldCells + k];
+                int b = q * Lattice.CornerCount;
+                float3 lo = Positions[CopyNodes[b]], hi = lo;
+                for (int c = 1; c < 8; c++)
+                {
+                    float3 p = Positions[CopyNodes[b + c]];
+                    lo = math.min(lo, p);
+                    hi = math.max(hi, p);
+                }
+                if (math.any(x < lo) || math.any(x > hi))
+                {
+                    continue;
+                }
+                int mask = Copies[q].Mask;
+                for (int t = 0; t < Lattice.TetsPerCell; t++)
+                {
+                    int4 tc = BodyContacts.Tet(t);
+                    if (((mask >> tc.x) & (mask >> tc.y) & (mask >> tc.z) & (mask >> tc.w) & 1) == 0)
+                    {
+                        continue;
+                    }
+                    int4 n = new int4(CopyNodes[b + tc.x], CopyNodes[b + tc.y], CopyNodes[b + tc.z], CopyNodes[b + tc.w]);
+                    float3 p0 = Positions[n.x];
+                    float3x3 m = new float3x3(Positions[n.y] - p0, Positions[n.z] - p0, Positions[n.w] - p0);
+                    if (!(math.abs(math.determinant(m)) > 1e-18f))
+                    {
+                        continue;
+                    }
+                    float3x3 inverse = math.inverse(m);
+                    float3 bc = math.mul(inverse, x - p0);
+                    float b0 = 1.0f - math.csum(bc);
+                    const float eps = -1e-5f;
+                    if (b0 < eps || math.any(bc < eps))
+                    {
+                        continue;
+                    }
+                    float s0 = NodeSdf[n.x];
+                    float3 ds = new float3(NodeSdf[n.y], NodeSdf[n.z], NodeSdf[n.w]) - s0;
+                    float3 gradient = math.mul(math.transpose(inverse), ds);
+                    float g = math.length(gradient);
+                    if (g < 0.5f)
+                    {
+                        // On the medial axis of the SDF the depth would be far too large (see BodyContacts).
+                        break;
+                    }
+                    // The rest SDF itself rather than phi / |grad phi| as between bodies: the gradient differs from one
+                    // tetrahedron to the next, and with the node about 1.5 mm from the surface phi / |grad phi| jumped
+                    // by 0.1 mm across their faces, which kept nodes moving to and fro between two tetrahedra.
+                    float depth = -(s0 + math.dot(bc, ds)) - NodeSdf[i];
+                    if (depth > best)
+                    {
+                        best = depth;
+                        normal = gradient / g;
+                        float4 w = new float4(b0, bc);
+                        partnerWeight = w.x * w.x * Weights[n.x] + w.y * w.y * Weights[n.y] +
+                                        w.z * w.z * Weights[n.z] + w.w * w.w * Weights[n.w];
+                    }
+                    // A point lies in one tetrahedron of a cell.
+                    break;
+                }
+            }
+            if (best > 0.0f)
+            {
+                Push[i] = normal * (Relaxation * math.min(best * wi / (wi + partnerWeight), MaxPush));
+            }
+        }
+    }
+
+    /// <summary>The nodes with fold candidates in this step (see <see cref="FoldContactJob"/>); every push starts at zero.</summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal struct FoldNodesJob : IJob
+    {
+        [ReadOnly] public NativeArray<int> CandidateCount;
+        public NativeList<int> Nodes;
+        public NativeArray<float3> Push;
+
+        public void Execute()
+        {
+            Nodes.Clear();
+            for (int i = 0; i < CandidateCount.Length; i++)
+            {
+                Push[i] = float3.zero;
+                if (CandidateCount[i] > 0)
+                {
+                    Nodes.Add(i);
+                }
+            }
         }
     }
 

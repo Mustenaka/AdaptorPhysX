@@ -1,7 +1,7 @@
 {
     "schema": "apx-benchmark-baseline/1",
-    "timestamp": "2026-10-28T11:16:45.0616684+08:00",
-    "gitCommit": "1f9bcaad5b19d17a3bda6776002b06200d911385",
+    "timestamp": "2026-10-28T14:09:56.0342427+08:00",
+    "gitCommit": "2d5e8f8d368c904eb23a320fd8c0925cafe5e548",
     "environment": {
         "unityVersion": "2022.3.54f1",
         "os": "Windows 11  (10.0.26200) 64bit",
@@ -10,7 +10,7 @@
         "jobWorkers": 31,
         "systemMemoryMB": 32496,
         "editor": true,
-        "batchMode": false,
+        "batchMode": true,
         "codeOptimization": "Debug",
         "burstEnabled": true,
         "jobsDebugger": true,
@@ -45,7 +45,7 @@
             "source": "procedural",
             "status": "ok",
             "error": "",
-            "loadMs": 4.818,
+            "loadMs": 3.695,
             "vertices": 1014,
             "triangles": 1728,
             "boundaryEdges": 0,
@@ -61,7 +61,7 @@
             "source": "procedural",
             "status": "ok",
             "error": "",
-            "loadMs": 21.664,
+            "loadMs": 14.959,
             "vertices": 4514,
             "triangles": 9024,
             "boundaryEdges": 0,
@@ -77,7 +77,7 @@
             "source": "Benchmarks/Meshes/bunny.obj",
             "status": "ok",
             "error": "",
-            "loadMs": 1432.502,
+            "loadMs": 1577.812,
             "vertices": 72027,
             "triangles": 144046,
             "boundaryEdges": 0,
@@ -93,11 +93,11 @@
             "source": "Benchmarks/Meshes/dragon.obj",
             "status": "ok",
             "error": "",
-            "loadMs": 7185.075,
+            "loadMs": 19019.019,
             "vertices": 435545,
             "triangles": 871306,
             "boundaryEdges": 0,
-            "nonManifoldEdges": 108,
+            "nonManifoldEdges": 697,
             "sizeM": [
                 0.0671,
                 0.1057,
@@ -109,10 +109,10 @@
         {
             "mesh": "box",
             "resolution": 16,
-            "restHash": "14700bd2086858a6",
-            "dropHash": "7696f3a11dc1a379",
-            "cutHash": "e3825f53653dd7dd",
-            "afterCutHash": "dc603b809031d1ef",
+            "restHash": "8db3d6aa40a6893b",
+            "dropHash": "059b9d7c1d757fbc",
+            "cutHash": "4efc4bdddcc292a6",
+            "afterCutHash": "2f2f26cb2e34e7a6",
             "pieces": 2,
             "severedEdges": 144,
             "largestPieceNodes": [
@@ -123,10 +123,10 @@
         {
             "mesh": "box",
             "resolution": 32,
-            "restHash": "2d15ebdfed85bd2b",
-            "dropHash": "efec26adf7e0ad5d",
-            "cutHash": "42649326ed7f7388",
-            "afterCutHash": "a8784f3538ac0456",
+            "restHash": "358282874ae8fd4f",
+            "dropHash": "71845face1476fdc",
+            "cutHash": "299614a9b7e1ea7b",
+            "afterCutHash": "7aa195a9fe0ed945",
             "pieces": 2,
             "severedEdges": 510,
             "largestPieceNodes": [
@@ -137,38 +137,38 @@
         {
             "mesh": "box",
             "resolution": 48,
-            "restHash": "a3c4cd79316e389f",
-            "dropHash": "879ca72aef1816b8",
-            "cutHash": "f940270035968b66",
-            "afterCutHash": "5e2c4ff2244ea9fa",
+            "restHash": "9f7dc446b09def1f",
+            "dropHash": "74d5650f2a4eb710",
+            "cutHash": "65c87626c4fdd47b",
+            "afterCutHash": "836ef8ab9499462c",
             "pieces": 2,
             "severedEdges": 1075,
             "largestPieceNodes": [
-                18106,
-                17594
+                18104,
+                17596
             ]
         },
         {
             "mesh": "box",
             "resolution": 64,
-            "restHash": "e59382a56da7b429",
-            "dropHash": "2b06dc0fd8f5160a",
-            "cutHash": "10c0c7e487779eef",
-            "afterCutHash": "2e8f383890421d47",
+            "restHash": "178e3bf6fb09909a",
+            "dropHash": "4e0c005c19fc3b3d",
+            "cutHash": "d791533587f3dc80",
+            "afterCutHash": "a95f1daa4a925b2e",
             "pieces": 2,
             "severedEdges": 1899,
             "largestPieceNodes": [
-                41865,
-                41295
+                41868,
+                41292
             ]
         },
         {
             "mesh": "liver",
             "resolution": 16,
-            "restHash": "bfc2a93e63bab865",
-            "dropHash": "a1405dce655c8bef",
-            "cutHash": "1fabaf4de8ec5cda",
-            "afterCutHash": "a1f19831ddd871c3",
+            "restHash": "b27b9cb54152cf42",
+            "dropHash": "45f638ce55ed9687",
+            "cutHash": "c242f9346a618da2",
+            "afterCutHash": "34ec7bdc24e440dc",
             "pieces": 2,
             "severedEdges": 128,
             "largestPieceNodes": [
@@ -179,110 +179,110 @@
         {
             "mesh": "liver",
             "resolution": 32,
-            "restHash": "7ecdd0912488e8f0",
-            "dropHash": "2b26cba443d1093b",
-            "cutHash": "21ef7f8893b0c5db",
-            "afterCutHash": "5ba3be3bae3d29a7",
+            "restHash": "e0b9e29d87113a44",
+            "dropHash": "accbb22d7c6f3900",
+            "cutHash": "99af988be0f2aea9",
+            "afterCutHash": "71b8eeea1c46e950",
             "pieces": 2,
             "severedEdges": 423,
             "largestPieceNodes": [
-                4270,
-                3067
+                4271,
+                3066
             ]
         },
         {
             "mesh": "liver",
             "resolution": 48,
-            "restHash": "b7f2ba358d0b20d7",
-            "dropHash": "de9d6851ee5e641f",
-            "cutHash": "c39e43b9f55abab0",
-            "afterCutHash": "db2a3fc23b74fc78",
+            "restHash": "6d030e83bea717da",
+            "dropHash": "33758a56639dc027",
+            "cutHash": "a942ce6d806a70fb",
+            "afterCutHash": "5ec8b3b73b9a6b3d",
             "pieces": 2,
-            "severedEdges": 862,
+            "severedEdges": 859,
             "largestPieceNodes": [
-                12156,
-                9406
+                12174,
+                9388
             ]
         },
         {
             "mesh": "liver",
             "resolution": 64,
-            "restHash": "e0e7c9a4382f675d",
-            "dropHash": "bd9224a88e6fe2d2",
-            "cutHash": "0d5afc76bf3ad27a",
-            "afterCutHash": "c6ee8757c1991fa4",
+            "restHash": "78ea245b6fe230d9",
+            "dropHash": "56604a9d98a90b04",
+            "cutHash": "be5ae522a2a347dd",
+            "afterCutHash": "1e2f7aba04d2c0d7",
             "pieces": 2,
-            "severedEdges": 1462,
+            "severedEdges": 1464,
             "largestPieceNodes": [
-                25128,
-                22479
+                25148,
+                22459
             ]
         },
         {
             "mesh": "bunny",
             "resolution": 16,
-            "restHash": "8096b1c993bae6a7",
-            "dropHash": "513a0fccdeacf7d8",
-            "cutHash": "b52024ede26d8988",
-            "afterCutHash": "d55cd86ec490638e",
+            "restHash": "22d0d7befccc9be5",
+            "dropHash": "e6356a6c5e6b9dca",
+            "cutHash": "c435b0c6506d3335",
+            "afterCutHash": "e2999e63fec7fe58",
             "pieces": 2,
-            "severedEdges": 216,
+            "severedEdges": 218,
             "largestPieceNodes": [
-                1005,
-                969
+                1003,
+                971
             ]
         },
         {
             "mesh": "bunny",
             "resolution": 32,
-            "restHash": "0bbfcd3c01475e12",
-            "dropHash": "1b51b74f81054283",
-            "cutHash": "14b44a00ea6e4603",
-            "afterCutHash": "bbee427ea4ca966d",
+            "restHash": "b6fad008ca40b637",
+            "dropHash": "158a34d621f6a4c3",
+            "cutHash": "9931d6f9f8cf2708",
+            "afterCutHash": "0694a1e93f774692",
             "pieces": 2,
-            "severedEdges": 740,
+            "severedEdges": 726,
             "largestPieceNodes": [
-                5722,
-                5177
+                5744,
+                5155
             ]
         },
         {
             "mesh": "bunny",
             "resolution": 48,
-            "restHash": "a40efbdb465f454c",
-            "dropHash": "7afdc4f18806661c",
-            "cutHash": "6a0ed1d1f786143e",
-            "afterCutHash": "2eda0abb9a04c678",
+            "restHash": "d8ffe2d037a9f957",
+            "dropHash": "f280570b0bc8bb8b",
+            "cutHash": "9742dd4503a05a11",
+            "afterCutHash": "61c7071b3de65185",
             "pieces": 2,
-            "severedEdges": 1527,
+            "severedEdges": 1540,
             "largestPieceNodes": [
-                17998,
-                13798
+                17934,
+                13862
             ]
         },
         {
             "mesh": "bunny",
             "resolution": 64,
-            "restHash": "f50d19e5d4476016",
-            "dropHash": "a92847c635f98877",
-            "cutHash": "e1c9829b26290a07",
-            "afterCutHash": "e87c28fdce669871",
-            "pieces": 11,
-            "severedEdges": 2866,
+            "restHash": "902bb8e96f34ee75",
+            "dropHash": "4f507c4414880737",
+            "cutHash": "d90eb1fd4da337b3",
+            "afterCutHash": "400c231f2d8a86a6",
+            "pieces": 6,
+            "severedEdges": 641,
             "largestPieceNodes": [
-                46360,
-                23184,
-                1,
-                1
+                67889,
+                1494,
+                164,
+                4
             ]
         },
         {
             "mesh": "dragon",
             "resolution": 16,
-            "restHash": "5893bce4c2cfc1b4",
-            "dropHash": "1e8c6f2648e2ca53",
-            "cutHash": "37fe233ad9a9c5ee",
-            "afterCutHash": "32519883d1b050b3",
+            "restHash": "8da9010d31940077",
+            "dropHash": "776d5f14d0b8e1cc",
+            "cutHash": "0f4ae1ea482671e0",
+            "afterCutHash": "0dff889c189974ad",
             "pieces": 2,
             "severedEdges": 50,
             "largestPieceNodes": [
@@ -293,46 +293,48 @@
         {
             "mesh": "dragon",
             "resolution": 32,
-            "restHash": "f90ad22e10160e66",
-            "dropHash": "2255bf53cd28007e",
-            "cutHash": "eeb5f5b2c131cd9f",
-            "afterCutHash": "e372fb4f482a7e99",
+            "restHash": "81826dcd3b4c16fb",
+            "dropHash": "8924a03edfb6de25",
+            "cutHash": "743c2ad0a3723e9d",
+            "afterCutHash": "7218b43e9995cf94",
             "pieces": 3,
             "severedEdges": 127,
             "largestPieceNodes": [
-                2794,
-                2032,
+                2797,
+                2029,
                 13
             ]
         },
         {
             "mesh": "dragon",
             "resolution": 48,
-            "restHash": "95d71f708af84576",
-            "dropHash": "761e0a888f3ef7db",
-            "cutHash": "6480f615038d7bf9",
-            "afterCutHash": "70d87257d95de56f",
+            "restHash": "ac6fc7f795dc7fcf",
+            "dropHash": "dcba7f1af57bc06c",
+            "cutHash": "77b2beff42517a26",
+            "afterCutHash": "fe23e9ffb0a146fc",
             "pieces": 4,
-            "severedEdges": 213,
+            "severedEdges": 216,
             "largestPieceNodes": [
-                7207,
-                5530,
-                37,
+                7234,
+                5501,
+                39,
                 9
             ]
         },
         {
             "mesh": "dragon",
             "resolution": 64,
-            "restHash": "19c03f1c1d3bd398",
-            "dropHash": "4dc0918dc9443458",
-            "cutHash": "08008cc87397d9bc",
-            "afterCutHash": "a96d8d0c9b9c50a6",
-            "pieces": 2,
-            "severedEdges": 690,
+            "restHash": "b6ae218bc3f46505",
+            "dropHash": "bb951ce7f1849874",
+            "cutHash": "54e960ecc50ee6ec",
+            "afterCutHash": "8797897b3654ee78",
+            "pieces": 4,
+            "severedEdges": 573,
             "largestPieceNodes": [
-                20249,
-                5875
+                14006,
+                12111,
+                6,
+                1
             ]
         }
     ]

@@ -127,7 +127,7 @@ namespace AdaptorPhysX
         }
 
         /// <summary>Corners of tetrahedron <paramref name="t"/> of the Kuhn split (Lattice.TetCorners).</summary>
-        private static int4 Tet(int t)
+        internal static int4 Tet(int t)
         {
             switch (t)
             {
