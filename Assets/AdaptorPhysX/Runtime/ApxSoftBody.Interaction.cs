@@ -88,6 +88,18 @@ namespace AdaptorPhysX
                    Simulation.TryGetFrameWrench(pinIndex + 1, out wrench);
         }
 
+        /// <summary>
+        /// Adds a material point (TODO SUT-1) at a world position in the tissue, e.g. a point on the rendered surface;
+        /// returns its handle, or -1 when no cell holds the position. It moves with the tissue and stays on its side of
+        /// later cuts. <see cref="Rebuild"/> discards the points.
+        /// </summary>
+        public int AddMaterialPoint(Vector3 position) => Simulation?.AddMaterialPoint(position) ?? -1;
+
+        /// <summary>Current world position of a material point from <see cref="AddMaterialPoint"/>.</summary>
+        public Vector3 MaterialPointPosition(int point) => Simulation.MaterialPointPosition(point);
+
+        public bool RemoveMaterialPoint(int point) => Simulation != null && Simulation.RemoveMaterialPoint(point);
+
         private void CollectWrenches()
         {
             if (Simulation == null)

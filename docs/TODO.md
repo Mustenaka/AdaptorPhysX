@@ -69,7 +69,7 @@
 | ECO-10 | 事件 | `ObiSolver.OnCollision`、`OnParticleCollision` 输出每步的接触列表；`ObiContactEventDispatcher` 把接触整理为开始、持续、结束三类事件 | 没有事件。切割结果只能由调用方轮询：`ApxScalpel` 的本刀路断棱数、`CountPieces`、`PieceSizes`；碰撞体接触只能逐个查询 `TryGetColliderWrench` | 未开始 | 步末在主线程触发：切割（本步断棱数、刀路编号）、块数变化（新块的编号与实节点数）、碰撞体接触开始与结束（附 HAP-1 的力）、休眠与唤醒。EditMode 测试：box 全切触发一次块数变化事件，两块的节点数与 `PieceSizes` 一致；球压入后抬起，开始与结束事件各一次。MED-13、SUT-8 使用这些事件 |
 | ECO-11 | 空间查询 | `ObiSolver.EnqueueSpatialQuery`：球、盒、射线等形状与粒子的相交查询，在求解步中批量执行 | 运行时没有查询接口。射线拾取只在工具程序集中（`ApxTool.PickSurface`），返回最近的节点 | 未开始 | 运行时程序集提供：射线与形变后表面求交，返回交点、法线、块编号与 SUT-1 的材料点；球形区域内的节点查询。EditMode 测试：形变后的物体上射线交点到渲染网格三角形的距离小于 0.1h；`ApxTool.PickSurface` 改用该接口 |
 | ECO-12 | 渲染插值 | solver 参数 `interpolation`：显示帧按上两步的结果插值或外推，之后触发 `OnInterpolate` | 在 `ApxSoftBody.FixedUpdate` 中步进，`LateUpdate` 显示最后一步的结果。显示帧率高于物理步频率时（例如 VR 的 72–120 Hz、`fixedDeltaTime` 为 0.02 s），相邻显示帧之间节点位置不变或一次跳过一步；开启插值的 Rigidbody 与组织的显示位置不一致 | 未开始 | 可选的插值模式：表面顶点按上两步的节点位置与 `Time` 中的插值系数计算，不改变仿真结果（`positionsHash` 不变）。EditMode 测试：匀速平移的物体在相邻显示帧之间的显示位移恒定 |
-| ECO-13 | 附着约束 | `ObiParticleAttachment`：Static（粒子为运动学，跟随 Transform）与 Dynamic（带柔度的约束，可约束朝向，约束力超过 `breakThreshold` 时断开）；`ObiContactGrabber` 抓取与碰撞体接触的粒子；`ObiStitcher` 连接两个物体的粒子 | 钉住与抓取都把节点设为运动学节点并绑定到运动学帧（`pinColliders`、`BeginGrab`），最多 32 帧（`MaxKinematicFrames`），帧上节点等同固定连接；抓取帧只有平移，每个物体一个（MED-10）；没有带柔度或可断开的连接 | 未开始 | 依赖 SUT-1。附着由一组材料点与一个 Transform 定义，类型为 Static 或 Dynamic；Dynamic 有柔度、可选的朝向约束与断开力阈值，约束力按 HAP-2 的方式输出。钉住与抓取改用附着实现，附着数不受 32 的限制，抓取帧随器械转动。不使用附着时 `positionsHash` 与基线一致；EditMode 测试：Dynamic 附着的支座反力等于自重（误差小于 1%）；拉力超过阈值时附着断开并触发 ECO-10 的事件 |
+| ECO-13 | 附着约束 | `ObiParticleAttachment`：Static（粒子为运动学，跟随 Transform）与 Dynamic（带柔度的约束，可约束朝向，约束力超过 `breakThreshold` 时断开）；`ObiContactGrabber` 抓取与碰撞体接触的粒子；`ObiStitcher` 连接两个物体的粒子 | 钉住与抓取都把节点设为运动学节点并绑定到运动学帧（`pinColliders`、`BeginGrab`），最多 32 帧（`MaxKinematicFrames`），帧上节点等同固定连接；抓取帧只有平移，每个物体一个（MED-10）；没有带柔度或可断开的连接 | 未开始 | 依赖 SUT-1（已完成）。Static：沿用运动学节点（现有钉住与抓取），帧数不受 32 的限制，抓取帧随器械转动，同一物体可同时有多处抓取，现有钉住与抓取测试的结果不变。Dynamic：一组材料点与一个 Transform 之间带柔度的约束（参照 Obi 的 pin 约束：柔度除以子步长平方、λ 在子步内累积），每个子步在单元求解之后求解，可选朝向约束，约束力 λ / 子步长² 超过阈值时断开，约束力按 HAP-2 的方式输出；目标先只支持运动学的，对 Rigidbody 的反作用以后再加。不使用附着时 `positionsHash` 与基线一致；EditMode 测试：Dynamic 附着的支座反力等于自重（误差小于 1%）；拉力超过阈值时附着断开并触发 ECO-10 的事件 |
 
 ## 3. 医疗仿真需求
 
@@ -102,11 +102,11 @@ SUT-5 不模拟缝线，可以在缝针与缝线之前实现，用于验证切�
 
 | 编号 | 需求 | 现状 | 状态 | 验收 |
 |---|---|---|---|---|
-| SUT-1 | 材料点锚定 | 抓取与钉住通过节点列表绑定到运动学帧（`Attach`，`SoftBodySimulation.cs:714`；最多 32 帧，`MaxKinematicFrames`，`SoftBodySimulation.cs:71`）；没有嵌入在体素副本内的材料点 | 未开始 | 材料点由（体素副本，局部坐标）定义，位置按三线性插值计算；切割后随副本继承；可作为穿刺点、缝线锚点、力反馈接触点使用 |
+| SUT-1 | 材料点锚定 | 已实现（DESIGN 4.4 节）：`MaterialPoint`（副本, u），位置与速度为副本 8 个节点的三线性插值，与渲染表面的嵌入相同；`AddMaterialPoint` 由（副本, u）或世界坐标建立（牛顿法求三线性插值的逆，重叠时取材料最多的副本），`ApxSoftBody.AddMaterialPoint` 用世界坐标；拓扑变化后归入点所在一侧的部分（最近的分隔断棱的切点与静止法向，不能判断时取材料最多的部分）；状态快照包含材料点。EditMode 测试：在皮肤顶点处建立的点在下垂 54 mm 后与顶点相差 0.012 µm（`MaterialPointsMoveWithTheSkin`）；切口两侧的点留在各自一侧与块内（`MaterialPointsKeepTheirSideOfACut`）；与一个角点一起被切下的点留在该角点所在的部分，只按材料会归入另一部分（`MaterialPointCutOffWithACornerStaysWithIt`）；拓扑更新与全量重建的归属逐位相同（`TopologyUpdateMatchesTheRebuild`）。用到材料点的功能在后续条目：穿刺（SUT-2）、缝线锚点（SUT-5）、附着（ECO-13）、器械接触点（MED-17） | 已完成 | 材料点由（体素副本，局部坐标）定义，位置按三线性插值计算；切割后随副本继承；可作为穿刺点、缝线锚点、力反馈接触点使用 |
 | SUT-2 | 缝针穿刺 | 没有（直针穿刺见 MED-9） | 未开始 | 弧形缝针沿轨迹刺入并穿出组织，不产生切口；进针力超过阈值才刺入；针与组织之间有摩擦；记录进针点与出针点（SUT-1 材料点） |
 | SUT-3 | 缝线 | 没有。绳的仿真已冻结（ECO-5，ROADMAP 决策 3） | 未开始 | 缝线可弯曲、长度近似不变，与组织、器械和自身碰撞。开始前需修改 ROADMAP 决策 3 |
 | SUT-4 | 缝线穿过组织 | 没有 | 未开始 | 缝线在穿刺通道内滑动，带摩擦；收紧缝线时切口两侧对合 |
-| SUT-5 | 简化缝合（不模拟缝线） | 没有。另外，按 DESIGN 3.1 节，半切切口两侧属于同一块且静止距离小，不产生接触，对合后切面可能相互穿透 | 未开始 | 每一针为连接切口两侧两个材料点的距离约束，目标长度逐步减小到 0；S6 的切口在皮肤张力下被拉拢闭合；对合后两侧切面不相互穿透 |
+| SUT-5 | 简化缝合（不模拟缝线） | 没有。另外，按 DESIGN 3.1 节，半切切口两侧属于同一块且静止距离小，块间接触与折叠接触都不处理，对合后切面可能相互穿透。切口两壁的节点是同一格点分出的节点，可按断棱的静止法向约束它们不越过对方（切面接触） | 未开始 | 每一针为连接切口两侧两个材料点（SUT-1）的距离约束，与 ECO-13 的 Dynamic 附着在同一个 job 中求解；目标长度从当前距离逐步减小到两点的静止距离（切开前两点的距离；减到 0 会把两壁压进对方）；S6 的切口在皮肤张力下被拉拢闭合；对合后两侧切面不相互穿透（切面接触） |
 | SUT-6 | 打结 | 没有 | 未开始 | 判定结的形成；成结后缝线两段之间改为固定约束，松开器械后缝线张力保持 |
 | SUT-7 | 缝合后的拓扑 | 切割只减少连通（DESIGN 4.2 节），没有重新连接断棱的机制 | 未开始 | 单次训练的时长内一般不需要愈合；如需要，定义断棱重新连接与体素副本合并的规则，并保持 `positionsHash` 可复现 |
 | SUT-8 | 缝合评分指标 | 没有 | 未开始 | 针距、边距（进针点到切口边缘的距离）、进针深度、对合程度、缝线张力；与 MED-13 使用同一事件接口 |
@@ -273,7 +273,7 @@ public sealed class ApxHapticBridge
 | 6 | 体素材料标签 → 非线性与粘弹性材料 → 撕裂（MED-5、MED-1、MED-2、MED-6） | 未开始 |
 | 7 | 缝合：SUT-1、SUT-5、SUT-9 并入第 9 项；SUT-2 至 SUT-4、SUT-6 依赖穿刺（MED-9）与缝线（ECO-5） | 未开始 |
 | 8 | 真实网格（ROADMAP M6）：ENG-3、BUG-10 → 用高面数测试模型摸底 → PERF-10、PERF-7、PERF-6 → PERF-5、BUG-13 剩余部分（bunny 64 落地后耳朵持续运动）。2026-10-28 收窄为分辨率不超过 64；PERF-2 的高分辨率数据已记录，MED-7、PERF-8 移到 PERF-9 与 M4 之后 | 进行中（ENG-3、BUG-10、PERF-10、PERF-5 已完成；PERF-6、PERF-7、BUG-13 部分完成） |
-| 9 | 组织操作闭环（ROADMAP M7）：SUT-1 → ECO-13 → MED-17 → MED-10 → SUT-5、SUT-9 → ECO-10、MED-13 评分示例、MED-14；ECO-11 在需要从表面选取材料点时实现 | 未开始 |
+| 9 | 组织操作闭环（ROADMAP M7）：SUT-1 → ECO-13 → MED-17 → MED-10 → SUT-5、SUT-9 → ECO-10、MED-13 评分示例、MED-14；ECO-11 在需要从表面选取材料点时实现 | 进行中（SUT-1 已完成） |
 | 10 | 求解方法评估（PERF-9，与 BUG-3、BUG-2 一起），与第 9 项并行 | 未开始 |
 | 11 | 运行时与平台：ECO-9（局部参考空间）、ECO-12（渲染插值）、ENG-6（Unity 6）与 MED-15（URP）、ENG-7（求解后端接口，M4 之前） | 未开始 |
 
@@ -338,4 +338,5 @@ ENG-6 与 MED-15 的时机、缝线的实现方式见 ROADMAP“待决定”。
 | 2026-10-28 | `1959136` | BUG-16 部分完成：刀路结束时恢复贴着已有切面、未分离的断棱（`EndStroke`、`HealStrokeJob`）；`RecutTests` 新增 3 个用例，倾斜一例改为检查破洞；摆动、斜着切进壁面的缺口仍在。新增 BUG-17（切口贴着体素棱经过时切面上的三角形小孔，原因已确认）。单刀的基准测试 16 组与基线一致 |
 | 2026-10-28 | `f5cc1d5` | BUG-17 已完成：同一块、在体素内只被落在切面内的断棱隔开的副本按一个区域生成切面（`SurfaceMesh.CutRegions`、`SeparatedNearby`）；新增 EditMode 测试 2 个（`SoftBodyTests`），`RebuildJobsMatchTheManagedRebuild` 的比较移到共用的辅助方法；演示场景单刀切面开口棱 24 → 0；基准测试 16 组与基线一致 |
 | 2026-10-28 | `cd416ab` | 对照代码、文档与 Obi 7.2 全面核对：新增 ECO-10（事件）、ECO-11（空间查询）、ECO-12（渲染插值）、ECO-13（附着约束）、ENG-6（Unity 6）、ENG-7（求解后端接口）；ECO-9 增加局部参考空间求解与远离原点时的力误差；PERF-9 补充精度数据、候选方法与评估指标；PERF-5、PERF-8、MED-7、ECO-4、MED-13 补充依赖与顺序；建议顺序第 8 项收窄为分辨率不超过 64，新增第 9–11 项；ROADMAP 新增 M7 与“待决定”。运行时代码未改动 |
-| 2026-10-29 | — | PERF-5 已完成：只增加断棱的拓扑变化由 `TopologyUpdateJob` 在上次的拓扑上更新，结果与全量重建逐位相同；四面体旋转、块编号、接触节点与断棱的包围盒测试改为并行 job，由 job 写满的数组不再清零；新增 EditMode 测试 `TopologyUpdateMatchesTheRebuild`。box 64 切割帧扫掠 p50 68.8 → 4.9 ms（同一工程副本先后运行修改前后），box 128 634.7 → 46.9 ms；默认 16 组与高分辨率 6 组各阶段的节点位置哈希不变（DESIGN 6.4 节）；BUG-14 补充 Fertility 128 在本次运行中分开 |
+| 2026-10-29 | `7db987a` | PERF-5 已完成：只增加断棱的拓扑变化由 `TopologyUpdateJob` 在上次的拓扑上更新，结果与全量重建逐位相同；四面体旋转、块编号、接触节点与断棱的包围盒测试改为并行 job，由 job 写满的数组不再清零；新增 EditMode 测试 `TopologyUpdateMatchesTheRebuild`。box 64 切割帧扫掠 p50 68.8 → 4.9 ms（同一工程副本先后运行修改前后），box 128 634.7 → 46.9 ms；默认 16 组与高分辨率 6 组各阶段的节点位置哈希不变（DESIGN 6.4 节）；BUG-14 补充 Fertility 128 在本次运行中分开 |
+| 2026-10-29 | — | SUT-1 已完成：材料点（副本, u），位置为副本节点的三线性插值，由（副本, u）或世界坐标建立，拓扑变化后按断棱的切点与法向留在原来一侧，状态快照包含材料点；新增 EditMode 测试 3 个，`TopologyUpdateMatchesTheRebuild` 加入材料点。按 M7 的设计修改 SUT-5（目标长度为静止距离、切面接触）与 ECO-13（Static 沿用运动学节点，Dynamic 作用在材料点上）的验收 |

@@ -341,6 +341,7 @@ namespace AdaptorPhysX
             }
 
             CreateInteraction();
+            _materialPoints = new NativeList<MaterialPoint>(0, Allocator.Persistent);
             RebuildTopology(false);
         }
 
@@ -370,6 +371,7 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref CellCopyRange);
             if (Copies.IsCreated) Copies.Dispose();
             if (CopyNodes.IsCreated) CopyNodes.Dispose();
+            if (_materialPoints.IsCreated) _materialPoints.Dispose();
             DisposeNodes();
             DisposeIfCreated(ref _bounds);
             DisposeIfCreated(ref _bucketStart);
@@ -1163,6 +1165,7 @@ namespace AdaptorPhysX
             copyParent.Dispose();
             DisposeIfCreated(ref _tetRotation);
             _tetRotation = rotations;
+            RemapMaterialPoints(newRange, newCopies);
 
             DisposeNodes();
             CellCopyRange.Dispose();

@@ -1107,6 +1107,7 @@ namespace AdaptorPhysX.Tests
             SoftBodySimulation updated = CreateBox(size, SoftBodyParameters.Default, 16);
             SoftBodySimulation rebuilt = CreateBox(size, SoftBodyParameters.Default, 16);
             rebuilt.TopologyUpdates = false;
+            const float cutX = 0.0123f;
             foreach (SoftBodySimulation sim in new[] { updated, rebuilt })
             {
                 var pinned = new List<int>();
@@ -1118,6 +1119,11 @@ namespace AdaptorPhysX.Tests
                     }
                 }
                 sim.Attach(pinned, 1, float4x4.identity);
+                // Material points beside the strokes follow the copies (SUT-1).
+                foreach (float dx in new[] { -0.3f, 0.3f, 2.0f })
+                {
+                    Assert.GreaterOrEqual(sim.AddMaterialPoint(new float3(cutX + dx * sim.CellSize, 0.01f, 0.0071f + dx * sim.CellSize)), 0);
+                }
             }
             using var shapes = new NativeArray<ColliderShape>(0, Allocator.Persistent);
             int changes = 0, updates = 0;
@@ -1150,7 +1156,6 @@ namespace AdaptorPhysX.Tests
                 return firstUpdated.Value;
             }
 
-            const float cutX = 0.0123f;
             Assert.IsTrue(Stroke(1, new float3(cutX, 0.1f, -0.08f), new float3(cutX, -0.1f, -0.08f), new float3(0.0f, 0.0f, 0.16f)));
             Assert.GreaterOrEqual(updated.CountPieces(), 2);
             SoftBodyState savedUpdated = updated.CaptureState(), savedRebuilt = rebuilt.CaptureState();
@@ -1231,6 +1236,124 @@ namespace AdaptorPhysX.Tests
             AssertSameBits(expected.StrokeTravel, actual.StrokeTravel, context + ", stroke travel");
             AssertSameBits(expected.StrokeDistance, actual.StrokeDistance, context + ", stroke distances");
             AssertSameBits(expected.NodeSdf, actual.NodeSdf, context + ", node SDF");
+            AssertSameBits(expected.MaterialPoints, actual.MaterialPoints, context + ", material points");
+        }
+
+        /// <summary>
+        /// Material points made at the rest positions of skin vertices move with them (TODO SUT-1): the cell and the
+        /// position in it are the vertex's, so is the trilinear interpolation. A point made at a deformed position is there.
+        /// </summary>
+        [Test]
+        public void MaterialPointsMoveWithTheSkin()
+        {
+            SoftBodySimulation sim = CreateBox(new float3(0.12f, 0.03f, 0.05f), SoftBodyParameters.Default, 12,
+                out float3[] rest, out float3[] normals, out Vector2[] uvs, out int[] triangles, 0.0f);
+            var pinned = new List<int>();
+            for (int i = 0; i < sim.NodeCount; i++)
+            {
+                if (sim.RestPositions[i].x < -0.05f)
+                {
+                    pinned.Add(i);
+                }
+            }
+            sim.Attach(pinned, 1, float4x4.identity);
+            using var surface = new SurfaceMesh(sim, rest, normals, uvs, triangles);
+            var points = new List<int>();
+            var vertices = new List<int>();
+            for (int v = 0; v < rest.Length; v += 53)
+            {
+                int point = sim.AddMaterialPoint(math.transform(sim.RestToWorld, rest[v]));
+                Assert.GreaterOrEqual(point, 0, $"vertex {v}");
+                points.Add(point);
+                vertices.Add(v);
+            }
+            StepFrames(sim, 40);
+            surface.Update(float4x4.identity);
+            Vector3[] deformed = surface.Mesh.vertices;
+            float largestMove = 0.0f, worst = 0.0f, worstAgain = 0.0f;
+            for (int i = 0; i < points.Count; i++)
+            {
+                float3 x = sim.MaterialPointPosition(points[i]);
+                largestMove = math.max(largestMove, math.distance(x, math.transform(sim.RestToWorld, rest[vertices[i]])));
+                worst = math.max(worst, math.distance(x, deformed[vertices[i]]));
+                int again = sim.AddMaterialPoint(x);
+                Assert.GreaterOrEqual(again, 0, $"deformed position of point {i}");
+                worstAgain = math.max(worstAgain, math.distance(sim.MaterialPointPosition(again), x));
+            }
+            TestContext.WriteLine($"largest move {largestMove * 1000:F2} mm, skin {worst * 1e6:F3} µm, again {worstAgain * 1e6:F3} µm");
+            Assert.Greater(largestMove, 0.005f, "the free end sags");
+            Assert.Less(worst, 1e-6f);
+            Assert.Less(worstAgain, 1e-6f);
+            Assert.IsTrue(sim.RemoveMaterialPoint(points[0]));
+            Assert.IsFalse(sim.IsMaterialPoint(points[0]));
+            Assert.IsFalse(sim.RemoveMaterialPoint(points[0]));
+        }
+
+        /// <summary>
+        /// Points a fifth of a cell and a cell and a half on either side of a cut through their cells end up in copies whose
+        /// real corners are all on their side, in the two pieces (TODO SUT-1).
+        /// </summary>
+        [Test]
+        public void MaterialPointsKeepTheirSideOfACut()
+        {
+            SoftBodySimulation sim = CreateBox(new float3(Size), gravity: false);
+            float h = sim.CellSize;
+            const float cutX = 0.004f;
+            float[] offsets = { -1.5f, -0.2f, 0.2f, 1.5f };
+            var points = new int[offsets.Length];
+            for (int i = 0; i < offsets.Length; i++)
+            {
+                points[i] = sim.AddMaterialPoint(new float3(cutX + offsets[i] * h, 0.011f, -0.013f));
+                Assert.GreaterOrEqual(points[i], 0);
+            }
+            Assert.Greater(CutPlaneX(sim, cutX, -0.2f, 0.2f), 0);
+            for (int i = 0; i < offsets.Length; i++)
+            {
+                MaterialPoint point = sim.GetMaterialPoint(points[i]);
+                CellCopy copy = sim.Copies[point.Copy];
+                float cellX = sim.Grid.Origin.x + sim.CellCoord[copy.Cell].x * h;
+                Assert.AreEqual(offsets[i] > 0.0f, cellX + point.U.x * h > cutX, $"point {i} moved in its cell");
+                for (int k = 0; k < Lattice.CornerCount; k++)
+                {
+                    if (((copy.Mask >> k) & 1) != 0)
+                    {
+                        Assert.AreEqual(offsets[i] > 0.0f, cellX + Lattice.CornerOffset(k).x * h > cutX, $"point {i}, corner {k}");
+                    }
+                }
+            }
+            Assert.AreEqual(sim.MaterialPointPiece(points[0]), sim.MaterialPointPiece(points[1]));
+            Assert.AreEqual(sim.MaterialPointPiece(points[2]), sim.MaterialPointPiece(points[3]));
+            Assert.AreNotEqual(sim.MaterialPointPiece(points[1]), sim.MaterialPointPiece(points[2]));
+        }
+
+        /// <summary>
+        /// A point cut off with one corner of its cell stays with that corner, although the other seven corners carry more
+        /// of its trilinear weight: the side comes from the cut point and normal of the nearest severed edge (TODO SUT-1).
+        /// </summary>
+        [Test]
+        public void MaterialPointCutOffWithACornerStaysWithIt()
+        {
+            SoftBodySimulation sim = CreateBox(new float3(Size), gravity: false);
+            int3 dims = sim.Grid.Dims;
+            int3 coord = dims / 2;
+            int cell = sim.GridToCell[coord.x + dims.x * (coord.y + dims.y * coord.z)];
+            Assert.AreEqual(1, sim.CellCopyRange[cell].y);
+            int copy = sim.CellCopyRange[cell].x;
+            // The plane x + y + z = 0.9 (cell units) cuts off corner 0; the corner has 0.37 of the weight at the first point.
+            int cutOff = sim.AddMaterialPoint(copy, new float3(0.3f, 0.3f, 0.25f));
+            int rest = sim.AddMaterialPoint(copy, new float3(0.6f, 0.5f, 0.5f));
+            float3 normal = math.normalize(new float3(1.0f));
+            for (int axis = 0; axis < 3; axis++)
+            {
+                Assert.IsTrue(SeverEdge(sim, coord, axis, 0.9f, normal));
+            }
+            // A cut elsewhere rebuilds the topology.
+            Assert.Greater(CutPlaneX(sim, -0.04f, -0.2f, 0.2f), 0);
+            CellCopy a = sim.Copies[sim.GetMaterialPoint(cutOff).Copy], b = sim.Copies[sim.GetMaterialPoint(rest).Copy];
+            Assert.AreEqual(cell, a.Cell);
+            Assert.AreEqual(cell, b.Cell);
+            Assert.AreEqual(0x01, a.Mask);
+            Assert.AreEqual(0xFE, b.Mask);
         }
 
         private static void AssertSameBits<T>(NativeArray<T> expected, NativeArray<T> actual, string what) where T : struct

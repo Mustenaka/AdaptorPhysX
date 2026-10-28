@@ -789,6 +789,7 @@ namespace AdaptorPhysX
                 StrokeNormal = _strokeNormal,
                 StrokeMotion = _strokeMotion,
                 Bounds = _bounds.ToArray(),
+                MaterialPoints = _materialPoints.AsArray().ToArray(),
             };
         }
 
@@ -852,6 +853,11 @@ namespace AdaptorPhysX
             _strokeNormal = state.StrokeNormal;
             _strokeMotion = state.StrokeMotion;
             _bounds.CopyFrom(state.Bounds);
+            _materialPoints.Clear();
+            if (state.MaterialPoints != null)
+            {
+                _materialPoints.CopyFromNBC(state.MaterialPoints);
+            }
             DisposeIfCreated(ref _impulsePartial);
             RebuildInteractionNodes();
             _stuck.CopyFrom(state.Stuck);
@@ -903,6 +909,8 @@ namespace AdaptorPhysX
         public float3 StrokeNormal;
         public float3 StrokeMotion;
         public float3[] Bounds;
+        /// <summary>Material points by handle (TODO SUT-1).</summary>
+        public MaterialPoint[] MaterialPoints;
 
         public int NodeCount => Positions.Length;
     }
