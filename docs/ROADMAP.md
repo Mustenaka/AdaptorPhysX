@@ -37,12 +37,12 @@ S7 留给缝合（TODO SUT-9）。以下交互场景在 `Assets/Samples/Interact
 | S11 | 塑性与粘附 | 塑性材料被球压一次后保留压痕；带粘附的平板抬起时组织表面随之上移，超过粘附距离后脱离 | 压痕保留（中部 30.4 → 25.2 mm）；组织随平板上移 |
 
 以下真实网格场景在 `Assets/Samples/RealMeshDemo/RealMeshDemo.unity` 中（菜单 `AdaptorPhysX/Build Real Mesh Demo Scene` 生成），
-由 `AdaptorPhysX/Capture Real Mesh Scenarios` 按脚本执行并输出截图（2026-10-28，工作树 `dev/m6-perf`）。模型为
+由 `AdaptorPhysX/Capture Real Mesh Scenarios` 按脚本执行并输出截图（2026-10-28，合并 BUG-13 之后的 `f4f14e1`）。模型为
 `Assets/AdaptorPhysX/Arts/Models` 中的 FBX，分辨率 40（体素 4–5 mm），E = 60 kPa。
 
 | 编号 | 场景 | 验收内容 | 当前结果 |
 |---|---|---|---|
-| S12 | 真实网格 | 扫描版兔子（底部有孔）、Fertility（亏格 4）、龙（87 万三角形）静止在桌面上，表面与原模型一致；Fertility、龙全切后拉开，切面完整；镊子提起兔子的耳朵 | Fertility 分成 4862 / 2738、龙分成 5428 / 2810 两块，拉开后切面完整；兔子耳朵提起 3.4 cm。静止后兔子、Fertility 的最大节点速度 1.8、3.5 m/s，不能休眠（TODO BUG-13）；兔子耳朵在自重下下垂 |
+| S12 | 真实网格 | 扫描版兔子（底部有孔）、Fertility（亏格 4）、龙（87 万三角形）静止在桌面上，表面与原模型一致；Fertility、龙全切后拉开，切面完整；镊子提起兔子的耳朵 | Fertility 分成 4861 / 2739、龙分成 5438 / 2800 两块，拉开后切面完整；兔子耳朵提起 3.3 cm。静止后最大节点速度兔子 0.007 m/s、Fertility 与龙低于 0.001 m/s（BUG-13 修改前为 1.8、3.5、0.13 m/s）；兔子耳朵在自重下下垂 |
 
 ## 里程碑
 
