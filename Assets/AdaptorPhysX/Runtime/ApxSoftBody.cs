@@ -6,7 +6,7 @@ using UnityEngine;
 namespace AdaptorPhysX
 {
     /// <summary>
-    /// Cuttable volumetric soft body. Voxelizes the (closed) mesh on Start, simulates
+    /// Cuttable volumetric soft body. Voxelizes the mesh on Start, simulates
     /// it in FixedUpdate and deforms the rendered mesh in LateUpdate.
     /// </summary>
     [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
@@ -16,7 +16,7 @@ namespace AdaptorPhysX
         public static readonly List<ApxSoftBody> Active = new List<ApxSoftBody>();
 
         [Header("Shape")]
-        [Tooltip("Closed surface mesh; defaults to the MeshFilter mesh.")]
+        [Tooltip("Surface mesh, preferably closed (holes are closed in the lattice only); defaults to the MeshFilter mesh.")]
         public Mesh sourceMesh;
         [Tooltip("Lattice cells along the longest axis. A change at runtime takes effect on Rebuild().")]
         [Range(4, 64)] public int resolution = 16;
@@ -188,7 +188,7 @@ namespace AdaptorPhysX
             Mesh mesh = sourceMesh != null ? sourceMesh : _initializedMesh != null ? _initializedMesh : GetComponent<MeshFilter>().sharedMesh;
             if (mesh == null || !mesh.isReadable)
             {
-                Debug.LogError("ApxSoftBody needs a readable closed mesh.", this);
+                Debug.LogError("ApxSoftBody needs a readable mesh.", this);
                 enabled = false;
                 return;
             }
@@ -211,9 +211,9 @@ namespace AdaptorPhysX
                 {
                     Debug.LogWarning($"{name}: the blueprint was baked for other settings and is not used; bake it again.", this);
                 }
-                BuildGeometry(mesh, out restPositions, out restNormals, out restUvs, out restTriangles);
+                BuildGeometry(mesh, out restPositions, out restNormals, out restUvs, out restTriangles, out bool closed);
                 timings.Prepare = Lap(timer);
-                grid = Voxelizer.Voxelize(restPositions, restTriangles, CellSizeFor(mesh));
+                grid = Voxelizer.Voxelize(restPositions, restTriangles, CellSizeFor(mesh), closed);
                 timings.Voxelize = Lap(timer);
             }
             float4x4 restToWorld = float4x4.TRS(transform.position, transform.rotation, new float3(1.0f));
@@ -221,9 +221,12 @@ namespace AdaptorPhysX
             FinishInitialize(mesh, timer, timings, restPositions, restNormals, restUvs, restTriangles);
         }
 
-        /// <summary>Surface mesh in rest space (scaled), subdivided to at most half a cell per edge.</summary>
+        /// <summary>
+        /// Surface mesh in rest space (scaled), subdivided to at most half a cell per edge.
+        /// <paramref name="closed"/> is false when the mesh has boundary edges (holes).
+        /// </summary>
         private void BuildGeometry(Mesh mesh, out float3[] restPositions, out float3[] restNormals, out Vector2[] restUvs,
-            out int[] restTriangles)
+            out int[] restTriangles, out bool closed)
         {
             Vector3 scale = transform.lossyScale;
             var positions = new List<float3>();
@@ -245,10 +248,11 @@ namespace AdaptorPhysX
                 triangles.AddRange(mesh.GetTriangles(s));
             }
             MeshUtil.CountOpenEdges(positions.ToArray(), triangles.ToArray(), out int boundaryEdges, out _);
-            if (boundaryEdges > 0)
+            closed = boundaryEdges == 0;
+            if (!closed)
             {
-                Debug.LogWarning($"{name}: the mesh has {boundaryEdges} boundary edges (holes). Inside and outside are " +
-                                 "decided by ray parity, which fills lattice rows through a hole wrongly; close the mesh.", this);
+                Debug.LogWarning($"{name}: the mesh has {boundaryEdges} boundary edges (holes). The lattice closes them " +
+                                 "(inside and outside by the generalized winding number); the rendered surface keeps them.", this);
             }
 
             MeshUtil.Subdivide(positions, normals, uvs, triangles, 0.5f * CellSizeFor(mesh));

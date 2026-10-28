@@ -55,12 +55,18 @@ namespace AdaptorPhysX
         /// <summary>SDF value, in cells, of the points further than 1.5 cells from the surface.</summary>
         public const float FarCells = 2.0f;
 
+        /// <summary>Triangles per leaf of the winding number tree.</summary>
+        private const int WindingLeafTriangles = 8;
+        /// <summary>A node is replaced by its dipole when the point is further than this many node radii.</summary>
+        private const float WindingBeta = 2.0f;
+
         /// <summary>
-        /// Voxelizes a closed mesh given in rest space. A cell is kept when one of its
-        /// corners is inside the mesh or when it contains a mesh vertex, so every
-        /// vertex can be embedded.
+        /// Voxelizes a mesh given in rest space. A cell is kept when one of its corners is inside the
+        /// mesh or when it contains a mesh vertex, so every vertex can be embedded. Inside and outside
+        /// are decided by ray parity for a closed mesh, and by the generalized winding number for an
+        /// open one (<paramref name="closed"/> false), which closes holes in the lattice.
         /// </summary>
-        public static VoxelGrid Voxelize(float3[] vertices, int[] triangles, float cellSize)
+        public static VoxelGrid Voxelize(float3[] vertices, int[] triangles, float cellSize, bool closed = true)
         {
             float3 min = vertices[0];
             float3 max = vertices[0];
@@ -80,16 +86,37 @@ namespace AdaptorPhysX
             using var tris = new NativeArray<int>(triangles, Allocator.TempJob);
             using var inside = new NativeArray<byte>(pointCount, Allocator.TempJob);
             using var distance = new NativeArray<float>(pointCount, Allocator.TempJob);
+            using var order = new NativeArray<int>(closed ? 0 : triangles.Length / 3, Allocator.TempJob);
+            using var nodes = new NativeList<WindingNode>(Allocator.TempJob);
 
-            var parity = new InsideParityJob
+            JobHandle parity;
+            if (closed)
             {
-                Vertices = verts,
-                Triangles = tris,
-                Origin = grid.Origin,
-                CellSize = cellSize,
-                PointDims = pd,
-                Inside = inside,
-            }.Schedule(pd.y * pd.z, 4);
+                parity = new InsideParityJob
+                {
+                    Vertices = verts,
+                    Triangles = tris,
+                    Origin = grid.Origin,
+                    CellSize = cellSize,
+                    PointDims = pd,
+                    Inside = inside,
+                }.Schedule(pd.y * pd.z, 4);
+            }
+            else
+            {
+                JobHandle tree = new BuildWindingTreeJob { Vertices = verts, Triangles = tris, Order = order, Nodes = nodes }.Schedule();
+                parity = new InsideWindingJob
+                {
+                    Vertices = verts,
+                    Triangles = tris,
+                    Order = order,
+                    Nodes = nodes.AsDeferredJobArray(),
+                    Origin = grid.Origin,
+                    CellSize = cellSize,
+                    PointDims = pd,
+                    Inside = inside,
+                }.Schedule(pointCount, 64, tree);
+            }
             var near = new NearDistanceJob
             {
                 Vertices = verts,
@@ -237,6 +264,199 @@ namespace AdaptorPhysX
                     Inside[i + PointDims.x * (j + PointDims.y * k)] = (byte)(h & 1);
                 }
                 hits.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Node of the bounding tree for fast winding numbers (Barill et al. 2018, first order): far from a
+        /// node, its triangles subtend the solid angle of a dipole, the sum of their area-weighted normals at
+        /// their area-weighted centroid.
+        /// </summary>
+        private struct WindingNode
+        {
+            /// <summary>Range of the node's triangles in the Morton order.</summary>
+            public int Start, Count;
+            /// <summary>Children, -1 for a leaf.</summary>
+            public int Left, Right;
+            public float3 Center;
+            /// <summary>Sum of the triangles' area vectors (half the cross product of two edges).</summary>
+            public float3 Dipole;
+            public float Area;
+            /// <summary>Distance from <see cref="Center"/> that encloses the node's triangles.</summary>
+            public float Radius;
+        }
+
+        /// <summary>
+        /// Sorts the triangles by the Morton code of their centroids and halves the sorted range down to
+        /// leaves of <see cref="WindingLeafTriangles"/>; children follow their parents in the node list.
+        /// </summary>
+        [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+        private struct BuildWindingTreeJob : IJob
+        {
+            [ReadOnly] public NativeArray<float3> Vertices;
+            [ReadOnly] public NativeArray<int> Triangles;
+            public NativeArray<int> Order;
+            public NativeList<WindingNode> Nodes;
+
+            public void Execute()
+            {
+                int count = Triangles.Length / 3;
+                float3 lo = float.MaxValue, hi = float.MinValue;
+                for (int t = 0; t < count; t++)
+                {
+                    float3 c = Centroid(t);
+                    lo = math.min(lo, c);
+                    hi = math.max(hi, c);
+                }
+                float3 scale = 1023.0f / math.max(hi - lo, 1e-12f);
+                var keys = new NativeArray<ulong>(count, Allocator.Temp);
+                for (int t = 0; t < count; t++)
+                {
+                    uint3 q = (uint3)math.clamp((Centroid(t) - lo) * scale, 0.0f, 1023.0f);
+                    ulong morton = Spread(q.x) | (Spread(q.y) << 1) | (Spread(q.z) << 2);
+                    keys[t] = (morton << 32) | (uint)t;
+                }
+                keys.Sort();
+                for (int t = 0; t < count; t++)
+                {
+                    Order[t] = (int)(keys[t] & 0xffffffffUL);
+                }
+                keys.Dispose();
+
+                Nodes.Add(new WindingNode { Start = 0, Count = count, Left = -1, Right = -1 });
+                for (int n = 0; n < Nodes.Length; n++)
+                {
+                    WindingNode node = Nodes[n];
+                    if (node.Count <= WindingLeafTriangles)
+                    {
+                        continue;
+                    }
+                    int half = node.Count / 2;
+                    node.Left = Nodes.Length;
+                    Nodes.Add(new WindingNode { Start = node.Start, Count = half, Left = -1, Right = -1 });
+                    node.Right = Nodes.Length;
+                    Nodes.Add(new WindingNode { Start = node.Start + half, Count = node.Count - half, Left = -1, Right = -1 });
+                    Nodes[n] = node;
+                }
+                for (int n = Nodes.Length - 1; n >= 0; n--)
+                {
+                    WindingNode node = Nodes[n];
+                    if (node.Left < 0)
+                    {
+                        float3 weighted = float3.zero, mean = float3.zero;
+                        for (int i = node.Start; i < node.Start + node.Count; i++)
+                        {
+                            int t = Order[i];
+                            float3 a = Vertices[Triangles[3 * t]], b = Vertices[Triangles[3 * t + 1]], c = Vertices[Triangles[3 * t + 2]];
+                            float3 areaVector = 0.5f * math.cross(b - a, c - a);
+                            float area = math.length(areaVector);
+                            node.Dipole += areaVector;
+                            node.Area += area;
+                            weighted += area * (a + b + c) / 3.0f;
+                            mean += (a + b + c) / 3.0f;
+                        }
+                        node.Center = node.Area > 0.0f ? weighted / node.Area : mean / node.Count;
+                        for (int i = node.Start; i < node.Start + node.Count; i++)
+                        {
+                            int t = Order[i];
+                            for (int k = 0; k < 3; k++)
+                            {
+                                node.Radius = math.max(node.Radius, math.distance(node.Center, Vertices[Triangles[3 * t + k]]));
+                            }
+                        }
+                    }
+                    else
+                    {
+                        WindingNode left = Nodes[node.Left], right = Nodes[node.Right];
+                        node.Dipole = left.Dipole + right.Dipole;
+                        node.Area = left.Area + right.Area;
+                        node.Center = node.Area > 0.0f
+                            ? (left.Area * left.Center + right.Area * right.Center) / node.Area
+                            : 0.5f * (left.Center + right.Center);
+                        node.Radius = math.max(math.distance(node.Center, left.Center) + left.Radius,
+                            math.distance(node.Center, right.Center) + right.Radius);
+                    }
+                    Nodes[n] = node;
+                }
+            }
+
+            private float3 Centroid(int t) =>
+                (Vertices[Triangles[3 * t]] + Vertices[Triangles[3 * t + 1]] + Vertices[Triangles[3 * t + 2]]) / 3.0f;
+
+            /// <summary>Inserts two zero bits between the 10 low bits of <paramref name="v"/>.</summary>
+            private static ulong Spread(uint v)
+            {
+                ulong x = v & 0x3ffUL;
+                x = (x | (x << 16)) & 0x30000ffUL;
+                x = (x | (x << 8)) & 0x300f00fUL;
+                x = (x | (x << 4)) & 0x30c30c3UL;
+                x = (x | (x << 2)) & 0x9249249UL;
+                return x;
+            }
+        }
+
+        /// <summary>
+        /// Generalized winding number at every grid point: the solid angle the surface subtends, over 4π.
+        /// A point is inside when its magnitude exceeds 1/2, so holes are closed and the orientation of a
+        /// consistently oriented mesh does not matter.
+        /// </summary>
+        [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+        private struct InsideWindingJob : IJobParallelFor
+        {
+            [ReadOnly] public NativeArray<float3> Vertices;
+            [ReadOnly] public NativeArray<int> Triangles;
+            [ReadOnly] public NativeArray<int> Order;
+            [ReadOnly] public NativeArray<WindingNode> Nodes;
+            public float3 Origin;
+            public float CellSize;
+            public int3 PointDims;
+            [WriteOnly] public NativeArray<byte> Inside;
+
+            public void Execute(int index)
+            {
+                int x = index % PointDims.x;
+                int y = index / PointDims.x % PointDims.y;
+                int z = index / (PointDims.x * PointDims.y);
+                float3 q = Origin + new float3(x, y, z) * CellSize;
+                float solidAngle = 0.0f;
+                var stack = new FixedList512Bytes<int>();
+                stack.Add(0);
+                while (stack.Length > 0)
+                {
+                    int n = stack[stack.Length - 1];
+                    stack.RemoveAt(stack.Length - 1);
+                    WindingNode node = Nodes[n];
+                    float3 d = node.Center - q;
+                    float distance = math.length(d);
+                    if (distance > WindingBeta * node.Radius)
+                    {
+                        solidAngle += math.dot(node.Dipole, d) / (distance * distance * distance);
+                    }
+                    else if (node.Left < 0)
+                    {
+                        for (int i = node.Start; i < node.Start + node.Count; i++)
+                        {
+                            int t = Order[i];
+                            solidAngle += SolidAngle(Vertices[Triangles[3 * t]] - q, Vertices[Triangles[3 * t + 1]] - q,
+                                Vertices[Triangles[3 * t + 2]] - q);
+                        }
+                    }
+                    else
+                    {
+                        stack.Add(node.Right);
+                        stack.Add(node.Left);
+                    }
+                }
+                Inside[index] = (byte)(math.abs(solidAngle) > 2.0f * math.PI ? 1 : 0);
+            }
+
+            /// <summary>Signed solid angle of a triangle seen from the origin (Van Oosterom and Strackee 1983).</summary>
+            private static float SolidAngle(float3 a, float3 b, float3 c)
+            {
+                float la = math.length(a), lb = math.length(b), lc = math.length(c);
+                float det = math.dot(a, math.cross(b, c));
+                float denominator = la * lb * lc + math.dot(a, b) * lc + math.dot(b, c) * la + math.dot(c, a) * lb;
+                return 2.0f * math.atan2(det, denominator);
             }
         }
 

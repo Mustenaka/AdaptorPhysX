@@ -257,6 +257,44 @@ namespace AdaptorPhysX.Tests
             }
         }
 
+        [Test]
+        public void OpenMeshIsVoxelizedLikeTheClosedMesh()
+        {
+            Mesh box = MeshUtil.CreateBox(new Vector3(0.1f, 0.05f, 0.08f), 4);
+            try
+            {
+                float3[] vertices = System.Array.ConvertAll(box.vertices, v => (float3)v);
+                int[] closed = box.triangles;
+                // The -x face (the first 4 x 4 x 2 triangles) removed: rays along +x enter and never leave.
+                int[] open = closed[(4 * 4 * 2 * 3)..];
+                MeshUtil.CountOpenEdges(vertices, open, out int boundary, out _);
+                Assert.AreEqual(16, boundary);
+                float cell = 0.1f / 8;
+
+                VoxelGrid reference = Voxelizer.Voxelize(vertices, closed, cell);
+                VoxelGrid winding = Voxelizer.Voxelize(vertices, open, cell, closed: false);
+                VoxelGrid parity = Voxelizer.Voxelize(vertices, open, cell, closed: true);
+                VoxelGrid closedWinding = Voxelizer.Voxelize(vertices, closed, cell, closed: false);
+                Assert.AreEqual(reference.Sdf.Length, winding.Sdf.Length);
+                int windingWrong = 0, parityWrong = 0, closedWrong = 0;
+                for (int i = 0; i < reference.Sdf.Length; i++)
+                {
+                    bool inside = reference.Sdf[i] < 0.0f;
+                    windingWrong += winding.Sdf[i] < 0.0f != inside ? 1 : 0;
+                    parityWrong += parity.Sdf[i] < 0.0f != inside ? 1 : 0;
+                    closedWrong += closedWinding.Sdf[i] < 0.0f != inside ? 1 : 0;
+                }
+                Assert.AreEqual(0, windingWrong, "winding number on the open box");
+                Assert.AreEqual(0, closedWrong, "winding number on the closed box");
+                Assert.Greater(parityWrong, 0, "ray parity should fail on the open box");
+                CollectionAssert.AreEqual(reference.Cells, winding.Cells);
+            }
+            finally
+            {
+                Object.DestroyImmediate(box);
+            }
+        }
+
         private static int CountPinned(SoftBodySimulation sim)
         {
             int count = 0;

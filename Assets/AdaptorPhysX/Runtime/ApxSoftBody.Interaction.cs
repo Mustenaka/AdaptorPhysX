@@ -363,11 +363,11 @@ namespace AdaptorPhysX
             Mesh mesh = InputMesh;
             if (mesh == null || !mesh.isReadable)
             {
-                Debug.LogError("ApxSoftBody needs a readable closed mesh to bake a blueprint.", this);
+                Debug.LogError("ApxSoftBody needs a readable mesh to bake a blueprint.", this);
                 return false;
             }
-            BuildGeometry(mesh, out float3[] positions, out float3[] normals, out Vector2[] uvs, out int[] triangles);
-            VoxelGrid grid = Voxelizer.Voxelize(positions, triangles, CellSizeFor(mesh));
+            BuildGeometry(mesh, out float3[] positions, out float3[] normals, out Vector2[] uvs, out int[] triangles, out bool closed);
+            VoxelGrid grid = Voxelizer.Voxelize(positions, triangles, CellSizeFor(mesh), closed);
             target.Store(mesh, resolution, transform.lossyScale, positions, normals, uvs, triangles, grid);
             return true;
         }
