@@ -109,8 +109,8 @@ namespace AdaptorPhysX.Benchmarks.Editor
         }
 
         /// <summary>
-        /// Vertices and triangles (all submeshes) of the first mesh of a model or mesh asset. Vertices are taken
-        /// to the model's root space, so the axis conversion of an FBX child (rotation, scale) applies.
+        /// Vertices and triangles (all submeshes) of the first mesh of a model or mesh asset, rotated and scaled as in
+        /// the model (<see cref="ToRoot"/>), so the FBX axis conversion applies.
         /// </summary>
         public static void ReadModelAsset(string path, out Vector3[] positions, out int[] triangles)
         {
@@ -125,9 +125,7 @@ namespace AdaptorPhysX.Benchmarks.Editor
             {
                 throw new InvalidOperationException($"{path}: enable Read/Write in the import settings.");
             }
-            Matrix4x4 toRoot = filter != null
-                ? model.transform.worldToLocalMatrix * filter.transform.localToWorldMatrix
-                : Matrix4x4.identity;
+            Matrix4x4 toRoot = filter != null ? ToRoot(filter.transform, model.transform) : Matrix4x4.identity;
             positions = mesh.vertices;
             for (int i = 0; i < positions.Length; i++)
             {
@@ -139,6 +137,25 @@ namespace AdaptorPhysX.Benchmarks.Editor
                 indices.AddRange(mesh.GetTriangles(s));
             }
             triangles = indices.ToArray();
+        }
+
+        /// <summary>
+        /// Rotation and scale of <paramref name="t"/> in the model, composed from the local values of each level up
+        /// to and including the model's root (without its position): a single-mesh FBX keeps the mesh on the root,
+        /// whose rotation and scale carry the axis conversion.
+        /// </summary>
+        public static Matrix4x4 ToRoot(Transform t, Transform root)
+        {
+            Matrix4x4 m = Matrix4x4.identity;
+            for (; t != null; t = t.parent)
+            {
+                m = Matrix4x4.TRS(t == root ? Vector3.zero : t.localPosition, t.localRotation, t.localScale) * m;
+                if (t == root)
+                {
+                    break;
+                }
+            }
+            return m;
         }
 
         /// <summary>
