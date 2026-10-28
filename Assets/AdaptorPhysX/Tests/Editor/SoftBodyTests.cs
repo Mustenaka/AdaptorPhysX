@@ -1,8 +1,10 @@
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using Unity.Collections;
 using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace AdaptorPhysX.Tests
 {
@@ -212,6 +214,46 @@ namespace AdaptorPhysX.Tests
                 Object.DestroyImmediate(bodyObject);
                 Object.DestroyImmediate(pinObject);
                 Object.DestroyImmediate(mesh);
+            }
+        }
+
+        [Test]
+        public void OpenMeshWarnsOnInitialize()
+        {
+            var bodyObject = new GameObject("Open Mesh Test", typeof(MeshFilter), typeof(MeshRenderer));
+            Mesh closed = MeshUtil.CreateBox(new Vector3(0.1f, 0.05f, 0.08f), 4);
+            Mesh open = MeshUtil.CreateBox(new Vector3(0.1f, 0.05f, 0.08f), 4);
+            int[] triangles = open.triangles;
+            open.triangles = triangles[3..];
+            ApxSoftBody body = null;
+            try
+            {
+                MeshUtil.CountOpenEdges(System.Array.ConvertAll(closed.vertices, v => (float3)v), closed.triangles,
+                    out int closedBoundary, out int closedNonManifold);
+                MeshUtil.CountOpenEdges(System.Array.ConvertAll(open.vertices, v => (float3)v), open.triangles,
+                    out int openBoundary, out _);
+                Assert.AreEqual(0, closedBoundary);
+                Assert.AreEqual(0, closedNonManifold);
+                Assert.AreEqual(3, openBoundary);
+
+                body = bodyObject.AddComponent<ApxSoftBody>();
+                body.resolution = 8;
+                body.sourceMesh = closed;
+                body.Initialize();
+                LogAssert.NoUnexpectedReceived();
+                Assert.IsTrue(body.IsInitialized);
+
+                body.sourceMesh = open;
+                LogAssert.Expect(LogType.Warning, new Regex("has 3 boundary edges"));
+                body.Rebuild();
+                Assert.IsTrue(body.IsInitialized);
+            }
+            finally
+            {
+                body?.Release();
+                Object.DestroyImmediate(bodyObject);
+                Object.DestroyImmediate(closed);
+                Object.DestroyImmediate(open);
             }
         }
 

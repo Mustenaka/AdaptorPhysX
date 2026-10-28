@@ -244,6 +244,12 @@ namespace AdaptorPhysX
             {
                 triangles.AddRange(mesh.GetTriangles(s));
             }
+            MeshUtil.CountOpenEdges(positions.ToArray(), triangles.ToArray(), out int boundaryEdges, out _);
+            if (boundaryEdges > 0)
+            {
+                Debug.LogWarning($"{name}: the mesh has {boundaryEdges} boundary edges (holes). Inside and outside are " +
+                                 "decided by ray parity, which fills lattice rows through a hole wrongly; close the mesh.", this);
+            }
 
             MeshUtil.Subdivide(positions, normals, uvs, triangles, 0.5f * CellSizeFor(mesh));
             restPositions = positions.ToArray();

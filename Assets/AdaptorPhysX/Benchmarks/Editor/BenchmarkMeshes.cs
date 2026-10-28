@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -47,7 +48,8 @@ namespace AdaptorPhysX.Benchmarks.Editor
             }
 
             Bounds bounds = Normalize(positions, size);
-            CountOpenEdges(positions, triangles, out info.boundaryEdges, out info.nonManifoldEdges);
+            MeshUtil.CountOpenEdges(Array.ConvertAll(positions, p => (float3)p), triangles,
+                out info.boundaryEdges, out info.nonManifoldEdges);
             info.vertices = positions.Length;
             info.triangles = triangles.Length / 3;
             info.sizeM = new[] { Math.Round(bounds.size.x, 4), Math.Round(bounds.size.y, 4), Math.Round(bounds.size.z, 4) };
@@ -160,50 +162,6 @@ namespace AdaptorPhysX.Benchmarks.Editor
                 positions[i] = (positions[i] - bounds.center) * scale;
             }
             return new Bounds(Vector3.zero, bounds.size * scale);
-        }
-
-        /// <summary>
-        /// Edges used by one triangle (holes) and by more than two (non-manifold), after welding equal
-        /// positions. Zero and zero means the surface is closed, as the voxelizer requires.
-        /// </summary>
-        private static void CountOpenEdges(Vector3[] positions, int[] triangles, out int boundary, out int nonManifold)
-        {
-            var weld = new Dictionary<Vector3, int>(positions.Length);
-            var id = new int[positions.Length];
-            for (int i = 0; i < positions.Length; i++)
-            {
-                if (!weld.TryGetValue(positions[i], out id[i]))
-                {
-                    id[i] = weld.Count;
-                    weld.Add(positions[i], id[i]);
-                }
-            }
-            var keys = new List<long>(triangles.Length);
-            for (int t = 0; t < triangles.Length; t += 3)
-            {
-                for (int e = 0; e < 3; e++)
-                {
-                    int a = id[triangles[t + e]], b = id[triangles[t + (e + 1) % 3]];
-                    if (a != b)
-                    {
-                        keys.Add(a < b ? ((long)a << 32) | (uint)b : ((long)b << 32) | (uint)a);
-                    }
-                }
-            }
-            keys.Sort();
-            boundary = 0;
-            nonManifold = 0;
-            for (int i = 0; i < keys.Count;)
-            {
-                int j = i + 1;
-                while (j < keys.Count && keys[j] == keys[i])
-                {
-                    j++;
-                }
-                boundary += j - i == 1 ? 1 : 0;
-                nonManifold += j - i > 2 ? 1 : 0;
-                i = j;
-            }
         }
 
         private static float ParseFloat(string s) => float.Parse(s, NumberStyles.Float, CultureInfo.InvariantCulture);

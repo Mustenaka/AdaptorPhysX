@@ -1,4 +1,7 @@
 using System.Collections.Generic;
+using Unity.Burst;
+using Unity.Collections;
+using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -7,6 +10,75 @@ namespace AdaptorPhysX
 {
     public static class MeshUtil
     {
+        /// <summary>
+        /// Edges used by one triangle (holes) and by more than two (non-manifold), after welding equal
+        /// positions. The voxelizer's ray parity needs no boundary edges; non-manifold edges where closed
+        /// sheets touch (the Stanford dragon has 108) do not disturb it.
+        /// </summary>
+        public static void CountOpenEdges(float3[] positions, int[] triangles, out int boundaryEdges, out int nonManifoldEdges)
+        {
+            using var nativePositions = new NativeArray<float3>(positions, Allocator.TempJob);
+            using var nativeTriangles = new NativeArray<int>(triangles, Allocator.TempJob);
+            using var counts = new NativeArray<int>(2, Allocator.TempJob);
+            new OpenEdgesJob { Positions = nativePositions, Triangles = nativeTriangles, Counts = counts }.Run();
+            boundaryEdges = counts[0];
+            nonManifoldEdges = counts[1];
+        }
+
+        [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+        private struct OpenEdgesJob : IJob
+        {
+            [ReadOnly] public NativeArray<float3> Positions;
+            [ReadOnly] public NativeArray<int> Triangles;
+            public NativeArray<int> Counts;
+
+            public void Execute()
+            {
+                var weld = new NativeParallelHashMap<float3, int>(Positions.Length, Allocator.Temp);
+                var id = new NativeArray<int>(Positions.Length, Allocator.Temp);
+                int welded = 0;
+                for (int i = 0; i < Positions.Length; i++)
+                {
+                    if (!weld.TryGetValue(Positions[i], out int w))
+                    {
+                        w = welded++;
+                        weld.Add(Positions[i], w);
+                    }
+                    id[i] = w;
+                }
+                var keys = new NativeList<long>(Triangles.Length, Allocator.Temp);
+                for (int t = 0; t < Triangles.Length; t += 3)
+                {
+                    for (int e = 0; e < 3; e++)
+                    {
+                        int a = id[Triangles[t + e]], b = id[Triangles[t + (e + 1) % 3]];
+                        if (a != b)
+                        {
+                            keys.Add(a < b ? ((long)a << 32) | (uint)b : ((long)b << 32) | (uint)a);
+                        }
+                    }
+                }
+                keys.Sort();
+                int boundary = 0, nonManifold = 0;
+                for (int i = 0; i < keys.Length;)
+                {
+                    int j = i + 1;
+                    while (j < keys.Length && keys[j] == keys[i])
+                    {
+                        j++;
+                    }
+                    boundary += j - i == 1 ? 1 : 0;
+                    nonManifold += j - i > 2 ? 1 : 0;
+                    i = j;
+                }
+                Counts[0] = boundary;
+                Counts[1] = nonManifold;
+                keys.Dispose();
+                id.Dispose();
+                weld.Dispose();
+            }
+        }
+
         /// <summary>
         /// Splits every edge longer than <paramref name="maxEdge"/> (shared midpoints, so no
         /// T-junctions) until none remain. Incisions on the skin follow triangle edges, so the
