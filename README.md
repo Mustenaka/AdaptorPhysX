@@ -176,6 +176,9 @@ batchmode 运行（工程不能同时在编辑器中打开）。参数均可省�
 ```
 
 编辑器内使用菜单 `AdaptorPhysX/Run Benchmarks`。测量内容与 JSON 字段见 `docs/DESIGN.md` 第 8 节。
+运行结束时与入库的 `Benchmarks/baseline.json` 比较各阶段的节点位置哈希、块数与断棱数，日志列出不一致的组
+（哈希只在同一机器、同一构建下可比）。改动有意改变仿真结果时加 `-apxWriteBaseline`
+（或菜单 `AdaptorPhysX/Run Benchmarks and Write Baseline`）重写基线。
 
 ## 历史
 

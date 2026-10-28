@@ -15,6 +15,8 @@ namespace AdaptorPhysX.Benchmarks.Editor
         public SettingsInfo settings;
         public List<MeshInfo> meshes = new List<MeshInfo>();
         public List<CaseResult> cases = new List<CaseResult>();
+        /// <summary>Comparison with <see cref="BenchmarkBaseline"/>; empty path when none was made.</summary>
+        public BaselineComparison baseline;
     }
 
     [Serializable]

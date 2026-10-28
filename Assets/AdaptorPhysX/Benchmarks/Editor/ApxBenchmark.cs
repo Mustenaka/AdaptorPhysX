@@ -25,7 +25,10 @@ namespace AdaptorPhysX.Benchmarks.Editor
     /// in another editor):
     /// Unity -batchmode -projectPath . -executeMethod AdaptorPhysX.Benchmarks.Editor.ApxBenchmark.RunBatch
     ///   [-apxBenchmarkOut &lt;file.json&gt;] [-apxMeshes box,bunny,liver,dragon] [-apxResolutions 16,32,48,64]
-    ///   [-apxSubsteps 16] [-apxSteps 60]
+    ///   [-apxSubsteps 16] [-apxSteps 60] [-apxBaseline &lt;baseline.json&gt;|none] [-apxWriteBaseline]
+    ///   [-apxFailOnBaselineDifference]
+    /// The run is compared with the baseline (<see cref="BenchmarkBaseline"/>, default Benchmarks/baseline.json
+    /// when it exists); -apxWriteBaseline replaces the baseline with this run instead.
     /// </summary>
     public static class ApxBenchmark
     {
@@ -47,6 +50,10 @@ namespace AdaptorPhysX.Benchmarks.Editor
             public float Size = 0.15f;
             /// <summary>Output file; defaults to Benchmarks/Results/apx-benchmark-&lt;time&gt;.json.</summary>
             public string Output;
+            /// <summary>Baseline to compare with (or to write); "none" skips the comparison.</summary>
+            public string Baseline = BenchmarkBaseline.DefaultPath;
+            /// <summary>Writes this run as the new baseline instead of comparing with it.</summary>
+            public bool WriteBaseline;
         }
 
         private struct FrameTime
@@ -64,7 +71,19 @@ namespace AdaptorPhysX.Benchmarks.Editor
             }
         }
 
+        [MenuItem("AdaptorPhysX/Run Benchmarks and Write Baseline")]
+        public static void RunWriteBaselineMenu()
+        {
+            if (EditorUtility.DisplayDialog("AdaptorPhysX Benchmark",
+                    $"Run the benchmark and replace {BenchmarkBaseline.DefaultPath} with its results?", "Run", "Cancel") &&
+                EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+            {
+                EditorUtility.RevealInFinder(RunKeepingScenes(new Settings { WriteBaseline = true }));
+            }
+        }
+
         [MenuItem("AdaptorPhysX/Run Benchmarks", true)]
+        [MenuItem("AdaptorPhysX/Run Benchmarks and Write Baseline", true)]
         private static bool CanRun() => !EditorApplication.isPlayingOrWillChangePlaymode;
 
         /// <summary>
@@ -128,8 +147,14 @@ namespace AdaptorPhysX.Benchmarks.Editor
             int code = 0;
             try
             {
-                Run(ParseArguments(Environment.GetCommandLineArgs()), out BenchmarkReport report);
+                string[] args = Environment.GetCommandLineArgs();
+                Run(ParseArguments(args), out BenchmarkReport report);
                 code = report.cases.Any(c => c.status == "error") || report.meshes.Any(m => m.status == "error") ? 1 : 0;
+                if (Array.IndexOf(args, "-apxFailOnBaselineDifference") >= 0 &&
+                    (report.baseline == null || string.IsNullOrEmpty(report.baseline.path) || !report.baseline.Matches))
+                {
+                    code = 1;
+                }
             }
             catch (Exception e)
             {
@@ -164,6 +189,11 @@ namespace AdaptorPhysX.Benchmarks.Editor
             {
                 settings.Steps = int.Parse(steps);
             }
+            if (Value("-apxBaseline") is string baseline)
+            {
+                settings.Baseline = baseline;
+            }
+            settings.WriteBaseline = Array.IndexOf(args, "-apxWriteBaseline") >= 0;
             return settings;
         }
 
@@ -236,9 +266,47 @@ namespace AdaptorPhysX.Benchmarks.Editor
                     UnityEngine.Object.DestroyImmediate(mesh);
                 }
             }
+            ApplyBaseline(settings, report);
             File.WriteAllText(path, JsonUtility.ToJson(report, true));
             Debug.Log($"[ApxBenchmark] wrote {path}");
             return path;
+        }
+
+        /// <summary>Writes the run as the baseline, or compares it with the baseline and logs the differences.</summary>
+        private static void ApplyBaseline(Settings settings, BenchmarkReport report)
+        {
+            if (string.IsNullOrEmpty(settings.Baseline) || settings.Baseline == "none")
+            {
+                return;
+            }
+            if (settings.WriteBaseline)
+            {
+                BenchmarkBaseline.FromReport(report).Save(settings.Baseline);
+                Debug.Log($"[ApxBenchmark] wrote the baseline {Path.GetFullPath(settings.Baseline)}");
+                return;
+            }
+            if (!File.Exists(settings.Baseline))
+            {
+                Debug.Log($"[ApxBenchmark] no baseline at {settings.Baseline}; not compared");
+                return;
+            }
+            BaselineComparison comparison = BenchmarkBaseline.Load(settings.Baseline).Compare(report, settings.Baseline);
+            report.baseline = comparison;
+            foreach (string difference in comparison.environmentDifferences)
+            {
+                Debug.LogWarning($"[ApxBenchmark] environment differs from the baseline, hashes may differ: {difference}");
+            }
+            foreach (string difference in comparison.settingsDifferences)
+            {
+                Debug.LogWarning($"[ApxBenchmark] not compared with the baseline: {difference}");
+            }
+            foreach (BaselineDifference difference in comparison.differences)
+            {
+                Debug.LogWarning($"[ApxBenchmark] differs from the baseline: {difference}");
+            }
+            Debug.Log($"[ApxBenchmark] baseline {settings.Baseline} ({comparison.baselineCommit}): " +
+                      $"{comparison.matching} of {comparison.compared} cases match" +
+                      (comparison.notCompared.Count > 0 ? $", not compared: {string.Join(", ", comparison.notCompared)}" : ""));
         }
 
         /// <summary>A small case that is not reported: Burst compilation and first use of the managed code happen here.</summary>

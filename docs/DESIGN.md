@@ -267,6 +267,12 @@
   - 每个阶段记录每步耗时与表面更新耗时的 mean/min/p50/p95/p99/max、节点位置是否有限、最大速度、节点位置的 FNV-1a 哈希
     （同一机器、同一构建下用于回归比较）。环境信息含编辑器的托管代码优化级别、Burst、Jobs Debugger 与泄漏检测状态，
     这几项对编辑器中的耗时影响明显，比较结果时需一致。
+  - 基线（`BenchmarkBaseline.cs`，TODO ENG-3）：`Benchmarks/baseline.json` 入库，保存每组 4 个阶段的哈希、全切块数、断棱数
+    与最大的 4 块节点数，以及环境、设置和网格的顶点数、三角形数。每次运行结束时与基线比较两者共有的组，
+    结果写入报告的 `baseline` 字段并输出到日志：设置或网格不同时不比较；Unity 版本、CPU、操作系统、托管代码优化或 Burst
+    不同时给出警告。交互式编辑器与 batchmode 的哈希相同（2026-10-28，16 组逐项相同）。
+    `Settings.WriteBaseline`（`-apxWriteBaseline`，菜单 `AdaptorPhysX/Run Benchmarks and Write Baseline`）用本次结果重写基线；
+    `-apxBaseline none` 不比较；`-apxFailOnBaselineDifference` 时不一致则退出码为 1。
 
 ## 9. 器械、刚体与物体之间的交互
 

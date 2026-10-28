@@ -26,6 +26,9 @@
    - 编辑器已打开工程时，通过 MCP 调用 `ApxBenchmark.ScheduleKeepingScenes(settings)`。
      不要同步调用 `RunKeepingScenes`：完整运行需要约 150 s，超过 MCP 应答超时后命令会被重发，基准测试会重复运行。
    - 同一机器、同一构建下各阶段的 `positionsHash` 应一致，可用于判断改动是否改变了仿真结果。
+     运行结束时自动与 `Benchmarks/baseline.json`（ENG-3）比较，日志与结果 JSON 的 `baseline` 字段列出不一致的组。
+     改动有意改变仿真结果时，用 `WriteBaseline = true`（batchmode 为 `-apxWriteBaseline`，菜单为
+     `Run Benchmarks and Write Baseline`）重写基线，并在提交中写明哪些组改变及原因。
 4. 完成后更新本文件中条目的状态与现状，并在“变更记录”中加一行。
 
 ## 1. 缺陷
@@ -243,7 +246,7 @@ public sealed class ApxHapticBridge
 |---|---|---|---|---|
 | ENG-1 | 以 UPM 包发布 | 插件在 `Assets/AdaptorPhysX`，没有 `package.json`、版本号与 CHANGELOG；示例在 `Assets/Samples`，不是包内的 `Samples~` | 未开始 | 另一个空工程用 git URL（`?path=`）引用包后编译通过，示例可从 Package Manager 导入，包内 EditMode 测试可运行 |
 | ENG-2 | 自动运行测试 | EditMode 与 PlayMode 测试只在本机 batchmode 或编辑器中手动运行（README）；没有 CI | 未开始 | 推送后自动运行 EditMode 与 PlayMode 测试并保存结果文件；运行环境的配置（含 Unity 许可证）写入 README |
-| ENG-3 | 基准测试基线 | 判断改动是否改变仿真结果时比较 16 组 4 个阶段的 `positionsHash`；结果文件在 `Benchmarks/Results/`（不提交），对照值只存在于本机上一次运行的文件中；哈希只在同一机器、同一构建下可比 | 未开始 | 基线文件（例如 `Benchmarks/baseline.json`：每组 4 个阶段的 `positionsHash`、块数、断棱数，以及机器与构建信息）入库；基准测试运行后与基线比较，列出不一致的组 |
+| ENG-3 | 基准测试基线 | 已实现（DESIGN 第 8 节）：`Benchmarks/baseline.json` 入库，记录每组 4 个阶段的 `positionsHash`、全切块数、断棱数、最大的 4 块节点数，以及环境（Unity 版本、CPU、操作系统、托管代码优化、Burst）、设置与网格的顶点数、三角形数（`BenchmarkBaseline`）。基准测试结束时比较两者共有的组，列出不一致的字段；设置或网格不同时不比较；环境不同时给出警告（哈希只在同一机器、同一构建下可比）；`-apxFailOnBaselineDifference` 时不一致则退出码为 1。基线来自 `1f9bcaa`（运行时代码与 `b891564` 相同），在交互式编辑器中运行，16 组与 BUG-12 修复后在工程副本上用 batchmode 运行的结果逐项相同，说明两种运行方式的哈希可比 | 已完成 | 基线文件（例如 `Benchmarks/baseline.json`：每组 4 个阶段的 `positionsHash`、块数、断棱数，以及机器与构建信息）入库；基准测试运行后与基线比较，列出不一致的组 |
 | ENG-4 | 标准场景截图与里程碑验收 | 此前 `docs/images` 中 S1–S6 的截图来自 `1ef1a09`（2026-10-26），早于 BUG-1、BUG-4、BUG-6、BUG-7；S8–S11 来自 `1e35fa0`，早于 BUG-8 的同步子步（`2aec0fe`）。2026-10-27 按 `7389533` 在 batchmode 中重新截取 S1–S6、S8–S11 并更新 `docs/images`：S3 原截图中各块仍贴在一起，看不出切口，截图工具在 S3 之后拉开后侧三块，新增 S3b（5 块分离，切面完整）。与此前的截图相比，S1–S6 除背景中组织块的位置外差别在几千像素以内，S8 中肝叶位置略有变化，S10、S11 逐像素相同；ROADMAP“当前结果”各项仍成立（S8 补充两个物体之后都进入休眠）。S3b 中皮肤边缘与切面交界处有 1–2 像素的台阶（DESIGN 第 7 节，每个体素一个拟合平面）。之后 BUG-11、BUG-12 更新了有切口变化的截图。M1、M2 的人工验收（ROADMAP 决策 5）：2026-10-28 用户试用后确认基本形状上的柔体与交互作为第一个版本通过，已记入 ROADMAP；真实网格不在此次验收范围内（M6） | 已完成 | 用当前提交重新截取 S1–S6、S8–S11，更新 `docs/images` 与 ROADMAP“当前结果”列；M1、M2 的人工验收结果记入 ROADMAP |
 | ENG-5 | 交互工具与调试显示 | 已实现（DESIGN 第 10 节，程序集 `AdaptorPhysX.Tools`，参照 Obi 的粒子渲染组件与 blueprint 编辑器的显示模式）：相机绕中心点旋转、平移、向指针缩放、框选与预设视角（`ApxCameraRig`）；手术刀的航向、侧倾、前倾与竖直深度可调，按下后移动 3 mm 才起刀、航向取刀路方向，可在组织旁起刀，Shift 沿航向直线切割（`ApxScalpelTool`，`ApxBladePose`）；镊子滚轮提起、Shift 松开后保持（`ApxForcepsTool`）；测量点随节点移动（`ApxMeasureTool`）；调试图层：网格、包围盒、lattice、节点、断棱与切口张开量、受力箭头与数值、刀刃与扫掠面，节点按块、运动学帧或速度着色，X-ray 与隐藏表面（`ApxDebugView`）；暂停与单步；面板显示工具状态、按键与各物体统计。两个演示场景改用这些工具（删除 `SurgeryDemoController`），标准场景截图与修改前逐像素相同，截图工具新增 D1–D3。EditMode 测试 6 个（`ToolTests`）。限制：刀的参考方向为世界竖直轴，不按表面法线；镊子只有平移（MED-10）；只支持旧输入系统；单步为一帧的固定步；人工试用中发现手动切割的切口呈锯齿（BUG-11，已修复：固定指针平面、稳定绳、侧别断棱的切口点） | 已完成 | 相机旋转、平移、缩放与预设视角；刀刃朝向可调，切割按该朝向进行；调试图层在 Game 与 Scene 视图中可见；EditMode 测试覆盖刀刃几何、相机数学、三种工具与 lattice、断棱图层 |
 
@@ -295,4 +298,5 @@ public sealed class ApxHapticBridge
 | 2026-10-27 | `92bf624` | ENG-5 已完成：交互工具模块（相机、可调朝向的手术刀、镊子、测量、调试显示、暂停与单步），两个演示场景改用；`ApxScalpel` 增加本刀路断棱数与上一次扫掠（只用于显示）；新增 EditMode 测试 6 个；截图工具新增 D1–D3 |
 | 2026-10-27 | `fff7e00` | BUG-11 已完成：手术刀的指针平面在刀路内固定，刀以稳定绳（默认 8 mm）跟随指针；侧别断开的棱按两端到刀面的距离求切口点（`StrokeDistance`）。新增 EditMode 测试 2 个；更新有切口变化的 6 张截图。新增 BUG-12（刀路急转弯时断开刀未经过的棱，原因已确认）；ENG-5 的限制改为人工试用的结果 |
 | 2026-10-27 | `b891564` | BUG-12 已完成：每一步另扫沿上一步刀路的尾部四边形，代替沿本步方向向后延长；节点按投影所在的最近扫掠三角形记侧别；刀刃前方的节点等刀经过时再补记侧别。新增 EditMode 测试 1 个，`WavyStrokePutsTheCutPointsOnTheBladePath` 增加断棱检查；基准测试 16 组块数不变，切割阶段哈希改变；更新有切口变化的 8 张截图。编辑器的 MCP 连接不可用，测试、基准测试与截图在工程副本上用 batchmode 运行 |
-| 2026-10-28 | — | 基本形状上的柔体与交互作为第一个版本通过人工验收，记入 ROADMAP M1、M2，ENG-4 已完成；新增里程碑 M6（真实网格）与建议顺序第 8 项；更新本文件对照基准的说明，补全上一行提交号 |
+| 2026-10-28 | `1f9bcaa` | 基本形状上的柔体与交互作为第一个版本通过人工验收，记入 ROADMAP M1、M2，ENG-4 已完成；新增里程碑 M6（真实网格）与建议顺序第 8 项；更新本文件对照基准的说明，补全上一行提交号 |
+| 2026-10-28 | — | ENG-3 已完成：`Benchmarks/baseline.json` 入库（来自 `1f9bcaa`，16 组），基准测试结束时与基线比较 4 个阶段的哈希、块数、断棱数与最大的 4 块节点数，列出不一致的组；`-apxWriteBaseline`、`-apxBaseline`、`-apxFailOnBaselineDifference` 与菜单 Run Benchmarks and Write Baseline。基线与 BUG-12 修复后的 batchmode 结果 16 组逐项相同 |
