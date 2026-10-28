@@ -49,8 +49,12 @@ namespace AdaptorPhysX
         private NativeArray<float2> _nativeUvs;
         private NativeArray<int> _nativeEdgeCorners;
         private NativeArray<int> _vertexCopy;
-        private NativeArray<float3> _vertexU;
-        private NativeArray<float3> _vertexRestNormal;
+        /// <summary>Cell coordinates and rest normals of the source vertices (render vertices 0 .. source count).</summary>
+        private NativeArray<float3> _sourceU;
+        private NativeArray<float3> _sourceRestNormal;
+        /// <summary>The same for the render vertices added by the last rebuild (split points, cut faces).</summary>
+        private NativeArray<float3> _extraU;
+        private NativeArray<float3> _extraRestNormal;
         /// <summary>UV0 and rest position (UV1) of the source vertices, the start of the static vertex stream.</summary>
         private NativeArray<StaticVertex> _sourceStatic;
         private NativeArray<DeformedVertex> _outVertices;
@@ -103,12 +107,14 @@ namespace AdaptorPhysX
             public float Split;
             /// <summary>Vertex attributes and index lists of the rebuilt mesh (rebuild only).</summary>
             public float Topology;
+            /// <summary>Vertex and index buffers of the rebuilt mesh handed to the Mesh (rebuild only).</summary>
+            public float Upload;
             /// <summary>Node Jacobians and skinning jobs.</summary>
             public float Skin;
             /// <summary>Writing the deformed positions and normals to the mesh, and its bounds.</summary>
             public float Write;
 
-            public float Rebuild => CutGeometry + Split + Topology;
+            public float Rebuild => CutGeometry + Split + Topology + Upload;
             public float Total => Rebuild + Skin + Write;
         }
 
@@ -139,6 +145,8 @@ namespace AdaptorPhysX
                 sourceStatic[v] = new StaticVertex { Uv0 = uvs[v], Uv1 = restPositions[v] };
             }
             _sourceStatic = new NativeArray<StaticVertex>(sourceStatic, Allocator.Persistent);
+            _sourceU = new NativeArray<float3>(_embedU, Allocator.Persistent);
+            _sourceRestNormal = new NativeArray<float3>(restNormals, Allocator.Persistent);
             _nativeTriangles = new NativeArray<int>(triangles, Allocator.Persistent);
             _nativeEmbedCell = new NativeArray<int>(_embedCell, Allocator.Persistent);
             _nativeRestPositions = new NativeArray<float3>(restPositions, Allocator.Persistent);
@@ -159,6 +167,9 @@ namespace AdaptorPhysX
             if (_nativeUvs.IsCreated) _nativeUvs.Dispose();
             if (_nativeEdgeCorners.IsCreated) _nativeEdgeCorners.Dispose();
             if (_sourceStatic.IsCreated) _sourceStatic.Dispose();
+            if (_sourceU.IsCreated) _sourceU.Dispose();
+            if (_sourceRestNormal.IsCreated) _sourceRestNormal.Dispose();
+            if (_nodeJacobian.IsCreated) _nodeJacobian.Dispose();
             if (Mesh == null)
             {
                 return;
@@ -205,8 +216,11 @@ namespace AdaptorPhysX
                 CopyNodes = _sim.CopyNodes.AsArray(),
                 NodeJacobian = _nodeJacobian,
                 VertexCopy = _vertexCopy,
-                VertexU = _vertexU,
-                VertexRestNormal = _vertexRestNormal,
+                SourceCount = _sourceU.Length,
+                SourceU = _sourceU,
+                SourceRestNormal = _sourceRestNormal,
+                ExtraU = _extraU,
+                ExtraRestNormal = _extraRestNormal,
                 WorldToLocal = worldToLocal,
                 NormalToLocal = math.transpose(math.inverse(new float3x3(
                     worldToLocal.c0.xyz, worldToLocal.c1.xyz, worldToLocal.c2.xyz))),
@@ -314,21 +328,33 @@ namespace AdaptorPhysX
         private void RebuildTopology(ref UpdateTimings timings)
         {
             _version = _sim.TopologyVersion;
-            _range = _sim.CellCopyRange.ToArray();
-            _copies = _sim.Copies.AsArray().ToArray();
-            _copyNodes = _sim.CopyNodes.AsArray().ToArray();
-            _pieceId = _sim.PieceId.ToArray();
-            _severed = _sim.Severed.ToArray();
-            _edgeT = _sim.EdgeT.ToArray();
-            _edgeNormal = _sim.EdgeNormal.ToArray();
-            ComputeVisibleCopies();
+            _hasManagedSnapshot = false;
 
             // Source vertex v is render vertex v, evaluated in the (first) copy of its cell.
             // Triangles away from cuts keep their source indices; only triangles touching a
             // cut cell are split and get extra vertices.
             int baseCount = _restPositions.Length;
-            var b = new Builder(baseCount, _triangles.Length + 64) { Range = _range };
-            BuildCutGeometry(b);
+            int cellCount = _cellCoord.Length;
+            var b = new Builder(baseCount, 64);
+            using var visible = new NativeArray<bool>(_sim.CopyCount, Allocator.TempJob);
+            using var cellPlanes = new NativeArray<int2>(cellCount, Allocator.TempJob);
+            using var cellBlockers = new NativeArray<int2>(cellCount, Allocator.TempJob);
+            using var planes = new NativeList<float4>(Allocator.TempJob);
+            using var blockers = new NativeList<float3>(Allocator.TempJob);
+            bool anyHidden;
+            if (ManagedRebuild)
+            {
+                TakeManagedSnapshot();
+                b.Range = _range;
+                ComputeVisibleCopies();
+                BuildCutGeometry(b);
+                visible.CopyFrom(_copyVisible);
+                anyHidden = Array.IndexOf(_copyVisible, false) >= 0;
+            }
+            else
+            {
+                anyHidden = BuildCutGeometryInJobs(b, visible, cellPlanes, planes, cellBlockers, blockers);
+            }
             timings.CutGeometry = Lap();
 
             // Triangles away from cut cells keep their indices; the rest are split in Burst, in parallel.
@@ -342,23 +368,30 @@ namespace AdaptorPhysX
                 StaticIndices = staticIndices,
                 DynamicTriangles = dynamicTriangles,
             }.Run();
-            SplitDynamicTriangles(b, dynamicTriangles.AsArray());
+            SplitDynamicTriangles(b, dynamicTriangles.AsArray(), cellPlanes, planes.AsArray(), cellBlockers, blockers.AsArray());
             timings.Split = Lap();
             int extra = b.Copies.Count;
             int count = baseCount + extra;
-            var copies = new int[count];
-            for (int v = 0; v < baseCount; v++)
-            {
-                copies[v] = _range[_embedCell[v]].x;
-            }
-            b.Copies.CopyTo(copies, baseCount);
-
             DisposeArrays();
-            _vertexCopy = new NativeArray<int>(copies, Allocator.Persistent);
-            _vertexU = Concat(_embedU, b.Us);
-            _vertexRestNormal = Concat(_restNormals, b.Normals);
-            _outVertices = new NativeArray<DeformedVertex>(count, Allocator.Persistent);
-            _nodeJacobian = new NativeArray<float3x3>(_sim.NodeCount, Allocator.Persistent);
+            _vertexCopy = new NativeArray<int>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            new SourceCopyJob
+            {
+                EmbedCell = _nativeEmbedCell,
+                CellCopyRange = _sim.CellCopyRange,
+                VertexCopy = _vertexCopy,
+            }.Schedule(baseCount, 1024).Complete();
+            if (extra > 0)
+            {
+                NativeArray<int>.Copy(b.Copies.ToArray(), 0, _vertexCopy, baseCount, extra);
+            }
+            _extraU = new NativeArray<float3>(b.Us.ToArray(), Allocator.Persistent);
+            _extraRestNormal = new NativeArray<float3>(b.Normals.ToArray(), Allocator.Persistent);
+            _outVertices = new NativeArray<DeformedVertex>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            if (!_nodeJacobian.IsCreated || _nodeJacobian.Length != _sim.NodeCount)
+            {
+                if (_nodeJacobian.IsCreated) _nodeJacobian.Dispose();
+                _nodeJacobian = new NativeArray<float3x3>(_sim.NodeCount, Allocator.Persistent);
+            }
 
             // Index buffer: untouched skin triangles, split skin triangles, cut faces.
             int staticCount = staticIndices.Length;
@@ -374,9 +407,8 @@ namespace AdaptorPhysX
                 NativeArray<int>.Copy(b.Cut.ToArray(), 0, indices, staticCount + b.Skin.Count, b.Cut.Count);
             }
             int skinCount = staticCount + b.Skin.Count, cutCount = b.Cut.Count;
-            if (Array.IndexOf(_copyVisible, false) >= 0)
+            if (anyHidden)
             {
-                using var visible = new NativeArray<bool>(_copyVisible, Allocator.TempJob);
                 using var counts = new NativeArray<int>(2, Allocator.TempJob);
                 new RemoveHiddenTrianglesJob
                 {
@@ -395,6 +427,7 @@ namespace AdaptorPhysX
             {
                 extraStatic[i] = new StaticVertex { Uv0 = b.Uv0[i], Uv1 = b.Uv1[i] };
             }
+            timings.Topology = Lap();
             Mesh.Clear();
             Mesh.SetVertexBufferParams(count, VertexLayout);
             Mesh.SetVertexBufferData(_sourceStatic, 0, 0, baseCount, 1, VertexWriteFlags);
@@ -409,16 +442,17 @@ namespace AdaptorPhysX
             Mesh.SetSubMesh(1, new SubMeshDescriptor(skinCount, cutCount), MeshUpdateFlags.DontRecalculateBounds);
             SkinTriangleCount = skinCount / 3;
             CutTriangleCount = cutCount / 3;
-            timings.Topology = Lap();
+            timings.Upload = Lap();
         }
 
         /// <summary>
         /// Splits the skin triangles touching cut cells (<see cref="SplitTrianglesJob"/>) and appends them to the
         /// builder in order; triangles the job could not hold go through the managed split.
         /// </summary>
-        private void SplitDynamicTriangles(Builder b, NativeArray<int> dynamicTriangles)
+        private void SplitDynamicTriangles(Builder b, NativeArray<int> dynamicTriangles, NativeArray<int2> cellPlanes,
+            NativeArray<float4> planes, NativeArray<int2> cellBlockers, NativeArray<float3> blockers)
         {
-            if (ManagedSplitOnly)
+            if (ManagedRebuild)
             {
                 var managedPlanes = new List<float4>(4);
                 var managedPieces = new List<Piece>(4);
@@ -430,28 +464,6 @@ namespace AdaptorPhysX
                 SplitOverflowCount = 0;
                 return;
             }
-            int cellCount = _cellCoord.Length;
-            using var cellPlanes = new NativeArray<int2>(cellCount, Allocator.TempJob);
-            using var cellBlockers = new NativeArray<int2>(cellCount, Allocator.TempJob);
-            var planes = new List<float4>();
-            var blockers = new List<float3>();
-            var planeRanges = new int2[cellCount];
-            var blockerRanges = new int2[cellCount];
-            foreach (KeyValuePair<int, List<float4>> entry in _cutPlanes)
-            {
-                planeRanges[entry.Key] = new int2(planes.Count, entry.Value.Count);
-                planes.AddRange(entry.Value);
-            }
-            foreach (KeyValuePair<int, List<float3>> entry in _cutTriangles)
-            {
-                blockerRanges[entry.Key] = new int2(blockers.Count, entry.Value.Count);
-                blockers.AddRange(entry.Value);
-            }
-            cellPlanes.CopyFrom(planeRanges);
-            cellBlockers.CopyFrom(blockerRanges);
-            using var nativePlanes = new NativeArray<float4>(planes.ToArray(), Allocator.TempJob);
-            using var nativeBlockers = new NativeArray<float3>(blockers.ToArray(), Allocator.TempJob);
-
             var stream = new NativeStream(math.max(dynamicTriangles.Length, 1), Allocator.TempJob);
             using var vertexCopies = new NativeList<int>(Allocator.TempJob);
             using var vertexU = new NativeList<float3>(Allocator.TempJob);
@@ -480,9 +492,9 @@ namespace AdaptorPhysX
                     GridToCell = _sim.GridToCell,
                     EdgeCorners = _nativeEdgeCorners,
                     CellPlanes = cellPlanes,
-                    Planes = nativePlanes,
+                    Planes = planes,
                     CellBlockers = cellBlockers,
-                    Blockers = nativeBlockers,
+                    Blockers = blockers,
                     Origin = grid.Origin,
                     Dims = grid.Dims,
                     CellSize = grid.CellSize,
@@ -508,20 +520,29 @@ namespace AdaptorPhysX
                 stream.Dispose();
             }
 
-            b.Copies.AddRange(vertexCopies.AsArray().ToArray());
-            b.Us.AddRange(vertexU.AsArray().ToArray());
-            b.Normals.AddRange(vertexNormals.AsArray().ToArray());
-            foreach (float2 uv in vertexUv0.AsArray().ToArray())
-            {
-                b.Uv0.Add(uv);
-            }
-            foreach (float3 rest in vertexUv1.AsArray().ToArray())
-            {
-                b.Uv1.Add(rest);
-            }
+            AppendVertices(b, vertexCopies, vertexU, vertexNormals, vertexUv0, vertexUv1);
             b.Skin.AddRange(indices.AsArray().ToArray());
             if (overflow.Length > 0)
             {
+                // The managed split reads the topology and cut geometry in managed form.
+                TakeManagedSnapshot();
+                b.Range = _range;
+                _cutPlanes.Clear();
+                _cutTriangles.Clear();
+                int2[] planeRanges = cellPlanes.ToArray(), blockerRanges = cellBlockers.ToArray();
+                float4[] planeArray = planes.ToArray();
+                float3[] blockerArray = blockers.ToArray();
+                for (int cell = 0; cell < planeRanges.Length; cell++)
+                {
+                    if (planeRanges[cell].y > 0)
+                    {
+                        _cutPlanes[cell] = new List<float4>(new ArraySegment<float4>(planeArray, planeRanges[cell].x, planeRanges[cell].y));
+                    }
+                    if (blockerRanges[cell].y > 0)
+                    {
+                        _cutTriangles[cell] = new List<float3>(new ArraySegment<float3>(blockerArray, blockerRanges[cell].x, blockerRanges[cell].y));
+                    }
+                }
                 var planeList = new List<float4>(4);
                 var pieces = new List<Piece>(4);
                 var next = new List<Piece>(4);
@@ -536,8 +557,118 @@ namespace AdaptorPhysX
         /// <summary>Skin triangles of the last rebuild that the split job could not hold (handled by the managed split).</summary>
         public int SplitOverflowCount { get; private set; }
 
-        /// <summary>Splits every triangle with the managed code, to compare the split job with it in tests.</summary>
-        internal static bool ManagedSplitOnly;
+        /// <summary>
+        /// Builds the cut geometry and splits every triangle with the managed code, to compare the jobs with it in
+        /// tests (<see cref="CutGeometryJob"/>, <see cref="SplitTrianglesJob"/>).
+        /// </summary>
+        internal static bool ManagedRebuild;
+
+        private bool _hasManagedSnapshot;
+
+        /// <summary>Managed copies of the simulation topology, read by the managed cut geometry and split.</summary>
+        private void TakeManagedSnapshot()
+        {
+            if (_hasManagedSnapshot)
+            {
+                return;
+            }
+            _hasManagedSnapshot = true;
+            _range = _sim.CellCopyRange.ToArray();
+            _copies = _sim.Copies.AsArray().ToArray();
+            _copyNodes = _sim.CopyNodes.AsArray().ToArray();
+            _pieceId = _sim.PieceId.ToArray();
+            _severed = _sim.Severed.ToArray();
+            _edgeT = _sim.EdgeT.ToArray();
+            _edgeNormal = _sim.EdgeNormal.ToArray();
+        }
+
+        /// <summary>
+        /// Visible copies, cut planes, blocker triangles and cut faces (<see cref="CutGeometryJob"/>); the cut faces
+        /// go into the builder. Returns whether any copy is hidden.
+        /// </summary>
+        private bool BuildCutGeometryInJobs(Builder b, NativeArray<bool> visible, NativeArray<int2> cellPlanes,
+            NativeList<float4> planes, NativeArray<int2> cellBlockers, NativeList<float3> blockers)
+        {
+            using var hidden = new NativeArray<int>(1, Allocator.TempJob);
+            using var cells = new NativeList<int>(Allocator.TempJob);
+            using var vertexCopies = new NativeList<int>(Allocator.TempJob);
+            using var vertexU = new NativeList<float3>(Allocator.TempJob);
+            using var vertexNormals = new NativeList<float3>(Allocator.TempJob);
+            using var vertexUv0 = new NativeList<float2>(Allocator.TempJob);
+            using var vertexUv1 = new NativeList<float3>(Allocator.TempJob);
+            using var indices = new NativeList<int>(Allocator.TempJob);
+            JobHandle copies = new VisibleCopiesJob
+            {
+                Copies = _sim.Copies.AsArray(),
+                CopyNodes = _sim.CopyNodes.AsArray(),
+                PieceId = _sim.PieceId,
+                Visible = visible,
+                Hidden = hidden,
+            }.Schedule();
+            new CutCellsJob { Severed = _sim.Severed, Cells = cells }.Run();
+            var stream = new NativeStream(math.max(cells.Length, 1), Allocator.TempJob);
+            try
+            {
+                VoxelGrid grid = _sim.Grid;
+                JobHandle geometry = new CutGeometryJob
+                {
+                    Cells = cells.AsArray(),
+                    CellCopyRange = _sim.CellCopyRange,
+                    Copies = _sim.Copies.AsArray(),
+                    Severed = _sim.Severed,
+                    EdgeT = _sim.EdgeT,
+                    EdgeNormal = _sim.EdgeNormal,
+                    CellCoord = _sim.CellCoord,
+                    PointSdf = _sim.PointSdf,
+                    EdgeCorners = _nativeEdgeCorners,
+                    Origin = grid.Origin,
+                    PointDims = grid.PointDims,
+                    CellSize = grid.CellSize,
+                    Output = stream.AsWriter(),
+                }.Schedule(cells.Length, 4);
+                geometry = new MergeCutGeometryJob
+                {
+                    Input = stream.AsReader(),
+                    Cells = cells.AsArray(),
+                    CellCopyRange = _sim.CellCopyRange,
+                    FirstVertex = b.BaseCount + b.Copies.Count,
+                    CellPlanes = cellPlanes,
+                    Planes = planes,
+                    CellBlockers = cellBlockers,
+                    Blockers = blockers,
+                    VertexCopies = vertexCopies,
+                    VertexU = vertexU,
+                    VertexNormals = vertexNormals,
+                    VertexUv0 = vertexUv0,
+                    VertexUv1 = vertexUv1,
+                    Indices = indices,
+                }.Schedule(geometry);
+                JobHandle.CombineDependencies(copies, geometry).Complete();
+            }
+            finally
+            {
+                stream.Dispose();
+            }
+            AppendVertices(b, vertexCopies, vertexU, vertexNormals, vertexUv0, vertexUv1);
+            b.Cut.AddRange(indices.AsArray().ToArray());
+            return hidden[0] > 0;
+        }
+
+        private static void AppendVertices(Builder b, NativeList<int> copies, NativeList<float3> u, NativeList<float3> normals,
+            NativeList<float2> uv0, NativeList<float3> uv1)
+        {
+            b.Copies.AddRange(copies.AsArray().ToArray());
+            b.Us.AddRange(u.AsArray().ToArray());
+            b.Normals.AddRange(normals.AsArray().ToArray());
+            foreach (float2 uv in uv0.AsArray().ToArray())
+            {
+                b.Uv0.Add(uv);
+            }
+            foreach (float3 rest in uv1.AsArray().ToArray())
+            {
+                b.Uv1.Add(rest);
+            }
+        }
 
         private void ComputeVisibleCopies()
         {
@@ -564,17 +695,6 @@ namespace AdaptorPhysX
                     break;
                 }
             }
-        }
-
-        private static NativeArray<float3> Concat(float3[] head, List<float3> tail)
-        {
-            var array = new NativeArray<float3>(head.Length + tail.Count, Allocator.Persistent);
-            NativeArray<float3>.Copy(head, array, head.Length);
-            for (int i = 0; i < tail.Count; i++)
-            {
-                array[head.Length + i] = tail[i];
-            }
-            return array;
         }
 
         /// <summary>
@@ -1309,10 +1429,9 @@ namespace AdaptorPhysX
         private void DisposeArrays()
         {
             if (_vertexCopy.IsCreated) _vertexCopy.Dispose();
-            if (_vertexU.IsCreated) _vertexU.Dispose();
-            if (_vertexRestNormal.IsCreated) _vertexRestNormal.Dispose();
+            if (_extraU.IsCreated) _extraU.Dispose();
+            if (_extraRestNormal.IsCreated) _extraRestNormal.Dispose();
             if (_outVertices.IsCreated) _outVertices.Dispose();
-            if (_nodeJacobian.IsCreated) _nodeJacobian.Dispose();
         }
 
         /// <summary>
@@ -1352,6 +1471,17 @@ namespace AdaptorPhysX
                 }
                 Counts[1] = write - Counts[0];
             }
+        }
+
+        /// <summary>A source vertex is evaluated in the first copy of the cell it is embedded in.</summary>
+        [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+        private struct SourceCopyJob : IJobParallelFor
+        {
+            [ReadOnly] public NativeArray<int> EmbedCell;
+            [ReadOnly] public NativeArray<int2> CellCopyRange;
+            [WriteOnly] public NativeArray<int> VertexCopy;
+
+            public void Execute(int v) => VertexCopy[v] = CellCopyRange[EmbedCell[v]].x;
         }
 
         /// <summary>Splits skin triangles into those touching a cut cell and the untouched rest.</summary>
@@ -1430,8 +1560,11 @@ namespace AdaptorPhysX
             [ReadOnly] public NativeArray<int> CopyNodes;
             [ReadOnly] public NativeArray<float3x3> NodeJacobian;
             [ReadOnly] public NativeArray<int> VertexCopy;
-            [ReadOnly] public NativeArray<float3> VertexU;
-            [ReadOnly] public NativeArray<float3> VertexRestNormal;
+            public int SourceCount;
+            [ReadOnly] public NativeArray<float3> SourceU;
+            [ReadOnly] public NativeArray<float3> SourceRestNormal;
+            [ReadOnly] public NativeArray<float3> ExtraU;
+            [ReadOnly] public NativeArray<float3> ExtraRestNormal;
             public float4x4 WorldToLocal;
             public float3x3 NormalToLocal;
             [WriteOnly] public NativeArray<DeformedVertex> OutVertices;
@@ -1439,7 +1572,7 @@ namespace AdaptorPhysX
             public void Execute(int i)
             {
                 int nodeBase = VertexCopy[i] * 8;
-                float3 u = VertexU[i];
+                float3 u = i < SourceCount ? SourceU[i] : ExtraU[i - SourceCount];
                 float3 x = float3.zero;
                 float3x3 j = float3x3.zero;
                 for (int k = 0; k < 8; k++)
@@ -1449,7 +1582,7 @@ namespace AdaptorPhysX
                     x += w * Positions[n];
                     j += w * NodeJacobian[n];
                 }
-                float3 rn = VertexRestNormal[i];
+                float3 rn = i < SourceCount ? SourceRestNormal[i] : ExtraRestNormal[i - SourceCount];
                 float3 normal = rn.x * math.cross(j.c1, j.c2) + rn.y * math.cross(j.c2, j.c0) +
                                 rn.z * math.cross(j.c0, j.c1);
                 OutVertices[i] = new DeformedVertex

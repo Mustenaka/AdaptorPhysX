@@ -167,9 +167,11 @@
   触及切开体素的三角形每次重建都在 Burst 中并行拆分（`SplitTrianglesJob`，TODO PERF-6），每个三角形的结果
   按三角形顺序写入 NativeStream，再由一个 job 依次合并为新顶点与索引，结果与顺序无关、可复现。
   拆分出的片段、顶点或平面超过 job 中定长列表的容量时，该三角形改用托管代码拆分（`SplitOverflowCount`），
-  两条路径的结果相同（`SplitJobMatchesTheManagedSplit`）。此前托管代码按“体素 + 体素内副本序号”缓存拆分结果，
+  两条路径的结果相同（`RebuildJobsMatchTheManagedRebuild`）。此前托管代码按“体素 + 体素内副本序号”缓存拆分结果，
   只重新拆分断棱变化的体素及其 26 邻域内的三角形，高面数网格上仍是切割帧的主要耗时（6.2 节）。
-  切面、拟合平面与阻挡三角形仍由托管代码生成，仿真数据在重建开始时复制为托管数组。
+  切面、裂缝面、拟合平面、阻挡三角形与可见副本也在 Burst 中生成：`CutGeometryJob` 按有断棱的体素并行，结果按体素顺序
+  写入 NativeStream，`MergeCutGeometryJob` 依次合并；`VisibleCopiesJob` 统计各块的实节点数。托管实现保留为参照，
+  `RebuildJobsMatchTheManagedRebuild` 比较两者重建的网格；仿真数据的托管快照只在需要托管拆分时才复制。
 - 顶点分两个流：流 0 为位置与法线，每次更新整体写入（`SetVertexBufferData`，不校验索引、不重算包围盒）；
   流 1 为 UV0 与 UV1，重建时写入。网格的包围盒取 lattice 节点的包围盒外扩一个体素（皮肤顶点是所在副本节点的
   三线性组合）。索引在重建时一次写入（`SetIndexBufferData`），皮肤在前、切面在后，分为两个子网格。

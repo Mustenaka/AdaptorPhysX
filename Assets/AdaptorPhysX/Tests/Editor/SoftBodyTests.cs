@@ -698,7 +698,7 @@ namespace AdaptorPhysX.Tests
         }
 
         [Test]
-        public void SplitJobMatchesTheManagedSplit()
+        public void RebuildJobsMatchTheManagedRebuild()
         {
             SoftBodySimulation sim = CreateBox(new float3(Size), gravity: false, out float3[] rest, out float3[] normals,
                 out Vector2[] uvs, out int[] triangles);
@@ -717,7 +717,7 @@ namespace AdaptorPhysX.Tests
 
             using var job = new SurfaceMesh(sim, rest, normals, uvs, triangles);
             job.Update(float4x4.identity);
-            SurfaceMesh.ManagedSplitOnly = true;
+            SurfaceMesh.ManagedRebuild = true;
             try
             {
                 using var managed = new SurfaceMesh(sim, rest, normals, uvs, triangles);
@@ -747,7 +747,7 @@ namespace AdaptorPhysX.Tests
             }
             finally
             {
-                SurfaceMesh.ManagedSplitOnly = false;
+                SurfaceMesh.ManagedRebuild = false;
             }
         }
 

@@ -172,6 +172,7 @@ namespace AdaptorPhysX.Benchmarks.Editor
         public double cutGeometry;
         public double split;
         public double topology;
+        public double upload;
         public double skin;
         public double write;
 
@@ -187,12 +188,14 @@ namespace AdaptorPhysX.Benchmarks.Editor
                 stages.cutGeometry += t.CutGeometry;
                 stages.split += t.Split;
                 stages.topology += t.Topology;
+                stages.upload += t.Upload;
                 stages.skin += t.Skin;
                 stages.write += t.Write;
             }
             stages.cutGeometry = Stats.Round(stages.cutGeometry / samples.Count);
             stages.split = Stats.Round(stages.split / samples.Count);
             stages.topology = Stats.Round(stages.topology / samples.Count);
+            stages.upload = Stats.Round(stages.upload / samples.Count);
             stages.skin = Stats.Round(stages.skin / samples.Count);
             stages.write = Stats.Round(stages.write / samples.Count);
             return stages;
