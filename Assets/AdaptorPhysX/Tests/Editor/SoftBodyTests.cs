@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using NUnit.Framework;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -1089,6 +1090,160 @@ namespace AdaptorPhysX.Tests
             for (int i = 0; i < a.Length; i++)
             {
                 Assert.IsTrue(math.all(a[i] == b[i]), $"node {i} differs");
+            }
+        }
+
+        /// <summary>
+        /// A cut that only severs edges updates the topology instead of rebuilding it (TODO PERF-5), with the rebuild's
+        /// result bit for bit, also after stepping on. Two boxes pinned at one end and sagging under gravity take the same
+        /// strokes, one rebuilding every time: a stroke through, a half-depth stroke across it, a stroke along the first
+        /// incision a fifth of a cell beside it, a stroke after a severed edge was restored (as EndStroke restores the
+        /// edges it heals) and one after restoring a state. The first cut after those two rebuilds the topology.
+        /// </summary>
+        [Test]
+        public void TopologyUpdateMatchesTheRebuild()
+        {
+            var size = new float3(0.12f, 0.05f, 0.1f);
+            SoftBodySimulation updated = CreateBox(size, SoftBodyParameters.Default, 16);
+            SoftBodySimulation rebuilt = CreateBox(size, SoftBodyParameters.Default, 16);
+            rebuilt.TopologyUpdates = false;
+            foreach (SoftBodySimulation sim in new[] { updated, rebuilt })
+            {
+                var pinned = new List<int>();
+                for (int i = 0; i < sim.NodeCount; i++)
+                {
+                    if (sim.RestPositions[i].x < -0.05f)
+                    {
+                        pinned.Add(i);
+                    }
+                }
+                sim.Attach(pinned, 1, float4x4.identity);
+            }
+            using var shapes = new NativeArray<ColliderShape>(0, Allocator.Persistent);
+            int changes = 0, updates = 0;
+
+            // Whether the first cut of the stroke that changed the topology updated it.
+            bool Stroke(int stroke, float3 heel, float3 tip, float3 move)
+            {
+                const int sweeps = 12;
+                bool? firstUpdated = null;
+                for (int s = 0; s < sweeps; s++)
+                {
+                    float3 from = move * s / sweeps, to = move * (s + 1) / sweeps;
+                    int severed = updated.Cut(heel + from, tip + from, heel + to, tip + to, stroke);
+                    Assert.AreEqual(rebuilt.Cut(heel + from, tip + from, heel + to, tip + to, stroke), severed);
+                    if (severed > 0)
+                    {
+                        changes++;
+                        updates += updated.LastTopologyUpdated ? 1 : 0;
+                        firstUpdated ??= updated.LastTopologyUpdated;
+                        AssertSameState(rebuilt, updated, $"stroke {stroke}, sweep {s}");
+                    }
+                    updated.Step(Dt, Substeps, shapes);
+                    rebuilt.Step(Dt, Substeps, shapes);
+                }
+                int healed = updated.EndStroke(stroke);
+                Assert.AreEqual(rebuilt.EndStroke(stroke), healed);
+                TestContext.WriteLine($"stroke {stroke}: healed {healed}");
+                AssertSameState(rebuilt, updated, $"end of stroke {stroke}");
+                Assert.IsTrue(firstUpdated.HasValue, $"stroke {stroke} severed nothing");
+                return firstUpdated.Value;
+            }
+
+            const float cutX = 0.0123f;
+            Assert.IsTrue(Stroke(1, new float3(cutX, 0.1f, -0.08f), new float3(cutX, -0.1f, -0.08f), new float3(0.0f, 0.0f, 0.16f)));
+            Assert.GreaterOrEqual(updated.CountPieces(), 2);
+            SoftBodyState savedUpdated = updated.CaptureState(), savedRebuilt = rebuilt.CaptureState();
+            Assert.IsTrue(Stroke(2, new float3(-0.07f, 0.1f, 0.0071f), new float3(-0.07f, 0.0f, 0.0071f), new float3(0.14f, 0.0f, 0.0f)));
+            float beside = cutX - 0.2f * updated.CellSize;
+            Assert.IsTrue(Stroke(3, new float3(beside, 0.1f, 0.08f), new float3(beside, -0.1f, 0.08f), new float3(0.0f, 0.0f, -0.16f)));
+            RestoreFirstSeveredEdge(updated);
+            RestoreFirstSeveredEdge(rebuilt);
+            Assert.IsFalse(Stroke(5, new float3(-0.07f, 0.1f, 0.035f), new float3(-0.07f, 0.0f, 0.035f), new float3(0.14f, 0.0f, 0.0f)));
+            updated.RestoreState(savedUpdated);
+            rebuilt.RestoreState(savedRebuilt);
+            Assert.IsFalse(Stroke(4, new float3(-0.07f, 0.1f, -0.031f), new float3(-0.07f, 0.0f, -0.031f), new float3(0.14f, 0.0f, 0.0f)));
+            for (int f = 0; f < 30; f++)
+            {
+                updated.Step(Dt, Substeps, shapes);
+                rebuilt.Step(Dt, Substeps, shapes);
+            }
+            AssertSameState(rebuilt, updated, "30 frames after the last stroke");
+            TestContext.WriteLine($"topology changes {changes}, updates {updates}");
+            Assert.Greater(updates, changes / 2);
+        }
+
+        /// <summary>Restores the first severed edge, in the order of the cells, on all cells sharing it.</summary>
+        private static void RestoreFirstSeveredEdge(SoftBodySimulation sim)
+        {
+            int c = 0;
+            while (sim.Severed[c] == 0)
+            {
+                c++;
+            }
+            int e = math.tzcnt((uint)sim.Severed[c]);
+            int axis = e / 4;
+            int3 start = sim.CellCoord[c] + Lattice.CornerOffset(Lattice.EdgeCorners[2 * e]);
+            int3 dims = sim.Grid.Dims;
+            for (int ob = 0; ob < 2; ob++)
+            {
+                for (int oc = 0; oc < 2; oc++)
+                {
+                    int3 offset = int3.zero;
+                    offset[(axis + 1) % 3] = ob;
+                    offset[(axis + 2) % 3] = oc;
+                    int3 cell = start - offset;
+                    if (math.any(cell < 0) || math.any(cell >= dims))
+                    {
+                        continue;
+                    }
+                    int n = sim.GridToCell[cell.x + dims.x * (cell.y + dims.y * cell.z)];
+                    if (n >= 0)
+                    {
+                        int edge = Lattice.EdgeFromStart(axis, Lattice.CornerIndex(offset));
+                        sim.Severed[n] = (ushort)(sim.Severed[n] & ~(1 << edge));
+                    }
+                }
+            }
+        }
+
+        private static void AssertSameState(SoftBodySimulation expected, SoftBodySimulation actual, string context)
+        {
+            AssertSameBits(expected.CellCopyRange, actual.CellCopyRange, context + ", copy ranges");
+            Assert.AreEqual(expected.CopyCount, actual.CopyCount, context + ", copies");
+            for (int q = 0; q < expected.CopyCount; q++)
+            {
+                CellCopy e = expected.Copies[q], a = actual.Copies[q];
+                Assert.IsTrue(e.Cell == a.Cell && e.Mask == a.Mask && math.asuint(e.Weight) == math.asuint(a.Weight),
+                    $"{context}, copy {q}");
+            }
+            AssertSameBits(expected.CopyNodes.AsArray(), actual.CopyNodes.AsArray(), context + ", copy nodes");
+            AssertSameBits(expected.Positions, actual.Positions, context + ", positions");
+            AssertSameBits(expected.Previous, actual.Previous, context + ", previous positions");
+            AssertSameBits(expected.Velocities, actual.Velocities, context + ", velocities");
+            AssertSameBits(expected.RestPositions, actual.RestPositions, context + ", rest positions");
+            AssertSameBits(expected.InverseMass, actual.InverseMass, context + ", inverse masses");
+            AssertSameBits(expected.KinematicId, actual.KinematicId, context + ", kinematic frames");
+            AssertSameBits(expected.KinematicLocal, actual.KinematicLocal, context + ", kinematic positions");
+            AssertSameBits(expected.NodeReal, actual.NodeReal, context + ", real nodes");
+            AssertSameBits(expected.PieceId, actual.PieceId, context + ", pieces");
+            AssertSameBits(expected.StrokeSide, actual.StrokeSide, context + ", stroke sides");
+            AssertSameBits(expected.StrokeTravel, actual.StrokeTravel, context + ", stroke travel");
+            AssertSameBits(expected.StrokeDistance, actual.StrokeDistance, context + ", stroke distances");
+            AssertSameBits(expected.NodeSdf, actual.NodeSdf, context + ", node SDF");
+        }
+
+        private static void AssertSameBits<T>(NativeArray<T> expected, NativeArray<T> actual, string what) where T : struct
+        {
+            Assert.AreEqual(expected.Length, actual.Length, what + ", length");
+            int size = UnsafeUtility.SizeOf<T>();
+            NativeArray<byte> e = expected.Reinterpret<byte>(size), a = actual.Reinterpret<byte>(size);
+            for (int i = 0; i < e.Length; i++)
+            {
+                if (e[i] != a[i])
+                {
+                    Assert.Fail($"{what}: element {i / size} differs");
+                }
             }
         }
 

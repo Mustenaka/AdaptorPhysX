@@ -126,6 +126,13 @@ namespace AdaptorPhysX
         public NativeArray<int2> CellCopyRange;
         public NativeList<CellCopy> Copies;
         public NativeList<int> CopyNodes;
+        /// <summary>
+        /// Severed edges the topology was built from, and the mass and first slot of every node then: a cut that only
+        /// severs edges updates the topology from them (<see cref="TopologyUpdateJob"/>).
+        /// </summary>
+        private NativeArray<ushort> _topologySevered;
+        private NativeList<float> _nodeMass;
+        private NativeList<int> _nodeFirstSlot;
 
         // Nodes.
         public NativeArray<float3> Positions;
@@ -197,6 +204,10 @@ namespace AdaptorPhysX
         /// <summary>Incremented on every topology change so renderers know to rebuild.</summary>
         public int TopologyVersion { get; private set; }
         public float LastTopologyMilliseconds { get; private set; }
+        /// <summary>Whether the last topology change updated the previous topology (<see cref="TopologyUpdateJob"/>) instead of rebuilding it.</summary>
+        public bool LastTopologyUpdated { get; private set; }
+        /// <summary>False rebuilds the topology on every change; tests compare the two.</summary>
+        internal bool TopologyUpdates = true;
         public float LastStepMilliseconds { get; private set; }
         /// <summary>Number of steps scheduled so far; renderers skip frames in which the body did not step.</summary>
         public int StepCount { get; private set; }
@@ -307,6 +318,7 @@ namespace AdaptorPhysX
             _tetVolume = new NativeArray<float>(volumes, Allocator.Persistent);
 
             Severed = new NativeArray<ushort>(cellCount, Allocator.Persistent);
+            _topologySevered = new NativeArray<ushort>(cellCount, Allocator.Persistent);
             StrokeStartSevered = new NativeArray<ushort>(cellCount, Allocator.Persistent);
             StrokeKept = new NativeArray<ushort>(cellCount, Allocator.Persistent);
             EdgeT = new NativeArray<float>(cellCount * Lattice.EdgeCount, Allocator.Persistent);
@@ -350,6 +362,7 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref _tetRotation);
             DisposeIfCreated(ref _cellScale);
             DisposeIfCreated(ref Severed);
+            DisposeIfCreated(ref _topologySevered);
             DisposeIfCreated(ref StrokeStartSevered);
             DisposeIfCreated(ref StrokeKept);
             DisposeIfCreated(ref EdgeT);
@@ -814,6 +827,20 @@ namespace AdaptorPhysX
                 _strokeNormal = normal * orientation;
             }
             using var count = new NativeArray<int>(1, Allocator.TempJob);
+            using var near = new NativeArray<byte>(CellCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory);
+            // Tissue dragged along by the blade is passed over several cells of blade travel.
+            float labelTravel = 8.0f * CellSize;
+            // Wide enough that a node next to a labelled one is labelled too while the tissue moves.
+            float band = 3.0f * CellSize;
+            new CutCellsJob
+            {
+                Positions = Positions,
+                CellCopyRange = CellCopyRange,
+                CopyNodes = CopyNodes.AsArray(),
+                TailA = tailA, TailB = tailB, A0 = a0, B0 = b0, A1 = a1, B1 = b1,
+                Band = band,
+                Near = near,
+            }.Schedule(CellCount, 256).Complete();
             new CutJob
             {
                 Positions = Positions,
@@ -824,16 +851,15 @@ namespace AdaptorPhysX
                 Copies = Copies.AsArray(),
                 CopyNodes = CopyNodes.AsArray(),
                 EdgeCorners = _tables.EdgeCorners,
+                Near = near,
                 Dims = Grid.Dims,
                 TailA = tailA, TailB = tailB, A0 = a0, B0 = b0, A1 = a1, B1 = b1,
                 StrokeSide = StrokeSide,
                 StrokeTravel = StrokeTravel,
                 StrokeDistance = StrokeDistance,
                 Travel = _strokeTravel,
-                // Tissue dragged along by the blade is passed over several cells of blade travel.
-                LabelTravel = 8.0f * CellSize,
-                // Wide enough that a node next to a labelled one is labelled too while the tissue moves.
-                Band = 3.0f * CellSize,
+                LabelTravel = labelTravel,
+                Band = band,
                 Orientation = orientation,
                 TailOrientation = tailOrientation,
                 Severed = Severed,
@@ -1034,50 +1060,61 @@ namespace AdaptorPhysX
             var newCopyNodes = new NativeList<int>(CopyNodes.Length + 128, Allocator.Persistent);
             var nodeParent = new NativeList<int>(math.max(NodeCount, 16), Allocator.TempJob);
             var nodeRest = new NativeList<float3>(math.max(NodeCount, 16), Allocator.TempJob);
-            var nodeMass = new NativeList<float>(math.max(NodeCount, 16), Allocator.TempJob);
+            var nodeMass = new NativeList<float>(math.max(NodeCount, 16), Allocator.Persistent);
+            var firstSlot = new NativeList<int>(math.max(NodeCount, 16), Allocator.Persistent);
             var copyParent = new NativeList<int>(Copies.Length + 16, Allocator.TempJob);
             float h = Grid.CellSize;
-            _massDensity = Parameters.Density;
 
-            new TopologyJob
+            // Masses built with another density are rebuilt with the current one.
+            bool updated = TopologyUpdates && hasOld && _nodeMass.IsCreated && _massDensity == Parameters.Density &&
+                UpdateTopology(newRange, newCopies, newCopyNodes, copyParent, nodeParent, nodeRest, nodeMass, firstSlot);
+            if (!updated)
             {
-                CellCoord = CellCoord,
-                GridToCell = GridToCell,
-                CellFill = CellFill,
-                Severed = Severed,
-                ComponentCounts = _tables.ComponentCounts,
-                ComponentMasks = _tables.ComponentMasks,
-                Directions = _tables.Directions,
-                PairStart = _tables.PairStart,
-                Pairs = _tables.Pairs,
-                Dims = Grid.Dims,
-                Origin = Grid.Origin,
-                CellSize = h,
-                CellMass = _massDensity * h * h * h,
-                MinNodeMass = _massDensity * h * h * h / 16.0f,
-                HasOld = hasOld,
-                OldRange = CellCopyRange,
-                OldCopies = Copies.AsArray(),
-                OldCopyNodes = CopyNodes.AsArray(),
-                NewRange = newRange,
-                NewCopies = newCopies,
-                NewCopyNodes = newCopyNodes,
-                NewCopyParent = copyParent,
-                NodeParent = nodeParent,
-                NodeRest = nodeRest,
-                NodeMass = nodeMass,
-            }.Run();
+                _massDensity = Parameters.Density;
+                new TopologyJob
+                {
+                    CellCoord = CellCoord,
+                    GridToCell = GridToCell,
+                    CellFill = CellFill,
+                    Severed = Severed,
+                    ComponentCounts = _tables.ComponentCounts,
+                    ComponentMasks = _tables.ComponentMasks,
+                    Directions = _tables.Directions,
+                    PairStart = _tables.PairStart,
+                    Pairs = _tables.Pairs,
+                    Dims = Grid.Dims,
+                    Origin = Grid.Origin,
+                    CellSize = h,
+                    CellMass = _massDensity * h * h * h,
+                    MinNodeMass = _massDensity * h * h * h / 16.0f,
+                    HasOld = hasOld,
+                    OldRange = CellCopyRange,
+                    OldCopies = Copies.AsArray(),
+                    OldCopyNodes = CopyNodes.AsArray(),
+                    NewRange = newRange,
+                    NewCopies = newCopies,
+                    NewCopyNodes = newCopyNodes,
+                    NewCopyParent = copyParent,
+                    NodeParent = nodeParent,
+                    NodeRest = nodeRest,
+                    NodeMass = nodeMass,
+                    FirstSlot = firstSlot,
+                }.Run();
+            }
+            LastTopologyUpdated = updated;
 
+            // RemapNodesJob writes every element of these.
             int count = nodeParent.Length;
-            var positions = new NativeArray<float3>(count, Allocator.Persistent);
-            var previous = new NativeArray<float3>(count, Allocator.Persistent);
-            var velocities = new NativeArray<float3>(count, Allocator.Persistent);
-            var inverseMass = new NativeArray<float>(count, Allocator.Persistent);
-            var kinematicId = new NativeArray<int>(count, Allocator.Persistent);
-            var kinematicLocal = new NativeArray<float3>(count, Allocator.Persistent);
-            var strokeSide = new NativeArray<sbyte>(count, Allocator.Persistent);
-            var strokeTravel = new NativeArray<float>(count, Allocator.Persistent);
-            var strokeDistance = new NativeArray<float>(count, Allocator.Persistent);
+            const NativeArrayOptions written = NativeArrayOptions.UninitializedMemory;
+            var positions = new NativeArray<float3>(count, Allocator.Persistent, written);
+            var previous = new NativeArray<float3>(count, Allocator.Persistent, written);
+            var velocities = new NativeArray<float3>(count, Allocator.Persistent, written);
+            var inverseMass = new NativeArray<float>(count, Allocator.Persistent, written);
+            var kinematicId = new NativeArray<int>(count, Allocator.Persistent, written);
+            var kinematicLocal = new NativeArray<float3>(count, Allocator.Persistent, written);
+            var strokeSide = new NativeArray<sbyte>(count, Allocator.Persistent, written);
+            var strokeTravel = new NativeArray<float>(count, Allocator.Persistent, written);
+            var strokeDistance = new NativeArray<float>(count, Allocator.Persistent, written);
             using (var empty3 = new NativeArray<float3>(0, Allocator.TempJob))
             using (var emptyI = new NativeArray<int>(0, Allocator.TempJob))
             using (var emptyS = new NativeArray<sbyte>(0, Allocator.TempJob))
@@ -1112,17 +1149,16 @@ namespace AdaptorPhysX
             // Tet rotations follow their copies so the polar decomposition stays warm across cuts.
             // New tetrahedra start at the rest-to-world rotation: the warm-started update turns at
             // most half a radian per substep and cannot leave identity for a half turn at all.
-            var initialRotation = new quaternion(new float3x3(RestToWorld.c0.xyz, RestToWorld.c1.xyz, RestToWorld.c2.xyz));
-            var rotations = new NativeArray<quaternion>(newCopies.Length * Lattice.TetsPerCell, Allocator.Persistent);
-            for (int q = 0; q < copyParent.Length; q++)
+            var rotations = new NativeArray<quaternion>(newCopies.Length * Lattice.TetsPerCell, Allocator.Persistent, written);
+            using (var noRotations = new NativeArray<quaternion>(0, Allocator.TempJob))
             {
-                int parent = copyParent[q];
-                for (int t = 0; t < Lattice.TetsPerCell; t++)
+                new RemapRotationsJob
                 {
-                    rotations[q * Lattice.TetsPerCell + t] = parent >= 0 && _tetRotation.IsCreated
-                        ? _tetRotation[parent * Lattice.TetsPerCell + t]
-                        : initialRotation;
-                }
+                    CopyParent = copyParent.AsArray(),
+                    OldRotations = _tetRotation.IsCreated ? _tetRotation : noRotations,
+                    Initial = new quaternion(new float3x3(RestToWorld.c0.xyz, RestToWorld.c1.xyz, RestToWorld.c2.xyz)),
+                    Rotations = rotations,
+                }.Schedule(newCopies.Length, 256).Complete();
             }
             copyParent.Dispose();
             DisposeIfCreated(ref _tetRotation);
@@ -1145,57 +1181,142 @@ namespace AdaptorPhysX
             StrokeTravel = strokeTravel;
             StrokeDistance = strokeDistance;
             RestPositions = new NativeArray<float3>(nodeRest.AsArray(), Allocator.Persistent);
-            _weights = new NativeArray<float>(count, Allocator.Persistent);
+            // Every step begins with EffectiveMassJob, which writes all weights.
+            _weights = new NativeArray<float>(count, Allocator.Persistent, written);
             NodeReal = new NativeArray<byte>(count, Allocator.Persistent);
-            PieceId = new NativeArray<int>(count, Allocator.Persistent);
-            new PieceJob
+            PieceId = new NativeArray<int>(count, Allocator.Persistent, written);
+            using (var root = new NativeArray<int>(count, Allocator.TempJob, written))
             {
-                Copies = Copies.AsArray(),
-                CopyNodes = CopyNodes.AsArray(),
-                NodeReal = NodeReal,
-                PieceId = PieceId,
-            }.Run();
-            _contactNode = new NativeArray<byte>(count, Allocator.Persistent);
+                JobHandle pieces = new PieceRootsJob { Root = root }.Schedule(count, 1024);
+                pieces = new PieceUnionJob
+                {
+                    Copies = Copies.AsArray(),
+                    CopyNodes = CopyNodes.AsArray(),
+                    NodeReal = NodeReal,
+                    Root = root,
+                }.Schedule(CopyCount, 256, pieces);
+                new PieceLabelJob { NodeReal = NodeReal, Root = root, PieceId = PieceId }.Schedule(count, 1024, pieces).Complete();
+            }
+            _contactNode = new NativeArray<byte>(count, Allocator.Persistent, written);
             new ContactNodesJob
             {
                 Copies = Copies.AsArray(),
-                CopyNodes = CopyNodes.AsArray(),
+                CellCoord = CellCoord,
+                GridToCell = GridToCell,
                 CellCopyRange = CellCopyRange,
                 CellFill = CellFill,
                 Severed = Severed,
                 NodeReal = NodeReal,
+                FirstSlot = firstSlot.AsArray(),
+                Dims = Grid.Dims,
                 ContactNode = _contactNode,
-            }.Run();
+            }.Schedule(count, 512).Complete();
             AllocateContacts();
             nodeParent.Dispose();
             nodeRest.Dispose();
-            nodeMass.Dispose();
+            _nodeMass = nodeMass;
+            _nodeFirstSlot = firstSlot;
+            _topologySevered.CopyFrom(Severed);
             RebuildInteractionNodes();
             // Copies of kinematic nodes stay kinematic; the frames' masses are shared among them.
             KinematicFramesChanged(-1);
 
-            new BoundsJob { Positions = Positions, Velocities = Velocities, NodeReal = NodeReal, Bounds = _bounds }.Run();
+            // An update only splits nodes: every real node passes its position and velocity on to at least one real
+            // node, and every new one has those of a real node, so the bounds and the largest speed stay as they are.
+            if (!updated)
+            {
+                new BoundsJob { Positions = Positions, Velocities = Velocities, NodeReal = NodeReal, Bounds = _bounds }.Run();
+            }
             TopologyVersion++;
             LastTopologyMilliseconds = (float)timer.Elapsed.TotalMilliseconds;
         }
 
-        /// <summary>Per-node and per-copy arrays of the piece and fold contacts, for the current topology.</summary>
+        /// <summary>
+        /// Updates the topology for the edges severed since it was built (<see cref="TopologyUpdateJob"/>), with the
+        /// result of <see cref="TopologyJob"/>. False when an edge was restored since; the lists are then rebuilt.
+        /// </summary>
+        private bool UpdateTopology(NativeArray<int2> newRange, NativeList<CellCopy> newCopies, NativeList<int> newCopyNodes,
+            NativeList<int> copyParent, NativeList<int> nodeParent, NativeList<float3> nodeRest, NativeList<float> nodeMass,
+            NativeList<int> firstSlot)
+        {
+            float h = Grid.CellSize;
+            using var cellChanged = new NativeArray<byte>(CellCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory);
+            using var oldToNew = new NativeArray<int>(NodeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory);
+            using var splitSlots = new NativeList<int2>(256, Allocator.TempJob);
+            using var result = new NativeArray<int>(1, Allocator.TempJob);
+            new TopologyUpdateJob
+            {
+                CellCoord = CellCoord,
+                GridToCell = GridToCell,
+                CellFill = CellFill,
+                Severed = Severed,
+                OldSevered = _topologySevered,
+                ComponentCounts = _tables.ComponentCounts,
+                ComponentMasks = _tables.ComponentMasks,
+                Directions = _tables.Directions,
+                PairStart = _tables.PairStart,
+                Pairs = _tables.Pairs,
+                Dims = Grid.Dims,
+                CellMass = _massDensity * h * h * h,
+                MinNodeMass = _massDensity * h * h * h / 16.0f,
+                OldRange = CellCopyRange,
+                OldCopies = Copies.AsArray(),
+                OldCopyNodes = CopyNodes.AsArray(),
+                OldRest = RestPositions,
+                OldNodeMass = _nodeMass.AsArray(),
+                OldFirstSlot = _nodeFirstSlot.AsArray(),
+                NewRange = newRange,
+                NewCopies = newCopies,
+                NewCopyNodes = newCopyNodes,
+                NewCopyParent = copyParent,
+                NodeParent = nodeParent,
+                NodeRest = nodeRest,
+                NodeMass = nodeMass,
+                FirstSlot = firstSlot,
+                CellChanged = cellChanged,
+                OldToNew = oldToNew,
+                SplitSlots = splitSlots,
+                Result = result,
+            }.Run();
+            if (result[0] == 0)
+            {
+                return false;
+            }
+            JobHandle handle = new RemapCopyNodesJob
+            {
+                Copies = newCopies.AsArray(),
+                CopyParent = copyParent.AsArray(),
+                CellChanged = cellChanged,
+                OldCopyNodes = CopyNodes.AsArray(),
+                OldToNew = oldToNew,
+                CopyNodes = newCopyNodes.AsArray(),
+            }.Schedule(newCopies.Length, 256);
+            new SetSplitSlotsJob { Slots = splitSlots.AsArray(), CopyNodes = newCopyNodes.AsArray() }.Schedule(handle).Complete();
+            return true;
+        }
+
+        /// <summary>
+        /// Per-node and per-copy arrays of the piece and fold contacts, for the current topology. Every step with contacts
+        /// writes them before reading them (counts and pushes of all nodes, cells of all copies), so they are not cleared:
+        /// clearing them took 2 ms of a cut at 77220 cells (TODO PERF-5).
+        /// </summary>
         private void AllocateContacts()
         {
             int count = NodeCount;
-            _contactPartner = new NativeArray<int>(count * Contacts.MaxPerNode, Allocator.Persistent);
-            _contactDistance = new NativeArray<float>(count * Contacts.MaxPerNode, Allocator.Persistent);
-            _contactCount = new NativeArray<int>(count, Allocator.Persistent);
-            _snapshot = new NativeArray<float3>(count, Allocator.Persistent);
-            _bucketEntries = new NativeArray<int>(count, Allocator.Persistent);
-            _foldCells = new NativeArray<float4>(CopyCount, Allocator.Persistent);
-            _foldCellVelocity = new NativeArray<float3>(CopyCount, Allocator.Persistent);
-            _foldCellPiece = new NativeArray<int>(CopyCount, Allocator.Persistent);
-            _foldEntries = new NativeArray<int>(CopyCount, Allocator.Persistent);
-            _foldCandidate = new NativeArray<int>(count * Contacts.MaxFoldCells, Allocator.Persistent);
-            _foldCandidateGap = new NativeArray<float>(count * Contacts.MaxFoldCells, Allocator.Persistent);
-            _foldCandidateCount = new NativeArray<int>(count, Allocator.Persistent);
-            _foldPush = new NativeArray<float3>(count, Allocator.Persistent);
+            const NativeArrayOptions written = NativeArrayOptions.UninitializedMemory;
+            _contactPartner = new NativeArray<int>(count * Contacts.MaxPerNode, Allocator.Persistent, written);
+            _contactDistance = new NativeArray<float>(count * Contacts.MaxPerNode, Allocator.Persistent, written);
+            _contactCount = new NativeArray<int>(count, Allocator.Persistent, written);
+            _snapshot = new NativeArray<float3>(count, Allocator.Persistent, written);
+            _bucketEntries = new NativeArray<int>(count, Allocator.Persistent, written);
+            _foldCells = new NativeArray<float4>(CopyCount, Allocator.Persistent, written);
+            _foldCellVelocity = new NativeArray<float3>(CopyCount, Allocator.Persistent, written);
+            _foldCellPiece = new NativeArray<int>(CopyCount, Allocator.Persistent, written);
+            _foldEntries = new NativeArray<int>(CopyCount, Allocator.Persistent, written);
+            _foldCandidate = new NativeArray<int>(count * Contacts.MaxFoldCells, Allocator.Persistent, written);
+            _foldCandidateGap = new NativeArray<float>(count * Contacts.MaxFoldCells, Allocator.Persistent, written);
+            _foldCandidateCount = new NativeArray<int>(count, Allocator.Persistent, written);
+            _foldPush = new NativeArray<float3>(count, Allocator.Persistent, written);
         }
 
         private void DisposeNodes()
@@ -1227,6 +1348,9 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref _foldCandidateGap);
             DisposeIfCreated(ref _foldCandidateCount);
             DisposeIfCreated(ref _foldPush);
+            // Without them (also after RestoreState) the next topology change rebuilds the topology.
+            if (_nodeMass.IsCreated) _nodeMass.Dispose();
+            if (_nodeFirstSlot.IsCreated) _nodeFirstSlot.Dispose();
             DisposeInteractionNodes();
         }
 

@@ -1,5 +1,7 @@
+using System.Threading;
 using Unity.Burst;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using Unity.Mathematics;
 
@@ -54,6 +56,8 @@ namespace AdaptorPhysX
         public NativeList<int> NodeParent;
         public NativeList<float3> NodeRest;
         public NativeList<float> NodeMass;
+        /// <summary>First slot (copy * 8 + corner) of every node: nodes are numbered in the order of their first slots.</summary>
+        public NativeList<int> FirstSlot;
 
         public void Execute()
         {
@@ -62,6 +66,7 @@ namespace AdaptorPhysX
             NodeParent.Clear();
             NodeRest.Clear();
             NodeMass.Clear();
+            FirstSlot.Clear();
 
             NewCopyParent.Clear();
             NativeList<int> parentCopy = NewCopyParent;
@@ -164,6 +169,7 @@ namespace AdaptorPhysX
                     NodeParent.Add(parent);
                     NodeRest.Add(Origin + (float3)gridPoint * CellSize);
                     NodeMass.Add(0.0f);
+                    FirstSlot.Add(s);
                 }
                 int node = nodeOf[r];
                 NewCopyNodes[s] = node;
@@ -200,52 +206,348 @@ namespace AdaptorPhysX
         }
     }
 
-    /// <summary>Marks nodes that own material and labels the connected pieces of real corners.</summary>
+    /// <summary>
+    /// Updates the topology built by <see cref="TopologyJob"/> after edges were only severed since, with the same result
+    /// as rebuilding it (TODO PERF-5). Glue only joins the slots of one grid point, so only the nodes at the corners of the
+    /// cells whose severed edges changed can split, and severing never joins anything: the copies of the changed cells
+    /// are rebuilt from their components, the slots at each of their corners are united again from the copies of the
+    /// cells around that grid point alone, and everything else is copied. Copies keep their order, and nodes the order
+    /// of their first slots, as in the rebuild; masses are summed over the slots in the same order. The copies of the
+    /// unchanged cells and their nodes are written by <see cref="RemapCopyNodesJob"/>, the slots of the split nodes by
+    /// <see cref="SetSplitSlotsJob"/>. <see cref="Result"/>[0] is 0 when an edge was restored (<see cref="HealStrokeJob"/>)
+    /// or a split node has no old node; the topology must then be rebuilt.
+    /// </summary>
     [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
-    internal struct PieceJob : IJob
+    internal struct TopologyUpdateJob : IJob
     {
-        [ReadOnly] public NativeArray<CellCopy> Copies;
-        [ReadOnly] public NativeArray<int> CopyNodes;
-        public NativeArray<byte> NodeReal;
-        public NativeArray<int> PieceId;
+        [ReadOnly] public NativeArray<int3> CellCoord;
+        [ReadOnly] public NativeArray<int> GridToCell;
+        [ReadOnly] public NativeArray<float> CellFill;
+        [ReadOnly] public NativeArray<ushort> Severed;
+        /// <summary>Severed edges the old topology was built from.</summary>
+        [ReadOnly] public NativeArray<ushort> OldSevered;
+        [ReadOnly] public NativeArray<byte> ComponentCounts;
+        [ReadOnly] public NativeArray<byte> ComponentMasks;
+        [ReadOnly] public NativeArray<int3> Directions;
+        [ReadOnly] public NativeArray<int> PairStart;
+        [ReadOnly] public NativeArray<int> Pairs;
+        public int3 Dims;
+        public float CellMass;
+        public float MinNodeMass;
+
+        [ReadOnly] public NativeArray<int2> OldRange;
+        [ReadOnly] public NativeArray<CellCopy> OldCopies;
+        [ReadOnly] public NativeArray<int> OldCopyNodes;
+        [ReadOnly] public NativeArray<float3> OldRest;
+        [ReadOnly] public NativeArray<float> OldNodeMass;
+        [ReadOnly] public NativeArray<int> OldFirstSlot;
+
+        public NativeArray<int2> NewRange;
+        public NativeList<CellCopy> NewCopies;
+        public NativeList<int> NewCopyNodes;
+        public NativeList<int> NewCopyParent;
+        public NativeList<int> NodeParent;
+        public NativeList<float3> NodeRest;
+        public NativeList<float> NodeMass;
+        public NativeList<int> FirstSlot;
+        /// <summary>Per cell: 1 when its severed edges changed.</summary>
+        public NativeArray<byte> CellChanged;
+        /// <summary>Per old node: its new node, or -1 when it was at a corner of a changed cell (see <see cref="SplitSlots"/>).</summary>
+        public NativeArray<int> OldToNew;
+        /// <summary>(slot, new node) of every slot at the corners of the changed cells.</summary>
+        public NativeList<int2> SplitSlots;
+        /// <summary>[0]: 1 when updated, 0 when the topology must be rebuilt.</summary>
+        public NativeArray<int> Result;
+
+        /// <summary>A node at a corner of a changed cell: its first slot, old node, mass and slots (in Slots, from SlotStart).</summary>
+        private struct SplitNode : System.IComparable<SplitNode>
+        {
+            public int FirstSlot;
+            public int Parent;
+            public float Mass;
+            public int SlotStart;
+            public int SlotCount;
+
+            public int CompareTo(SplitNode other) => FirstSlot.CompareTo(other.FirstSlot);
+        }
 
         public void Execute()
         {
-            var root = new NativeArray<int>(PieceId.Length, Allocator.Temp);
-            for (int i = 0; i < root.Length; i++)
+            Result[0] = 0;
+            NewCopies.Clear();
+            NewCopyParent.Clear();
+            NodeParent.Clear();
+            NodeRest.Clear();
+            NodeMass.Clear();
+            FirstSlot.Clear();
+            SplitSlots.Clear();
+
+            var changed = new NativeList<int>(64, Allocator.Temp);
+            for (int c = 0; c < CellCoord.Length; c++)
             {
-                root[i] = i;
-            }
-            for (int q = 0; q < Copies.Length; q++)
-            {
-                int mask = Copies[q].Mask;
-                int first = -1;
-                for (int k = 0; k < 8; k++)
+                int before = OldSevered[c], now = Severed[c];
+                CellChanged[c] = (byte)(before != now ? 1 : 0);
+                if (before == now)
                 {
-                    if (((mask >> k) & 1) == 0)
+                    continue;
+                }
+                if ((before & ~now) != 0)
+                {
+                    return;
+                }
+                changed.Add(c);
+            }
+
+            // Copies in the order of TopologyJob; those of an unchanged cell are its old ones.
+            int copyCount = OldCopies.Length;
+            for (int i = 0; i < changed.Length; i++)
+            {
+                copyCount += ComponentCounts[Severed[changed[i]]] - OldRange[changed[i]].y;
+            }
+            NewCopies.ResizeUninitialized(copyCount);
+            NewCopyParent.ResizeUninitialized(copyCount);
+            NativeArray<CellCopy> copies = NewCopies.AsArray();
+            NativeArray<int> copyParent = NewCopyParent.AsArray();
+            int copy = 0;
+            for (int c = 0; c < CellCoord.Length; c++)
+            {
+                int2 old = OldRange[c];
+                if (CellChanged[c] == 0)
+                {
+                    NewRange[c] = new int2(copy, old.y);
+                    for (int q = old.x; q < old.x + old.y; q++)
+                    {
+                        copies[copy] = OldCopies[q];
+                        copyParent[copy++] = q;
+                    }
+                    continue;
+                }
+                int severed = Severed[c];
+                int count = ComponentCounts[severed];
+                NewRange[c] = new int2(copy, count);
+                for (int i = 0; i < count; i++)
+                {
+                    byte mask = ComponentMasks[severed * Lattice.CornerCount + i];
+                    int parent = -1;
+                    for (int q = old.x; q < old.x + old.y && parent < 0; q++)
+                    {
+                        if ((OldCopies[q].Mask & mask) == mask)
+                        {
+                            parent = q;
+                        }
+                    }
+                    copies[copy] = new CellCopy
+                    {
+                        Cell = c,
+                        Mask = mask,
+                        Weight = CellFill[c] * math.countbits((uint)mask) / 8.0f,
+                    };
+                    copyParent[copy++] = parent;
+                }
+            }
+
+            int3 pointDims = Dims + 1;
+            var points = new NativeList<int>(changed.Length * Lattice.CornerCount, Allocator.Temp);
+            for (int i = 0; i < changed.Length; i++)
+            {
+                int3 coord = CellCoord[changed[i]];
+                for (int k = 0; k < Lattice.CornerCount; k++)
+                {
+                    int3 p = coord + Lattice.CornerOffset(k);
+                    points.Add(p.x + pointDims.x * (p.y + pointDims.y * p.z));
+                }
+            }
+            points.Sort();
+
+            var split = new NativeArray<byte>(OldNodeMass.Length, Allocator.Temp);
+            int splitCount = 0;
+            var nodes = new NativeList<SplitNode>(points.Length, Allocator.Temp);
+            var nodeSlots = new NativeList<int>(points.Length * 2, Allocator.Temp);
+            // Per grid point: the cell having it as corner k, the slots of their copies and the union of those slots.
+            var cellAt = new FixedList64Bytes<int>();
+            var slotStart = new FixedList64Bytes<int>();
+            var slots = new FixedList512Bytes<int>();
+            var root = new FixedList512Bytes<int>();
+            for (int i = 0; i < points.Length; i++)
+            {
+                if (i > 0 && points[i] == points[i - 1])
+                {
+                    continue;
+                }
+                int index = points[i];
+                var point = new int3(index % pointDims.x, index / pointDims.x % pointDims.y, index / (pointDims.x * pointDims.y));
+                cellAt.Clear();
+                slotStart.Clear();
+                slots.Clear();
+                root.Clear();
+                for (int k = 0; k < Lattice.CornerCount; k++)
+                {
+                    int3 cc = point - Lattice.CornerOffset(k);
+                    int cell = math.any(cc < 0) || math.any(cc >= Dims) ? -1 : GridToCell[cc.x + Dims.x * (cc.y + Dims.y * cc.z)];
+                    cellAt.Add(cell);
+                    slotStart.Add(slots.Length);
+                    if (cell < 0)
                     {
                         continue;
                     }
-                    int n = CopyNodes[q * 8 + k];
-                    NodeReal[n] = 1;
-                    if (first < 0)
+                    int2 range = NewRange[cell];
+                    for (int q = range.x; q < range.x + range.y; q++)
                     {
-                        first = n;
+                        root.Add(slots.Length);
+                        slots.Add(q * Lattice.CornerCount + k);
                     }
-                    else
+                    int2 old = OldRange[cell];
+                    for (int q = old.x; q < old.x + old.y; q++)
                     {
-                        int a = Find(root, n), b = Find(root, first);
-                        root[math.max(a, b)] = math.min(a, b);
+                        int node = OldCopyNodes[q * Lattice.CornerCount + k];
+                        splitCount += split[node] == 0 ? 1 : 0;
+                        split[node] = 1;
                     }
                 }
+
+                for (int ka = 0; ka < Lattice.CornerCount; ka++)
+                {
+                    for (int kb = ka + 1; kb < Lattice.CornerCount; kb++)
+                    {
+                        if (cellAt[ka] < 0 || cellAt[kb] < 0)
+                        {
+                            continue;
+                        }
+                        // The cell with the point at corner kb lies at offset(ka) - offset(kb) from the one with it at ka;
+                        // TopologyJob glues them from the cell the direction is positive from.
+                        int3 direction = Lattice.CornerOffset(ka) - Lattice.CornerOffset(kb);
+                        int lower = ka, upper = kb;
+                        if (!Positive(direction))
+                        {
+                            direction = -direction;
+                            lower = kb;
+                            upper = ka;
+                        }
+                        int d = 0;
+                        while (math.any(Directions[d] != direction))
+                        {
+                            d++;
+                        }
+                        int2 rl = NewRange[cellAt[lower]], ru = NewRange[cellAt[upper]];
+                        for (int qa = rl.x; qa < rl.x + rl.y; qa++)
+                        {
+                            int ma = copies[qa].Mask;
+                            for (int qb = ru.x; qb < ru.x + ru.y; qb++)
+                            {
+                                int mb = copies[qb].Mask;
+                                bool glue = false;
+                                for (int p = PairStart[d]; p < PairStart[d + 1] && !glue; p++)
+                                {
+                                    glue = ((ma >> Pairs[2 * p]) & 1) != 0 && ((mb >> Pairs[2 * p + 1]) & 1) != 0;
+                                }
+                                if (glue)
+                                {
+                                    Union(ref root, slotStart[lower] + qa - rl.x, slotStart[upper] + qb - ru.x);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                for (int r = 0; r < slots.Length; r++)
+                {
+                    if (Find(ref root, r) != r)
+                    {
+                        continue;
+                    }
+                    // Slots in increasing order, the order TopologyJob visits them in.
+                    int start = nodeSlots.Length;
+                    for (int s = 0; s < slots.Length; s++)
+                    {
+                        if (Find(ref root, s) != r)
+                        {
+                            continue;
+                        }
+                        int slot = slots[s];
+                        int j = nodeSlots.Length;
+                        nodeSlots.Add(slot);
+                        while (j > start && nodeSlots[j - 1] > slot)
+                        {
+                            nodeSlots[j] = nodeSlots[j - 1];
+                            j--;
+                        }
+                        nodeSlots[j] = slot;
+                    }
+                    float mass = 0.0f;
+                    for (int s = start; s < nodeSlots.Length; s++)
+                    {
+                        mass += CellMass * copies[nodeSlots[s] / Lattice.CornerCount].Weight / Lattice.CornerCount;
+                    }
+                    int first = nodeSlots[start];
+                    int parentCopy = copyParent[first / Lattice.CornerCount];
+                    if (parentCopy < 0)
+                    {
+                        return;
+                    }
+                    nodes.Add(new SplitNode
+                    {
+                        FirstSlot = first,
+                        Parent = OldCopyNodes[parentCopy * Lattice.CornerCount + first % Lattice.CornerCount],
+                        Mass = math.max(mass, MinNodeMass),
+                        SlotStart = start,
+                        SlotCount = nodeSlots.Length - start,
+                    });
+                }
             }
-            for (int i = 0; i < PieceId.Length; i++)
+            nodes.Sort();
+
+            // Nodes in the order of their first slots: the old nodes elsewhere keep theirs, moved with their copies.
+            int nodeCount = OldNodeMass.Length - splitCount + nodes.Length;
+            NodeParent.ResizeUninitialized(nodeCount);
+            NodeRest.ResizeUninitialized(nodeCount);
+            NodeMass.ResizeUninitialized(nodeCount);
+            FirstSlot.ResizeUninitialized(nodeCount);
+            int id = 0, next = 0;
+            for (int o = 0; o < OldNodeMass.Length; o++)
             {
-                PieceId[i] = NodeReal[i] != 0 ? Find(root, i) : -1;
+                if (split[o] != 0)
+                {
+                    OldToNew[o] = -1;
+                    continue;
+                }
+                int oldFirst = OldFirstSlot[o];
+                int oldCopy = oldFirst / Lattice.CornerCount;
+                int cell = OldCopies[oldCopy].Cell;
+                int first = (oldCopy - OldRange[cell].x + NewRange[cell].x) * Lattice.CornerCount + oldFirst % Lattice.CornerCount;
+                while (next < nodes.Length && nodes[next].FirstSlot < first)
+                {
+                    SetSplitNode(id++, nodes[next++], nodeSlots);
+                }
+                OldToNew[o] = id;
+                NodeParent[id] = o;
+                NodeRest[id] = OldRest[o];
+                NodeMass[id] = OldNodeMass[o];
+                FirstSlot[id++] = first;
+            }
+            while (next < nodes.Length)
+            {
+                SetSplitNode(id++, nodes[next++], nodeSlots);
+            }
+            NewCopyNodes.ResizeUninitialized(copyCount * Lattice.CornerCount);
+            Result[0] = 1;
+        }
+
+        private void SetSplitNode(int id, SplitNode node, NativeList<int> nodeSlots)
+        {
+            NodeParent[id] = node.Parent;
+            NodeRest[id] = OldRest[node.Parent];
+            NodeMass[id] = node.Mass;
+            FirstSlot[id] = node.FirstSlot;
+            for (int s = node.SlotStart; s < node.SlotStart + node.SlotCount; s++)
+            {
+                SplitSlots.Add(new int2(nodeSlots[s], id));
             }
         }
 
-        private static int Find(NativeArray<int> root, int x)
+        /// <summary>Whether <paramref name="d"/> is one of the 13 directions of <see cref="LatticeTables.Directions"/>.</summary>
+        private static bool Positive(int3 d) => d.z > 0 || (d.z == 0 && (d.y > 0 || (d.y == 0 && d.x > 0)));
+
+        private static int Find(ref FixedList512Bytes<int> root, int x)
         {
             while (root[x] != x)
             {
@@ -254,6 +556,188 @@ namespace AdaptorPhysX
             }
             return x;
         }
+
+        private static void Union(ref FixedList512Bytes<int> root, int a, int b)
+        {
+            a = Find(ref root, a);
+            b = Find(ref root, b);
+            root[math.max(a, b)] = math.min(a, b);
+        }
+    }
+
+    /// <summary>
+    /// Nodes of the copies <see cref="TopologyUpdateJob"/> kept: the new nodes of their old ones. Slots at the corners of
+    /// the changed cells are -1 here and set by <see cref="SetSplitSlotsJob"/>.
+    /// </summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal struct RemapCopyNodesJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<CellCopy> Copies;
+        [ReadOnly] public NativeArray<int> CopyParent;
+        [ReadOnly] public NativeArray<byte> CellChanged;
+        [ReadOnly] public NativeArray<int> OldCopyNodes;
+        [ReadOnly] public NativeArray<int> OldToNew;
+        [NativeDisableParallelForRestriction] public NativeArray<int> CopyNodes;
+
+        public void Execute(int q)
+        {
+            bool changed = CellChanged[Copies[q].Cell] != 0;
+            int parent = CopyParent[q];
+            for (int k = 0; k < Lattice.CornerCount; k++)
+            {
+                CopyNodes[q * Lattice.CornerCount + k] = changed ? -1 : OldToNew[OldCopyNodes[parent * Lattice.CornerCount + k]];
+            }
+        }
+    }
+
+    /// <summary>Sets the slots of the nodes at the corners of the changed cells (<see cref="TopologyUpdateJob.SplitSlots"/>).</summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal struct SetSplitSlotsJob : IJob
+    {
+        [ReadOnly] public NativeArray<int2> Slots;
+        public NativeArray<int> CopyNodes;
+
+        public void Execute()
+        {
+            for (int i = 0; i < Slots.Length; i++)
+            {
+                CopyNodes[Slots[i].x] = Slots[i].y;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Tet rotations of the new copies: those of the copy each derives from, so the polar decomposition stays warm across
+    /// cuts, or <see cref="Initial"/>.
+    /// </summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal struct RemapRotationsJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<int> CopyParent;
+        /// <summary>Rotations of the old copies; empty when there are none.</summary>
+        [ReadOnly] public NativeArray<quaternion> OldRotations;
+        public quaternion Initial;
+        [NativeDisableParallelForRestriction] public NativeArray<quaternion> Rotations;
+
+        public void Execute(int q)
+        {
+            int parent = CopyParent[q];
+            for (int t = 0; t < Lattice.TetsPerCell; t++)
+            {
+                Rotations[q * Lattice.TetsPerCell + t] = parent >= 0 && OldRotations.Length > 0
+                    ? OldRotations[parent * Lattice.TetsPerCell + t]
+                    : Initial;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Marks nodes that own material and joins the real corners of every copy into a piece, copies in parallel. Roots
+    /// are linked by compare-and-swap, always the larger index under the smaller, so every piece ends with its least
+    /// node as its root whatever the order of the joins, as with a sequential union (<see cref="PieceLabelJob"/>).
+    /// <see cref="Root"/> starts with every node its own root.
+    /// </summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal unsafe struct PieceUnionJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<CellCopy> Copies;
+        [ReadOnly] public NativeArray<int> CopyNodes;
+        [NativeDisableParallelForRestriction] public NativeArray<byte> NodeReal;
+        [NativeDisableParallelForRestriction] public NativeArray<int> Root;
+
+        public void Execute(int q)
+        {
+            var root = (int*)NativeArrayUnsafeUtility.GetUnsafePtr(Root);
+            int mask = Copies[q].Mask;
+            int first = -1;
+            for (int k = 0; k < Lattice.CornerCount; k++)
+            {
+                if (((mask >> k) & 1) == 0)
+                {
+                    continue;
+                }
+                int n = CopyNodes[q * Lattice.CornerCount + k];
+                NodeReal[n] = 1;
+                if (first < 0)
+                {
+                    first = n;
+                }
+                else
+                {
+                    Union(root, first, n);
+                }
+            }
+        }
+
+        private static void Union(int* root, int a, int b)
+        {
+            while (true)
+            {
+                a = Find(root, a);
+                b = Find(root, b);
+                if (a == b)
+                {
+                    return;
+                }
+                if (a < b)
+                {
+                    int t = a;
+                    a = b;
+                    b = t;
+                }
+                if (Interlocked.CompareExchange(ref root[a], b, a) == a)
+                {
+                    return;
+                }
+            }
+        }
+
+        /// <summary>Root of <paramref name="x"/>, halving the path: entries other than roots only ever move to an ancestor.</summary>
+        private static int Find(int* root, int x)
+        {
+            while (true)
+            {
+                int parent = Volatile.Read(ref root[x]);
+                if (parent == x)
+                {
+                    return x;
+                }
+                int grand = Volatile.Read(ref root[parent]);
+                if (grand != parent)
+                {
+                    Volatile.Write(ref root[x], grand);
+                }
+                x = grand;
+            }
+        }
+    }
+
+    /// <summary>Labels every real node with the least node of its piece (<see cref="PieceUnionJob"/>), -1 for virtual-only nodes.</summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal struct PieceLabelJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<byte> NodeReal;
+        [ReadOnly] public NativeArray<int> Root;
+        public NativeArray<int> PieceId;
+
+        public void Execute(int i)
+        {
+            int x = i;
+            while (Root[x] != x)
+            {
+                x = Root[x];
+            }
+            PieceId[i] = NodeReal[i] != 0 ? x : -1;
+        }
+    }
+
+    /// <summary>Every node its own root, for <see cref="PieceUnionJob"/>.</summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal struct PieceRootsJob : IJobParallelFor
+    {
+        public NativeArray<int> Root;
+
+        public void Execute(int i) => Root[i] = i;
     }
 
     /// <summary>Gathers node state for the new topology from the inherited old nodes.</summary>
@@ -334,6 +818,8 @@ namespace AdaptorPhysX
         [ReadOnly] public NativeArray<CellCopy> Copies;
         [ReadOnly] public NativeArray<int> CopyNodes;
         [ReadOnly] public NativeArray<int> EdgeCorners;
+        /// <summary>Per cell: 1 when its copies come within <see cref="Band"/> of the swept blade's bounds (<see cref="CutCellsJob"/>).</summary>
+        [ReadOnly] public NativeArray<byte> Near;
         public int3 Dims;
         /// <summary>
         /// Blade edge (heel A, tip B) at the start of the tail, at the previous step and at this step.
@@ -388,29 +874,17 @@ namespace AdaptorPhysX
             }
             _tailNormal = math.normalizesafe(_n0 + _n1, _bladeNormal);
             _motion = math.normalizesafe((A1 + B1) - (A0 + B0));
-            float3 lo = math.min(math.min(math.min(TailA, TailB), math.min(A0, B0)), math.min(A1, B1));
-            float3 hi = math.max(math.max(math.max(TailA, TailB), math.max(A0, B0)), math.max(A1, B1));
 
             // Label the nodes near the blade first, then test the edges of the same cells: an edge whose
             // ends were labelled in different sweeps may have moved off the blade by now.
             var cut = new NativeList<int>(256, Allocator.Temp);
             for (int c = 0; c < CellCoord.Length; c++)
             {
-                int2 range = CellCopyRange[c];
-                float3 cmin = new float3(float.MaxValue), cmax = new float3(float.MinValue);
-                for (int q = range.x; q < range.x + range.y; q++)
-                {
-                    for (int k = 0; k < 8; k++)
-                    {
-                        float3 x = Positions[CopyNodes[q * 8 + k]];
-                        cmin = math.min(cmin, x);
-                        cmax = math.max(cmax, x);
-                    }
-                }
-                if (math.any(cmax < lo - Band) || math.any(cmin > hi + Band))
+                if (Near[c] == 0)
                 {
                     continue;
                 }
+                int2 range = CellCopyRange[c];
                 for (int q = range.x; q < range.x + range.y; q++)
                 {
                     int mask = Copies[q].Mask;
@@ -949,6 +1423,39 @@ namespace AdaptorPhysX
                     EdgeNormal[n * 12 + localEdge] = restNormal;
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Marks the cells whose copies come within <see cref="Band"/> of the bounding box of the blade's tail and quad, the
+    /// cells <see cref="CutJob"/> labels and cuts: the test reads every node of every cell, in parallel here.
+    /// </summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal struct CutCellsJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<float3> Positions;
+        [ReadOnly] public NativeArray<int2> CellCopyRange;
+        [ReadOnly] public NativeArray<int> CopyNodes;
+        public float3 TailA, TailB, A0, B0, A1, B1;
+        public float Band;
+        public NativeArray<byte> Near;
+
+        public void Execute(int c)
+        {
+            float3 lo = math.min(math.min(math.min(TailA, TailB), math.min(A0, B0)), math.min(A1, B1));
+            float3 hi = math.max(math.max(math.max(TailA, TailB), math.max(A0, B0)), math.max(A1, B1));
+            int2 range = CellCopyRange[c];
+            float3 cmin = new float3(float.MaxValue), cmax = new float3(float.MinValue);
+            for (int q = range.x; q < range.x + range.y; q++)
+            {
+                for (int k = 0; k < 8; k++)
+                {
+                    float3 x = Positions[CopyNodes[q * 8 + k]];
+                    cmin = math.min(cmin, x);
+                    cmax = math.max(cmax, x);
+                }
+            }
+            Near[c] = (byte)(math.any(cmax < lo - Band) || math.any(cmin > hi + Band) ? 0 : 1);
         }
     }
 

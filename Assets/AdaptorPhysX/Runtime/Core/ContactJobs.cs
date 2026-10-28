@@ -34,38 +34,36 @@ namespace AdaptorPhysX
 
     /// <summary>
     /// Marks the real nodes that can touch another piece or a fold: all but those surrounded by
-    /// eight full, uncut cells, which the contact search skips.
+    /// eight full, uncut cells, which the contact search skips. Such cells have one copy each and are
+    /// glued, so the node at their common grid point is the only node there.
     /// </summary>
     [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
-    internal struct ContactNodesJob : IJob
+    internal struct ContactNodesJob : IJobParallelFor
     {
         [ReadOnly] public NativeArray<CellCopy> Copies;
-        [ReadOnly] public NativeArray<int> CopyNodes;
+        [ReadOnly] public NativeArray<int3> CellCoord;
+        [ReadOnly] public NativeArray<int> GridToCell;
         [ReadOnly] public NativeArray<int2> CellCopyRange;
         [ReadOnly] public NativeArray<float> CellFill;
         [ReadOnly] public NativeArray<ushort> Severed;
         [ReadOnly] public NativeArray<byte> NodeReal;
+        /// <summary>First slot of every node (see <see cref="TopologyJob.FirstSlot"/>), which gives its grid point.</summary>
+        [ReadOnly] public NativeArray<int> FirstSlot;
+        public int3 Dims;
         public NativeArray<byte> ContactNode;
 
-        public void Execute()
+        public void Execute(int i)
         {
-            var solid = new NativeArray<byte>(ContactNode.Length, Allocator.Temp);
-            for (int q = 0; q < Copies.Length; q++)
+            int first = FirstSlot[i];
+            int3 point = CellCoord[Copies[first / Lattice.CornerCount].Cell] + Lattice.CornerOffset(first % Lattice.CornerCount);
+            bool enclosed = true;
+            for (int k = 0; k < Lattice.CornerCount && enclosed; k++)
             {
-                int cell = Copies[q].Cell;
-                if (CellCopyRange[cell].y != 1 || Severed[cell] != 0 || CellFill[cell] < 1.0f)
-                {
-                    continue;
-                }
-                for (int k = 0; k < 8; k++)
-                {
-                    solid[CopyNodes[q * 8 + k]]++;
-                }
+                int3 c = point - Lattice.CornerOffset(k);
+                int cell = math.any(c < 0) || math.any(c >= Dims) ? -1 : GridToCell[c.x + Dims.x * (c.y + Dims.y * c.z)];
+                enclosed = cell >= 0 && CellCopyRange[cell].y == 1 && Severed[cell] == 0 && CellFill[cell] >= 1.0f;
             }
-            for (int i = 0; i < ContactNode.Length; i++)
-            {
-                ContactNode[i] = (byte)(NodeReal[i] != 0 && solid[i] < 8 ? 1 : 0);
-            }
+            ContactNode[i] = (byte)(NodeReal[i] != 0 && !enclosed ? 1 : 0);
         }
     }
 
