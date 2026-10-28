@@ -10,10 +10,14 @@ namespace AdaptorPhysX
 {
     public static class MeshUtil
     {
+        /// <summary>Vertices closer than this fraction of the bounding box diagonal are welded by <see cref="CountOpenEdges"/>.</summary>
+        public const float WeldTolerance = 1e-6f;
+
         /// <summary>
-        /// Edges used by one triangle (holes) and by more than two (non-manifold), after welding equal
-        /// positions. The voxelizer's ray parity needs no boundary edges; non-manifold edges where closed
-        /// sheets touch (the Stanford dragon has 108) do not disturb it.
+        /// Edges used by one triangle (holes) and by more than two (non-manifold), after welding vertices closer
+        /// than <see cref="WeldTolerance"/> of the bounding box diagonal: generated seams (the ellipsoid at
+        /// theta = 0 and 2 pi) differ in the last bits. The voxelizer's ray parity needs no boundary edges;
+        /// non-manifold edges where closed sheets touch (the Stanford dragon has 108) do not disturb it.
         /// </summary>
         public static void CountOpenEdges(float3[] positions, int[] triangles, out int boundaryEdges, out int nonManifoldEdges)
         {
@@ -34,17 +38,45 @@ namespace AdaptorPhysX
 
             public void Execute()
             {
-                var weld = new NativeParallelHashMap<float3, int>(Positions.Length, Allocator.Temp);
+                float3 lo = float.MaxValue, hi = float.MinValue;
+                for (int i = 0; i < Positions.Length; i++)
+                {
+                    lo = math.min(lo, Positions[i]);
+                    hi = math.max(hi, Positions[i]);
+                }
+                float tolerance = math.max(WeldTolerance * math.length(hi - lo), 1e-12f);
+                // Each welded vertex is stored in the grid cell (of the tolerance's size) of its first position;
+                // a position looks for one within the tolerance in the 27 cells around it.
+                var grid = new NativeParallelMultiHashMap<int3, int>(Positions.Length, Allocator.Temp);
                 var id = new NativeArray<int>(Positions.Length, Allocator.Temp);
                 int welded = 0;
                 for (int i = 0; i < Positions.Length; i++)
                 {
-                    if (!weld.TryGetValue(Positions[i], out int w))
+                    float3 p = Positions[i];
+                    int3 cell = (int3)math.floor(p / tolerance);
+                    int found = -1;
+                    for (int n = 0; n < 27 && found < 0; n++)
                     {
-                        w = welded++;
-                        weld.Add(Positions[i], w);
+                        int3 key = cell + new int3(n % 3 - 1, n / 3 % 3 - 1, n / 9 - 1);
+                        if (!grid.TryGetFirstValue(key, out int other, out NativeParallelMultiHashMapIterator<int3> it))
+                        {
+                            continue;
+                        }
+                        do
+                        {
+                            if (math.distancesq(Positions[other], p) <= tolerance * tolerance)
+                            {
+                                found = id[other];
+                                break;
+                            }
+                        } while (grid.TryGetNextValue(out other, ref it));
                     }
-                    id[i] = w;
+                    if (found < 0)
+                    {
+                        found = welded++;
+                        grid.Add(cell, i);
+                    }
+                    id[i] = found;
                 }
                 var keys = new NativeList<long>(Triangles.Length, Allocator.Temp);
                 for (int t = 0; t < Triangles.Length; t += 3)
@@ -75,7 +107,7 @@ namespace AdaptorPhysX
                 Counts[1] = nonManifold;
                 keys.Dispose();
                 id.Dispose();
-                weld.Dispose();
+                grid.Dispose();
             }
         }
 

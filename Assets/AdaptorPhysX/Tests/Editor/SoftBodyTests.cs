@@ -235,6 +235,12 @@ namespace AdaptorPhysX.Tests
                 Assert.AreEqual(0, closedBoundary);
                 Assert.AreEqual(0, closedNonManifold);
                 Assert.AreEqual(3, openBoundary);
+                // The ellipsoid's seam vertices (theta = 0 and 2 pi) differ in the last bits; they are welded.
+                Mesh ellipsoid = MeshUtil.CreateEllipsoid(new Vector3(0.05f, 0.03f, 0.04f));
+                MeshUtil.CountOpenEdges(System.Array.ConvertAll(ellipsoid.vertices, v => (float3)v), ellipsoid.triangles,
+                    out int ellipsoidBoundary, out _);
+                Object.DestroyImmediate(ellipsoid);
+                Assert.AreEqual(0, ellipsoidBoundary);
 
                 body = bodyObject.AddComponent<ApxSoftBody>();
                 body.resolution = 8;
