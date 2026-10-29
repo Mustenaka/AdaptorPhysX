@@ -517,7 +517,9 @@
   日志记录各物体的包围盒、钢球高度、环形器械下方与塑性块中部的表面高度。batchmode 入口
   `AdaptorPhysX.Samples.Editor.InteractionDemoCapture.CaptureBatch`，参数同上。
 - `AdaptorPhysX/Capture Standard Scenarios`：在编辑模式下按脚本执行 S1–S7，并输出 PNG 与日志
-  （每个阶段的块大小、副本数、耗时；S7 另记切口表面的张开量与针脚张力），并写出评分 `score.json`（9.13 节）。S7 的针脚点在 S6 切开之前放置，
+  （每个阶段的块大小、副本数、耗时；S7 另记切口表面的张开量与针脚张力），并写出评分 `score.json`（9.13 节）。
+  全过程由 `ApxRecorder` 录制（`recording.json`），截图之后重新打开场景回放，日志记录各物体节点位置的检查与评分是否与录制时相同，
+  不同时输出错误并写出 `score-replay.json`（9.14 节）。S7 的针脚点在 S6 切开之前放置，
   高度取渲染皮肤的高度（最高节点可能高出皮肤近一个体素）；缝线画为两点之间、高出皮肤 1.2 mm 的弧形细管，只用于截图
   （`LineRenderer` 在编辑模式下随相机移动只渲染出部分线段，未采用）。菜单执行前提示保存已修改的场景，结束后从磁盘重新加载原场景；
   Play 模式下不可用。batchmode 用法：
@@ -1086,6 +1088,10 @@
     一致，报告在第 40 步不一致。
   - PlayMode `RecordingReplaysAtAnotherFrameRate`：每帧 3 个固定步（`Time.captureDeltaTime`）录制手术刀全切与镊子抓取，
     `maxStepsPerFrame` 为 1，物体在 168 步中跳过 112 步；以每帧 1 个固定步回放，6 次检查一致，最后的节点位置逐位相同。
+  - 标准场景（第 8 节）：S1–S7 的截图脚本录制全过程，截图之后重新打开场景回放。录制 1194 步、4 个物体，手术刀位姿 291 个，
+    操作 349 个（抓取移动 290 次、材料点 34 个、`ResetSweep` 9 次、抓取开始 7 次与结束 6 次、针脚 3 个），`recording.json`
+    150 KB；回放 15.7 s，80 次检查一致，评分 `score.json` 与录制时逐字节相同。截图与 MED-13 时相同（`D3_blade_pose`、
+    `S2_flap_incision` 各有 1 个像素差 1 级）。
 - 限制：
   - 回放只从场景的初始状态开始，不能从中途的快照（9.6 节）开始：快照不含碰撞体上一步的位姿与器械组件的内部状态。
   - 录制期间对物体参数（材料、碰撞、休眠等）的修改、`RestoreState`（录制时输出警告）、器械的缩放、不在 `instruments` 中的

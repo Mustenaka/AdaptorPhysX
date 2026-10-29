@@ -10,7 +10,8 @@ namespace AdaptorPhysX.Samples.Editor
 {
     /// <summary>
     /// Runs the standard scenarios (ROADMAP S1-S7) on the demo scene in edit mode with a
-    /// scripted scalpel and forceps, and writes a PNG per stage. Batch use:
+    /// scripted scalpel and forceps, and writes a PNG per stage. The run is recorded and then
+    /// replayed in the scene opened again (TODO MED-14). Batch use:
     /// Unity -batchmode -projectPath . -executeMethod AdaptorPhysX.Samples.Editor.SurgeryDemoCapture.CaptureBatch -apxCaptureDir &lt;dir&gt;
     /// </summary>
     public static class SurgeryDemoCapture
@@ -20,6 +21,7 @@ namespace AdaptorPhysX.Samples.Editor
 
         private static Camera _camera;
         private static ApxScalpel _scalpel;
+        private static ApxRecorder _recorder;
         private static ApxDebugView _debugView;
         private static string _directory;
         private static readonly List<StitchLine> _stitchLines = new List<StitchLine>();
@@ -85,7 +87,8 @@ namespace AdaptorPhysX.Samples.Editor
             _stitchLines.Clear();
             try
             {
-                RunScenarios();
+                RunScenarios(out ApxRecording recording, out string score);
+                Replay(recording, score);
             }
             finally
             {
@@ -97,19 +100,10 @@ namespace AdaptorPhysX.Samples.Editor
             }
         }
 
-        private static void RunScenarios()
+        private static void RunScenarios(out ApxRecording recording, out string score)
         {
-            foreach (ApxDemoShape shape in UnityEngine.Object.FindObjectsOfType<ApxDemoShape>())
-            {
-                shape.Apply();
-            }
-            foreach (ApxSoftBody body in UnityEngine.Object.FindObjectsOfType<ApxSoftBody>())
-            {
-                body.Initialize();
-            }
-            Physics.SyncTransforms();
+            PrepareScene();
             _camera = Camera.main;
-            _scalpel = UnityEngine.Object.FindObjectOfType<ApxScalpel>();
             // The standard shots show the surfaces only; the debug view is turned on for the D shots.
             _debugView = UnityEngine.Object.FindObjectOfType<ApxDebugView>();
             if (_debugView != null)
@@ -121,12 +115,10 @@ namespace AdaptorPhysX.Samples.Editor
             ApxSoftBody liver = Find("Liver Lobe");
             ApxSoftBody pad = Find("Tissue Pad");
             // TODO MED-13: a scorer observes the bodies through all scenarios; its report is written next to the shots.
-            var scorer = new GameObject("Scorer").AddComponent<ApxScorer>();
-            scorer.forceLimit = ForceLimit;
-            foreach (ApxSoftBody body in ApxSoftBody.Active)
-            {
-                scorer.Observe(body);
-            }
+            ApxScorer scorer = CreateScorer();
+            // TODO MED-14: the instruments and operations are recorded from the first step on.
+            _recorder = CreateRecorder();
+            _recorder.StartRecording();
             scorer.IncisionMade += incision => Debug.Log(
                 $"[ApxCapture] incision: {incision.Body} stroke {incision.Stroke}, {incision.SeveredEdges} edges, length " +
                 $"{incision.Length * 1000:0.0} mm, depth {incision.Depth * 1000:0.0} mm, area {incision.Area * 1e6f:0} mm^2, " +
@@ -275,8 +267,11 @@ namespace AdaptorPhysX.Samples.Editor
             Shot("S7a_pad_sutured", new Vector3(0.0f, padTop + 0.06f, -0.27f), new Vector3(0.0f, padTop, -0.21f));
             Shot("S7b_pad_sutured_close", new Vector3(0.0f, skin + 0.03f, -0.218f), new Vector3(0.0f, skin, -0.21f));
 
+            recording = _recorder.StopRecording();
+            File.WriteAllText(Path.Combine(_directory, "recording.json"), recording.ToJson());
             ApxScoreReport report = scorer.Report();
-            File.WriteAllText(Path.Combine(_directory, "score.json"), report.ToJson());
+            score = report.ToJson();
+            File.WriteAllText(Path.Combine(_directory, "score.json"), score);
             Debug.Log($"[ApxCapture] score: {report.Incisions.Count} incisions, cut area {report.CutArea * 1e6f:0} mm^2, " +
                       $"{report.Pieces} pieces, {report.ForceEvents.Count} times above {ForceLimit} N for {report.OverForceTime:0.00} s, " +
                       $"peak {report.PeakForce:0.00} N");
@@ -284,6 +279,86 @@ namespace AdaptorPhysX.Samples.Editor
 
         /// <summary>Force on an instrument above which the scorer reports it, N.</summary>
         private const float ForceLimit = 1.0f;
+
+        /// <summary>
+        /// Opens the scene again and replays the recording of the scenarios (TODO MED-14): the bodies' node positions agree
+        /// with the recording at its checks (every 60 steps and after the last), and the score with the recorded score.
+        /// </summary>
+        private static void Replay(ApxRecording recording, string score)
+        {
+            foreach (ApxSoftBody body in ApxSoftBody.Active.ToArray())
+            {
+                body.Release();
+            }
+            EditorSceneManager.OpenScene(ScenePath);
+            // The threads drawn in S7 belong to the recorded run.
+            _stitchLines.Clear();
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            PrepareScene();
+            ApxScorer scorer = CreateScorer();
+            _recorder = CreateRecorder();
+            _recorder.Replay(recording);
+            int steps = 0;
+            while (true)
+            {
+                _recorder.Step();
+                if (!_recorder.IsReplaying)
+                {
+                    break;
+                }
+                StepScene();
+                steps++;
+            }
+            string replayed = scorer.Report().ToJson();
+            string result = $"[ApxCapture] replay: {steps} steps of {recording.Bodies.Count} bodies in {timer.Elapsed.TotalSeconds:0.0} s, " +
+                            $"{recording.Operations.Count} operations, {recording.Poses.Count} scalpel poses; " +
+                            $"{_recorder.ChecksCompared} positions hashes {(_recorder.Diverged ? $"differ from step {_recorder.DivergedTick} on" : "as recorded")}, " +
+                            $"score {(replayed == score ? "as recorded" : "differs")}";
+            if (_recorder.Diverged || replayed != score || steps != recording.Steps)
+            {
+                Debug.LogError(result);
+                File.WriteAllText(Path.Combine(_directory, "score-replay.json"), replayed);
+            }
+            else
+            {
+                Debug.Log(result);
+            }
+        }
+
+        /// <summary>Applies the demo shapes and initializes the bodies of the opened scene.</summary>
+        private static void PrepareScene()
+        {
+            foreach (ApxDemoShape shape in UnityEngine.Object.FindObjectsOfType<ApxDemoShape>())
+            {
+                shape.Apply();
+            }
+            foreach (ApxSoftBody body in UnityEngine.Object.FindObjectsOfType<ApxSoftBody>())
+            {
+                body.Initialize();
+            }
+            Physics.SyncTransforms();
+            _scalpel = UnityEngine.Object.FindObjectOfType<ApxScalpel>();
+        }
+
+        private static ApxScorer CreateScorer()
+        {
+            var scorer = new GameObject("Scorer").AddComponent<ApxScorer>();
+            scorer.forceLimit = ForceLimit;
+            foreach (ApxSoftBody body in ApxSoftBody.Active)
+            {
+                scorer.Observe(body);
+            }
+            return scorer;
+        }
+
+        /// <summary>A recorder of the bodies in the order they step and of the scalpel, the only moving instrument.</summary>
+        private static ApxRecorder CreateRecorder()
+        {
+            var recorder = new GameObject("Recorder").AddComponent<ApxRecorder>();
+            recorder.bodies = ApxSoftBody.Active.ToArray();
+            recorder.instruments = new[] { _scalpel.transform };
+            return recorder;
+        }
 
         /// <summary>
         /// Largest opening of an incision: the distance of each pair of wall points less the one before the cut; negative where
@@ -415,6 +490,13 @@ namespace AdaptorPhysX.Samples.Editor
         }
 
         private static void Frame()
+        {
+            _recorder.Step();
+            StepScene();
+        }
+
+        /// <summary>A fixed step after the recorder's: the scalpel, the bodies and the rendered meshes.</summary>
+        private static void StepScene()
         {
             _scalpel.Sweep();
             foreach (ApxSoftBody body in ApxSoftBody.Active.ToArray())

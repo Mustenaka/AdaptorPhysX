@@ -22,7 +22,8 @@
 ## 标准场景
 
 `AdaptorPhysX/Capture Standard Scenarios` 按脚本执行以下场景并输出截图（`docs/images/` 为当前结果），并写出评分 `score.json`
-（TODO MED-13：9 个切口、切面面积、镊子受力超过 1 N 的时段）。
+（TODO MED-13：9 个切口、切面面积、镊子受力超过 1 N 的时段）；全过程录制为 `recording.json`，截图之后在重新打开的场景中回放，
+各物体的 `positionsHash` 与评分须与录制时相同（TODO MED-14）。
 S1–S6 与 S8–S11 的截图与“当前结果”列于 2026-10-27 按 `7389533` 在 batchmode 中重新生成；S7 于 2026-10-29 按 SUT-5 之后的
 `e8a76cb` 生成。
 
