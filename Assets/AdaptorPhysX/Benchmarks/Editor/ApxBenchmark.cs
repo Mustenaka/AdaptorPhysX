@@ -502,25 +502,12 @@ namespace AdaptorPhysX.Benchmarks.Editor
                 maxSpeed = Math.Round(sim.MaxSpeed, 6),
                 finite = true,
             };
-            ulong hash = 14695981039346656037UL;
             for (int n = 0; n < sim.NodeCount; n++)
             {
-                float3 p = sim.Positions[n];
-                result.finite &= math.all(math.isfinite(p));
-                uint3 bits = math.asuint(p);
-                hash = Fnv(Fnv(Fnv(hash, bits.x), bits.y), bits.z);
+                result.finite &= math.all(math.isfinite(sim.Positions[n]));
             }
-            result.positionsHash = hash.ToString("x16");
+            result.positionsHash = sim.PositionsHash().ToString("x16");
             return result;
-        }
-
-        private static ulong Fnv(ulong hash, uint value)
-        {
-            for (int b = 0; b < 4; b++)
-            {
-                hash = (hash ^ ((value >> (8 * b)) & 0xff)) * 1099511628211UL;
-            }
-            return hash;
         }
 
         /// <summary>Signed volume enclosed by the skin submesh (the rendered surface without cut faces).</summary>

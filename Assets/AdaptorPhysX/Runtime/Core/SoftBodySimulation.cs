@@ -787,6 +787,31 @@ namespace AdaptorPhysX
         }
 
         /// <summary>
+        /// FNV-1a hash of the bits of all node positions: equal hashes mean the same result, bit for bit (the benchmark's
+        /// <c>positionsHash</c>, the recorder's checks).
+        /// </summary>
+        public ulong PositionsHash()
+        {
+            CompleteStep();
+            ulong hash = 14695981039346656037UL;
+            for (int n = 0; n < NodeCount; n++)
+            {
+                uint3 bits = math.asuint(Positions[n]);
+                hash = Fnv(Fnv(Fnv(hash, bits.x), bits.y), bits.z);
+            }
+            return hash;
+        }
+
+        private static ulong Fnv(ulong hash, uint value)
+        {
+            for (int b = 0; b < 4; b++)
+            {
+                hash = (hash ^ ((value >> (8 * b)) & 0xff)) * 1099511628211UL;
+            }
+            return hash;
+        }
+
+        /// <summary>
         /// Cuts along the quad swept by a blade edge moving from (a0,b0) to (a1,b1).
         /// Returns the number of lattice edges severed; topology is rebuilt when non-zero.
         /// Consecutive sweeps of one blade stroke pass the same non-zero <paramref name="stroke"/>:
