@@ -613,6 +613,129 @@ namespace AdaptorPhysX.Tests
         /// A 10 cm cube 10 cm above y = 0, without colliders, held by a dynamic attachment (target at the origin) on
         /// material points at the real nodes of its top layer.
         /// </summary>
+        /// <summary>
+        /// A grasper closes on the end of a 10 x 1 x 4 cm strip (cell 2.5 mm) from 14 mm to 6 mm and lifts it by 3 cm
+        /// (TODO MED-10): the jaws and the hold carry the strip's weight, and the held tissue follows the grasper.
+        /// </summary>
+        [Test]
+        public void GrasperLiftsTheTissueAndCarriesItsWeight()
+        {
+            Grasp(1000.0f, out _, out ApxGrasper grasper, out float lift, out float weight, out float grip);
+            Assert.IsNotNull(grasper.Held, "the grasper let go");
+            Assert.IsFalse(grasper.Slipped);
+            Assert.Greater(grasper.HeldPoints, 0);
+            Assert.Greater(grip, weight, "the test needs a grip that can hold the strip");
+            Assert.IsTrue(grasper.TryGetWrench(out ApxWrench wrench));
+            Assert.AreEqual(-weight, wrench.Force.y, 0.02f * weight, $"force on the grasper {wrench.Force}");
+            Assert.AreEqual(0.03f, lift, 0.003f, "the held tissue did not follow the grasper");
+        }
+
+        /// <summary>
+        /// The same grasp of a strip twenty times as heavy (TODO MED-10): its weight exceeds what the jaws hold by friction
+        /// (2 μ N), the points let go and the strip slips out and falls.
+        /// </summary>
+        [Test]
+        public void GrasperLetsTheTissueSlipWhenThePullExceedsTheGrip()
+        {
+            Grasp(20000.0f, out _, out ApxGrasper grasper, out float lift, out float weight, out float grip);
+            Assert.Less(grip, weight, "the test needs a weight beyond the grip");
+            Assert.IsTrue(grasper.Slipped, "the strip did not slip");
+            Assert.IsNull(grasper.Held);
+            Assert.Less(lift, -0.05f, "the strip did not fall");
+        }
+
+        /// <summary>
+        /// Closes a grasper on the +x end of a strip and lifts it by 3 cm in 1 s, then holds for 2 s. Gravity starts once the
+        /// jaws have closed. <paramref name="lift"/> is how far the grasped point rose, <paramref name="weight"/> the strip's,
+        /// <paramref name="grip"/> the largest grip (2 μ N) while the grasper held the strip.
+        /// </summary>
+        private void Grasp(float density, out ApxSoftBody strip, out ApxGrasper grasper, out float lift, out float weight,
+            out float grip)
+        {
+            grip = 0.0f;
+            int slipFrame = -1;
+            strip = CreateBody("Strip", new Vector3(0.1f, 0.01f, 0.04f), new Vector3(0.0f, 0.1f, 0.0f), 40);
+            strip.density = density;
+            strip.useGravity = false;
+            grasper = InScene(new GameObject("Grasper")).AddComponent<ApxGrasper>();
+            grasper.transform.position = new Vector3(0.04f, 0.1f, 0.0f);
+            grasper.gap = 0.014f;
+            Physics.SyncTransforms();
+            strip.Initialize();
+            int grasped = strip.AddMaterialPoint(new Vector3(0.04f, 0.1f, 0.0f));
+            float start = strip.MaterialPointPosition(grasped).y;
+            for (int f = 0; f < 210; f++)
+            {
+                grasper.gap = Mathf.Lerp(0.014f, 0.006f, f / 20.0f);
+                grasper.transform.position = new Vector3(0.04f, 0.1f + 0.03f * Mathf.Clamp01((f - 30) / 60.0f), 0.0f);
+                strip.useGravity = f >= 25;
+                grasper.Step();
+                Physics.SyncTransforms();
+                strip.Simulate(Dt);
+                strip.UpdateRender();
+                if (grasper.Held != null)
+                {
+                    grip = Mathf.Max(grip, grasper.GripCapacity);
+                }
+                slipFrame = slipFrame < 0 && grasper.Slipped ? f : slipFrame;
+            }
+            AssertFinite(strip.Simulation);
+            weight = strip.Simulation.TotalMass * 9.81f;
+            lift = strip.MaterialPointPosition(grasped).y - start;
+            grasper.TryGetWrench(out ApxWrench wrench);
+            TestContext.WriteLine($"density {density}: held points {grasper.HeldPoints}, slipped {grasper.Slipped} (frame {slipFrame}), " +
+                                  $"squeeze {grasper.Squeeze:0.000} N, largest grip {grip:0.000} N, weight {weight:0.000} N, force on the " +
+                                  $"grasper {wrench.Force} N, grasped point rose {lift * 1000:0.0} mm, max speed {strip.Simulation.MaxSpeed:0.000} m/s");
+        }
+
+        /// <summary>
+        /// Two graspers hold a strip at its ends and turn together by 90 degrees about the strip's long axis (TODO MED-10): the
+        /// tissue each holds turns with it, and both keep their hold. (Turning one of them alone twists the strip with more
+        /// torque than its grip holds, and the strip slips out of it.)
+        /// </summary>
+        [Test]
+        public void TwoGraspersHoldATissueAndTurnIt()
+        {
+            ApxSoftBody strip = CreateBody("Strip", new Vector3(0.1f, 0.01f, 0.04f), new Vector3(0.0f, 0.1f, 0.0f), 40);
+            strip.useGravity = false;
+            ApxGrasper left = InScene(new GameObject("Left")).AddComponent<ApxGrasper>();
+            ApxGrasper right = InScene(new GameObject("Right")).AddComponent<ApxGrasper>();
+            left.transform.position = new Vector3(-0.04f, 0.1f, 0.0f);
+            right.transform.position = new Vector3(0.04f, 0.1f, 0.0f);
+            Physics.SyncTransforms();
+            strip.Initialize();
+            // Two points across the strip's width at each grasper: their direction turns with it.
+            int a = strip.AddMaterialPoint(new Vector3(0.04f, 0.1f, -0.008f));
+            int b = strip.AddMaterialPoint(new Vector3(0.04f, 0.1f, 0.008f));
+            int c = strip.AddMaterialPoint(new Vector3(-0.04f, 0.1f, -0.008f));
+            int d = strip.AddMaterialPoint(new Vector3(-0.04f, 0.1f, 0.008f));
+            for (int f = 0; f < 180; f++)
+            {
+                float gap = Mathf.Lerp(0.014f, 0.006f, f / 20.0f);
+                left.gap = gap;
+                right.gap = gap;
+                Quaternion turn = Quaternion.AngleAxis(90.0f * Mathf.Clamp01((f - 30) / 60.0f), Vector3.right);
+                left.transform.rotation = turn;
+                right.transform.rotation = turn;
+                strip.useGravity = f >= 25;
+                left.Step();
+                right.Step();
+                Physics.SyncTransforms();
+                strip.Simulate(Dt);
+                strip.UpdateRender();
+            }
+            AssertFinite(strip.Simulation);
+            Vector3 acrossRight = (strip.MaterialPointPosition(b) - strip.MaterialPointPosition(a)).normalized;
+            Vector3 acrossLeft = (strip.MaterialPointPosition(d) - strip.MaterialPointPosition(c)).normalized;
+            TestContext.WriteLine($"held points {left.HeldPoints} + {right.HeldPoints}, slipped {left.Slipped} / {right.Slipped}, " +
+                                  $"width direction {acrossLeft} / {acrossRight}, max speed {strip.Simulation.MaxSpeed:0.000} m/s");
+            Assert.IsNotNull(left.Held);
+            Assert.IsNotNull(right.Held);
+            // Turned by 90 degrees about +x, +z becomes -y.
+            Assert.Greater(Vector3.Dot(acrossLeft, Vector3.down), 0.95f, $"width direction at the left grasper {acrossLeft}");
+            Assert.Greater(Vector3.Dot(acrossRight, Vector3.down), 0.95f, $"width direction at the right grasper {acrossRight}");
+        }
+
         private SoftBodySimulation HangFromAttachment(float breakForce, out int attachment, out List<int> points)
         {
             var parameters = SoftBodyParameters.Default;

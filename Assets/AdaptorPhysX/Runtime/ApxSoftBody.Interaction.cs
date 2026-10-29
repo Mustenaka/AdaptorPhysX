@@ -137,6 +137,10 @@ namespace AdaptorPhysX
             WakeUp();
         }
 
+        /// <summary>Changes the force on one point, N, above which the points of an attachment let go.</summary>
+        public void SetAttachmentBreakForce(int attachment, float breakForce) =>
+            Simulation?.SetAttachmentBreakForce(attachment, breakForce);
+
         /// <summary>Points an attachment still holds (the others let go above its break force).</summary>
         public int HeldPoints(int attachment) => Simulation == null ? 0 : Simulation.HeldPoints(attachment);
 

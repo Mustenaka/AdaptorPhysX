@@ -96,6 +96,15 @@ namespace AdaptorPhysX
             _attachments[attachment] = state;
         }
 
+        /// <summary>Changes the force on one point, N, above which the points of an attachment let go.</summary>
+        public void SetAttachmentBreakForce(int attachment, float breakForce)
+        {
+            CompleteStep();
+            AttachmentState state = _attachments[attachment];
+            state.BreakForce = breakForce;
+            _attachments[attachment] = state;
+        }
+
         /// <summary>Target frame of an attachment for the next step.</summary>
         public float4x4 AttachmentTarget(int attachment)
         {

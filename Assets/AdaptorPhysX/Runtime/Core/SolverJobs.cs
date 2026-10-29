@@ -143,7 +143,15 @@ namespace AdaptorPhysX
                             outward = math.mul(TetRotation[NodeSlot[i] / Lattice.CornerCount * Lattice.TetsPerCell], NodeOutward[i]);
                             turned = true;
                         }
-                        margin -= outside * math.saturate(-math.dot(outward, n));
+                        float facing = -math.dot(outward, n);
+                        if (facing < 0.0f && d < 0.0f && shape.Thickness() < 2.0f * outside)
+                        {
+                            // The collider's nearest face looks away from the tissue: the node went past the middle of a
+                            // collider thinner than it may enter (a jaw), whose far face is nearer. Pushing it out there would
+                            // push it through.
+                            continue;
+                        }
+                        margin -= outside * math.saturate(facing);
                     }
                     if (d >= margin)
                     {

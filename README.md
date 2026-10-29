@@ -44,7 +44,8 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
   器械表面粘附（stickiness）。
 - 材料：可选塑性（超过屈服应变的形变按速率计入静止形状）。
 - 状态快照（含切割拓扑）与 blueprint 资产（预先体素化，Start 不再体素化）。
-- 交互：手术刀（`ApxScalpel`）、钉住区域、镊子抓取（不跨越切口；可同时多处，抓取帧随器械移动与转动）；动态附着把材料点连到 Transform（`AddAttachment`，带柔度与断开力，输出受力）。
+- 交互：手术刀（`ApxScalpel`）、钉住区域、镊子抓取（不跨越切口；可同时多处，抓取帧随器械移动与转动）；动态附着把材料点连到 Transform（`AddAttachment`，带柔度与断开力，输出受力）；
+  两钳口夹钳（`ApxGrasper`）：钳口合拢后夹住其间的组织，随夹钳移动与转动，拉力超过钳口摩擦 2μN 时滑脱。
 - 材料点：嵌入体素副本的点（`AddMaterialPoint(世界坐标)`、`MaterialPointPosition`），随组织移动，切割后留在原来的一侧；用作缝合、附着与接触的锚点（DESIGN 4.4 节）。
 - 交互工具与调试显示（`AdaptorPhysX.Tools`）：相机旋转、平移、向指针缩放；手术刀的航向、侧倾、前倾与深度可调；
   镊子抓取与提起；测量；参考网格、lattice、节点、断棱、受力与刀刃扫掠面的调试显示；暂停与单步。
@@ -127,7 +128,7 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
      并引用该资产；此时 Collider 只用于包围范围查询。
    - `ApxColliderMaterial` 还可设置该碰撞体的摩擦系数与粘附（`stickiness`、`stickDistance`）。
    - 半径（盒为最小半边长）小于 2.5 个体素的碰撞体按表面体素接触，压入时组织表面随器械尖端下陷；一个体素不能形成比它窄的
-     凹坑，针杆旁的表面在器械内最深约 0.23 个体素（DESIGN 9.9 节）。`surfaceContact` 关闭时只有节点接触。
+     凹坑，针杆旁的表面在器械内最深约 0.2 个体素（DESIGN 9.9 节）。`surfaceContact` 关闭时只有节点接触。
    - 碰撞体带非运动学 Rigidbody 时与组织双向耦合（`twoWayCoupling`，默认开启）；此时物体每次 FixedUpdate 都步进，不受 `maxStepsPerFrame` 限制。
    - 器械受力：`TryGetColliderWrench(collider, out ApxWrench)`；多个软体对同一碰撞体的合力用 `ApxHaptics.TrySumColliderWrench`。
    - 力反馈：`TryGetColliderForceModel(collider, out ApxForceModel)` 给出每步发布的局部线性力模型，
