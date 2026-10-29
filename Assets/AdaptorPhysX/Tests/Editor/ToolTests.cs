@@ -10,7 +10,7 @@ namespace AdaptorPhysX.Tests
 {
     /// <summary>
     /// Interactive tools and the debug view (TODO ENG-5): blade pose, orbit camera math, the scalpel,
-    /// forceps and measuring tools driven by scripted pointer input, and the lattice and cut layers.
+    /// forceps, measuring and grasper tools driven by scripted pointer input, and the lattice and cut layers.
     /// Bodies live in a preview scene, as in <see cref="InteractionTests"/>.
     /// </summary>
     public sealed class ToolTests
@@ -280,6 +280,200 @@ namespace AdaptorPhysX.Tests
                 }
             }
             Assert.AreEqual(lines.Count, view.CutCount(body));
+        }
+
+        /// <summary>
+        /// The grasper tool on a soft sheet (16 x 1 x 8 cm, cell 3.3 mm, E = 20 kPa) held at its ends by clamps and sagging under
+        /// its weight (TODO MED-10): a press on the near edge brings the grasper in along the view with a jaw above and one
+        /// below the sheet and closes it; the grasper takes the edge, the wheel lifts it by 20 mm, turning the grasper by 45
+        /// degrees about its jaws turns the held tissue with it, and a release with Shift keeps the hold until the next click,
+        /// which opens the jaws, lets go and draws the grasper back.
+        /// </summary>
+        [Test]
+        public void GrasperToolTakesAnEdgeLiftsAndTurnsIt()
+        {
+            ApxSoftBody sheet = CreateSheet();
+            ApxGrasperTool tool = CreateGrasperTool();
+            ApxGrasper grasper = tool.grasper;
+            for (int f = 0; f < 60; f++)
+            {
+                GrasperFrame(tool, sheet, default);
+            }
+            // The pointer stays where it was pressed.
+            ApxToolInput press = SheetEdgePointer(sheet);
+            ApxToolInput Pointer(bool down, bool held, bool up)
+            {
+                ApxToolInput input = press;
+                input.Down = down;
+                input.Held = held;
+                input.Up = up;
+                return input;
+            }
+            Assert.IsTrue(tool.Plan(press.Ray, press.ViewForward, out Vector3 planned, out Quaternion rotation, out float open,
+                out bool fits, out ApxSoftBody planBody));
+            Assert.AreSame(sheet, planBody);
+            Assert.IsTrue(fits);
+            Assert.Greater(Vector3.Dot(rotation * Vector3.forward, Vector3.forward), 0.99f, "the grasper comes in along the view");
+            Assert.Greater(Vector3.Dot(rotation * Vector3.up, Vector3.up), 0.99f, "a jaw above and one below");
+            // Points across the jaws (x) a little inside the edge, between the jaws: they turn with the held tissue.
+            Vector3 tip = planned + rotation * Vector3.forward * (0.5f * grasper.jawSize.z);
+            int left = sheet.AddMaterialPoint(new Vector3(tip.x - 0.0025f, planned.y, tip.z - 0.005f));
+            int right = sheet.AddMaterialPoint(new Vector3(tip.x + 0.0025f, planned.y, tip.z - 0.005f));
+            Assert.GreaterOrEqual(left, 0);
+            Assert.GreaterOrEqual(right, 0);
+            float start = sheet.MaterialPointPosition(left).y;
+
+            GrasperFrame(tool, sheet, Pointer(true, true, false));
+            Assert.AreEqual(ApxGrasperTool.Motion.Approaching, tool.State);
+            Assert.IsTrue(grasper.gameObject.activeSelf);
+            for (int f = 0; f < 40; f++)
+            {
+                GrasperFrame(tool, sheet, Pointer(false, true, false));
+            }
+            TestContext.WriteLine($"grasped: open {open * 1000:0.0} mm, held {grasper.HeldPoints} points, squeeze {grasper.Squeeze:0.000} N, " +
+                                  $"grip {grasper.GripCapacity:0.000} N");
+            Assert.AreEqual(ApxGrasperTool.Motion.Holding, tool.State);
+            Assert.AreSame(sheet, grasper.Held, "the grasper took the edge");
+            Assert.Greater(grasper.HeldPoints, 0);
+
+            // Lift by ten wheel steps of 2 mm, one every six frames, and hold.
+            for (int f = 0; f < 90; f++)
+            {
+                ApxToolInput lift = Pointer(false, true, false);
+                lift.Scroll = f < 60 && f % 6 == 0 ? 1.0f : 0.0f;
+                GrasperFrame(tool, sheet, lift);
+            }
+            float lifted = sheet.MaterialPointPosition(left).y - start;
+            // Turn by 45 degrees about the jaws in half a second, and hold for one.
+            for (int f = 0; f < 90; f++)
+            {
+                tool.Turn(0.0f, 0.0f, f < 30 ? 1.5f : 0.0f);
+                GrasperFrame(tool, sheet, Pointer(false, true, false));
+            }
+            Vector3 across = (sheet.MaterialPointPosition(right) - sheet.MaterialPointPosition(left)).normalized;
+            grasper.TryGetWrench(out ApxWrench wrench);
+            TestContext.WriteLine($"lifted {lifted * 1000:0.0} mm, turned {tool.Roll:0} deg: across the jaws {across}, held {grasper.HeldPoints} " +
+                                  $"points, squeeze {grasper.Squeeze:0.000} N, grip {grasper.GripCapacity:0.000} N, force on the grasper " +
+                                  $"{wrench.Force} N, max speed {sheet.Simulation.MaxSpeed:0.000} m/s");
+            Assert.AreEqual(0.02f, lifted, 0.003f, "the held edge follows the lift");
+            Assert.AreSame(sheet, grasper.Held);
+            Assert.IsFalse(grasper.Slipped);
+            // Turned by 45 degrees about +z (the jaws), +x turns halfway to +y.
+            Assert.Greater(Vector3.Dot(across, new Vector3(1.0f, 1.0f, 0.0f).normalized), 0.95f, $"the held tissue turned with the grasper: {across}");
+
+            // Released with Shift: the hold stays until the next click.
+            ApxToolInput keep = Pointer(false, false, true);
+            keep.Shift = true;
+            GrasperFrame(tool, sheet, keep);
+            for (int f = 0; f < 10; f++)
+            {
+                GrasperFrame(tool, sheet, default);
+            }
+            Assert.AreEqual(ApxGrasperTool.Motion.Holding, tool.State);
+            Assert.AreSame(sheet, grasper.Held);
+            GrasperFrame(tool, sheet, Pointer(true, true, false));
+            Assert.AreEqual(ApxGrasperTool.Motion.Opening, tool.State);
+            for (int f = 0; f < 60; f++)
+            {
+                GrasperFrame(tool, sheet, default);
+            }
+            float back = sheet.MaterialPointPosition(left).y - start;
+            TestContext.WriteLine($"released: the edge is {back * 1000:0.0} mm above where it was taken");
+            Assert.AreEqual(ApxGrasperTool.Motion.Idle, tool.State);
+            Assert.IsFalse(grasper.gameObject.activeSelf, "the grasper is parked");
+            Assert.IsNull(grasper.Held);
+            Assert.Less(back, 0.5f * lifted, "the released edge sags back");
+        }
+
+        /// <summary>The grasper tool does not take tissue thicker than its jaws open: a 10 cm cube.</summary>
+        [Test]
+        public void GrasperToolDoesNotTakeTissueThickerThanItsJaws()
+        {
+            ApxSoftBody body = CreateBody(8);
+            ApxGrasperTool tool = CreateGrasperTool();
+            var press = new ApxToolInput
+            {
+                Ray = new Ray(new Vector3(0.0f, 0.2f, -0.3f), new Vector3(0.0f, -0.1f, 0.3f).normalized),
+                ViewForward = new Vector3(0.0f, -0.1f, 0.3f).normalized,
+                Down = true,
+                Held = true,
+                DeltaTime = Dt,
+            };
+            Assert.IsTrue(tool.Plan(press.Ray, press.ViewForward, out _, out _, out float open, out bool fits, out ApxSoftBody picked));
+            Assert.AreSame(body, picked);
+            Assert.IsFalse(fits, $"open gap {open * 1000:0} mm");
+            tool.Tick(press);
+            Assert.AreEqual(ApxGrasperTool.Motion.Idle, tool.State);
+            Assert.IsFalse(tool.grasper.gameObject.activeSelf);
+        }
+
+        /// <summary>One frame of the grasper tool: its input, then a fixed step of the tool, the grasper and the body.</summary>
+        private static void GrasperFrame(ApxGrasperTool tool, ApxSoftBody body, in ApxToolInput input)
+        {
+            tool.Tick(input);
+            tool.Advance(Dt);
+            if (tool.grasper.gameObject.activeSelf)
+            {
+                tool.grasper.Step();
+            }
+            Physics.SyncTransforms();
+            body.Simulate(Dt);
+            body.UpdateRender();
+        }
+
+        /// <summary>A press from in front of and above the sheet on its near edge, at x = 0.</summary>
+        private static ApxToolInput SheetEdgePointer(ApxSoftBody sheet)
+        {
+            SoftBodySimulation sim = sheet.Simulation;
+            int top = sim.PickNode(new Vector3(0.0f, 0.3f, -0.03f), Vector3.down, sim.CellSize);
+            int edge = sim.PickNode(new Vector3(0.0f, sim.Positions[top].y - 0.003f, -0.3f), Vector3.forward, sim.CellSize);
+            Vector3 origin = new Vector3(0.0f, 0.2f, -0.3f);
+            Vector3 direction = ((Vector3)sim.Positions[edge] - origin).normalized;
+            return new ApxToolInput
+            {
+                Ray = new Ray(origin, direction),
+                ViewForward = direction,
+                Down = true,
+                Held = true,
+                DeltaTime = Dt,
+            };
+        }
+
+        /// <summary>A soft sheet (16 x 1 x 8 cm) centred 7 cm above y = 0, held at its ends by clamps, with gravity, initialized.</summary>
+        private ApxSoftBody CreateSheet()
+        {
+            Mesh mesh = MeshUtil.CreateBox(new Vector3(0.16f, 0.01f, 0.08f), 4);
+            _objects.Add(mesh);
+            GameObject go = InScene(new GameObject("Sheet", typeof(MeshFilter), typeof(MeshRenderer)));
+            go.transform.position = new Vector3(0.0f, 0.07f, 0.0f);
+            go.GetComponent<MeshFilter>().sharedMesh = mesh;
+            var body = go.AddComponent<ApxSoftBody>();
+            body.resolution = 48;
+            body.youngsModulus = 2.0e4f;
+            body.pinColliders = new[] { Clamp(-0.08f), Clamp(0.08f) };
+            _bodies.Add(body);
+            Physics.SyncTransforms();
+            body.Initialize();
+            return body;
+        }
+
+        private Collider Clamp(float x)
+        {
+            GameObject go = InScene(new GameObject("Clamp"));
+            go.transform.position = new Vector3(x, 0.07f, 0.0f);
+            var box = go.AddComponent<BoxCollider>();
+            box.size = new Vector3(0.025f, 0.03f, 0.1f);
+            box.isTrigger = true;
+            return box;
+        }
+
+        /// <summary>A grasper tool and its grasper, parked.</summary>
+        private ApxGrasperTool CreateGrasperTool()
+        {
+            var tool = InScene(new GameObject("Tools")).AddComponent<ApxGrasperTool>();
+            tool.grasper = InScene(new GameObject("Grasper")).AddComponent<ApxGrasper>();
+            tool.grasper.gameObject.SetActive(false);
+            return tool;
         }
 
         private static void Frame(ApxScalpelTool tool, ApxScalpel scalpel, ApxSoftBody body, in ApxToolInput input)

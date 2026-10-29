@@ -43,7 +43,7 @@ namespace AdaptorPhysX.Tools
             "keypad 1 / 3 / 7: front / right / top   5: start angle";
 
         private const string GeneralHelp =
-            "1-3: tool   P: pause   N: step   R: reload   Tab: panel   F1: help\n" +
+            "1-4: tool   P: pause   N: step   R: reload   Tab: panel   F1: help\n" +
             "F2-F8: layers   F9: x-ray   F10: hide surfaces";
 
         private bool _toolPress;
@@ -194,7 +194,8 @@ namespace AdaptorPhysX.Tools
         {
             foreach (ApxTool tool in tools)
             {
-                if (tool != null && (tool.IsActive || tool is ApxMeasureTool))
+                // Measurements and a kept grasp stay drawn while another tool is used.
+                if (tool != null && (tool.IsActive || tool is ApxMeasureTool || tool is ApxGrasperTool { IsBusy: true }))
                 {
                     tool.Draw(view);
                 }
@@ -345,10 +346,11 @@ namespace AdaptorPhysX.Tools
         }
 
         /// <summary>
-        /// Adds the camera rig (to <paramref name="camera"/>), the scalpel, forceps and measuring tools,
-        /// the debug view and a toolbox to a new object "Apx Tools".
+        /// Adds the camera rig (to <paramref name="camera"/>), the scalpel, forceps, measuring and grasper tools,
+        /// the debug view and a toolbox to a new object "Apx Tools", and the grasper the grasper tool drives to a
+        /// new inactive object "Grasper", its jaws drawn in <paramref name="jawMaterial"/>.
         /// </summary>
-        public static ApxToolbox CreateDefault(Camera camera, ApxScalpel scalpel, ApxOrbit view)
+        public static ApxToolbox CreateDefault(Camera camera, ApxScalpel scalpel, ApxOrbit view, Material jawMaterial = null)
         {
             var rig = camera.GetComponent<ApxCameraRig>();
             if (rig == null)
@@ -361,7 +363,14 @@ namespace AdaptorPhysX.Tools
             var scalpelTool = go.AddComponent<ApxScalpelTool>();
             scalpelTool.scalpel = scalpel;
             scalpel.cutting = false;
-            toolbox.tools = new ApxTool[] { scalpelTool, go.AddComponent<ApxForcepsTool>(), go.AddComponent<ApxMeasureTool>() };
+            var grasperTool = go.AddComponent<ApxGrasperTool>();
+            grasperTool.grasper = new GameObject("Grasper").AddComponent<ApxGrasper>();
+            grasperTool.grasper.jawMaterial = jawMaterial;
+            grasperTool.grasper.gameObject.SetActive(false);
+            toolbox.tools = new ApxTool[]
+            {
+                scalpelTool, go.AddComponent<ApxForcepsTool>(), go.AddComponent<ApxMeasureTool>(), grasperTool,
+            };
             toolbox.cameraRig = rig;
             toolbox.debugView = go.AddComponent<ApxDebugView>();
             return toolbox;

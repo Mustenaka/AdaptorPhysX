@@ -29,6 +29,7 @@ namespace AdaptorPhysX.Samples.Editor
             Material jade = CreateMaterial("Jade", "Standard", new Color(0.45f, 0.62f, 0.5f), 0.55f);
             Material interior = CreateMaterial("TissueInterior", "AdaptorPhysX/Tissue Interior", Color.white, 0.65f);
             Material table = CreateMaterial("Table", "Standard", new Color(0.32f, 0.36f, 0.4f), 0.2f);
+            Material metal = CreateMaterial("Metal", "Standard", new Color(0.7f, 0.72f, 0.75f), 0.8f);
 
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             var cameraObject = new GameObject("Main Camera", typeof(Camera)) { tag = "MainCamera" };
@@ -62,7 +63,7 @@ namespace AdaptorPhysX.Samples.Editor
             var view = new ApxOrbit { Pivot = new Vector3(0.0f, 0.05f, 0.0f), Pitch = 30.0f, Distance = 0.8f };
             camera.transform.SetPositionAndRotation(view.Position, view.Rotation);
             var scalpel = new GameObject("Scalpel", typeof(ApxScalpel)).GetComponent<ApxScalpel>();
-            ApxToolbox.CreateDefault(camera, scalpel, view);
+            ApxToolbox.CreateDefault(camera, scalpel, view, metal);
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             var scenes = new List<EditorBuildSettingsScene>(EditorBuildSettings.scenes);

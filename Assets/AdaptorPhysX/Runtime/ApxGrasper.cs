@@ -27,6 +27,8 @@ namespace AdaptorPhysX
         [Min(0.0f)] public float friction = 0.6f;
         [Tooltip("Compliance of the hold of each point, m/N (0 rigid).")]
         [Min(0.0f)] public float compliance;
+        [Tooltip("Material the jaws are drawn with; none: the jaws are colliders only.")]
+        public Material jawMaterial;
 
         /// <summary>The upper jaw (local +y) and the lower jaw.</summary>
         public BoxCollider UpperJaw { get; private set; }
@@ -172,8 +174,30 @@ namespace AdaptorPhysX
                 jaw.transform.localRotation = Quaternion.identity;
                 jaw.size = jawSize;
                 jaw.GetComponent<ApxColliderMaterial>().friction = friction;
+                ShowJaw(jaw.transform);
             }
         }
+
+        /// <summary>A box mesh the size of the jaw, in <see cref="jawMaterial"/>, on a child without a collider.</summary>
+        private void ShowJaw(Transform jaw)
+        {
+            if (jawMaterial == null)
+            {
+                return;
+            }
+            Transform mesh = jaw.Find(JawMesh);
+            if (mesh == null)
+            {
+                var go = new GameObject(JawMesh, typeof(MeshFilter), typeof(MeshRenderer));
+                go.transform.SetParent(jaw, false);
+                go.GetComponent<MeshFilter>().sharedMesh = Resources.GetBuiltinResource<Mesh>("Cube.fbx");
+                mesh = go.transform;
+            }
+            mesh.localScale = jawSize;
+            mesh.GetComponent<MeshRenderer>().sharedMaterial = jawMaterial;
+        }
+
+        private const string JawMesh = "Mesh";
 
         /// <summary>The smaller of the two jaws' forces along the axis that opens them.</summary>
         private float MeasureSqueeze()

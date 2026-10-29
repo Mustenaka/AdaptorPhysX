@@ -137,7 +137,7 @@ namespace AdaptorPhysX.Samples.Editor
             var view = new ApxOrbit { Pivot = new Vector3(0.0f, 0.03f, 0.05f), Pitch = 38.0f, Distance = 0.75f };
             camera.transform.SetPositionAndRotation(view.Position, view.Rotation);
             var scalpel = new GameObject("Scalpel", typeof(ApxScalpel)).GetComponent<ApxScalpel>();
-            ApxToolbox.CreateDefault(camera, scalpel, view);
+            ApxToolbox.CreateDefault(camera, scalpel, view, clamp);
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             var scenes = new List<EditorBuildSettingsScene>(EditorBuildSettings.scenes);
