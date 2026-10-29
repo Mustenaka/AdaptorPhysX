@@ -524,6 +524,10 @@
   （`LineRenderer` 在编辑模式下随相机移动只渲染出部分线段，未采用）。菜单执行前提示保存已修改的场景，结束后从磁盘重新加载原场景；
   Play 模式下不可用。batchmode 用法：
   `Unity -batchmode -projectPath . -executeMethod AdaptorPhysX.Samples.Editor.SurgeryDemoCapture.CaptureBatch -apxCaptureDir <目录>`
+- `AdaptorPhysX/Build Grasp Demo Scene`：生成夹持演示场景（S13，`Assets/Samples/GraspDemo`）：两端夹住的组织片，夹钳工具在开始时选中。
+- `AdaptorPhysX/Capture Grasp Scenario`：在编辑模式下用脚本指针驱动夹钳工具执行 S13，输出 PNG；全过程由 `ApxRecorder` 录制
+  （`grasp-recording.json`，器械为夹钳），截图之后重新打开场景回放，日志记录检查是否与录制时相同（9.14 节）。batchmode 入口
+  `AdaptorPhysX.Samples.Editor.GraspDemoCapture.CaptureBatch`，参数同上。
 - `AdaptorPhysX/Run Benchmarks`（`Assets/AdaptorPhysX/Benchmarks/Editor/`）：在新的空场景中，对每个网格、每个分辨率
   依次执行以下阶段，结果写成 JSON（`BenchmarkReport.cs` 定义字段，每完成一组写一次文件）。
   batchmode 入口 `AdaptorPhysX.Benchmarks.Editor.ApxBenchmark.RunBatch`，参数见 README。
@@ -1098,7 +1102,8 @@
   - 标准场景（第 8 节）：S1–S7 的截图脚本录制全过程，截图之后重新打开场景回放。录制 1194 步、4 个物体，手术刀位姿 291 个，
     操作 349 个（抓取移动 290 次、材料点 34 个、`ResetSweep` 9 次、抓取开始 7 次与结束 6 次、针脚 3 个），`recording.json`
     150 KB；回放 15.7 s，80 次检查一致，评分 `score.json` 与录制时逐字节相同。截图与 MED-13 时相同（`D3_blade_pose`、
-    `S2_flap_incision` 各有 1 个像素差 1 级）。
+    `S2_flap_incision` 各有 1 个像素差 1 级）。S13 的截图脚本录制夹钳的 372 步（位姿 71 个、设置 34 条，操作只有夹钳工具停用时的
+    1 次 `ApxGrasper.Release`；夹钳的材料点与附着在回放时由夹钳再次建立），回放后 7 次检查一致。
 - 限制：
   - 回放只从场景的初始状态开始，不能从中途的快照（9.6 节）开始：快照不含碰撞体上一步的位姿与器械组件的内部状态。
   - 录制期间对物体参数（材料、碰撞、休眠等）的修改、`RestoreState`（录制时输出警告）、器械的缩放、不在 `instruments` 中的
@@ -1170,7 +1175,7 @@
   时不夹取（预览为红色）。夹钳从后方 2 cm 处沿钳口方向进入（0.25 s），合拢到 5 mm（0.25 s），之后由 `ApxGrasper` 夹持。
 - 从上方压下的钳口不能夹住表面（试验：组织垫 10 × 3.5 × 7 cm，体素 3.1 mm，钳口张开 16 mm、尖端压入 8 或 12 mm 后合拢到 4 mm：
   钳口端面把表面压下，组织不进入两钳口之间，挤压力 0.01–0.06 N，夹持 0–2 个点后滑脱），所以夹钳从侧面水平进入，夹住组织的边缘：
-  皮瓣、组织条、薄片的侧边。
+  皮瓣、组织条、薄片的侧边。标准场景 S13（第 8 节）用该工具夹住两端夹住的组织片的边缘，提起并转动。
 - 按住左键时夹钳随指针在过夹持点、面向相机的平面内移动，滚轮提起或放低（每步 2 mm）；Z / X 使钳口尖端上翘或下压（绕钳口宽度方向），
   A / D 绕竖直轴转，Q / E 绕钳口方向转（每秒 45°，Shift 四倍）。松开时钳口张开（`ApxGrasper` 在张开到 `graspGap` 以上时松开），
   夹钳退回 2 cm 后停用；Shift 松开时保持夹持，换用其他工具时也保持（例如夹住牵开后用手术刀切割），再次点击时松开。

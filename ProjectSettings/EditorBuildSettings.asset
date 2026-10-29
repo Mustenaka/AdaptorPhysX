@@ -14,4 +14,7 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Samples/RealMeshDemo/RealMeshDemo.unity
     guid: 09d8ca2514f040c4aabc3b51ae61da10
+  - enabled: 1
+    path: Assets/Samples/GraspDemo/GraspDemo.unity
+    guid: facdd1d495521a548810b391a6b0f272
   m_configObjects: {}

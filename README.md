@@ -21,6 +21,10 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 |---|---|---|---|
 | ![S12a](docs/images/S12a_real_meshes.png) | ![S12b](docs/images/S12b_fertility_cut.png) | ![S12c](docs/images/S12c_dragon_cut.png) | ![S12d](docs/images/S12d_bunny_lifted.png) |
 
+| 夹钳夹住组织片边缘并提起 | 绕钳口转 45° | 转动后的近景 |
+|---|---|---|
+| ![S13b](docs/images/S13b_sheet_lifted.png) | ![S13c](docs/images/S13c_sheet_turned.png) | ![S13d](docs/images/S13d_sheet_turned_close.png) |
+
 | 调试显示：lattice 按块着色与断棱 | 受力与包围盒 | 侧倾 30°、前倾 20° 的刀刃 |
 |---|---|---|
 | ![D1](docs/images/D1_block_lattice_cuts.png) | ![D2](docs/images/D2_contact_forces.png) | ![D3](docs/images/D3_blade_pose.png) |
@@ -114,6 +118,10 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 操作相同。场景中是 `Assets/AdaptorPhysX/Arts/Models` 中的三个 FBX 测试模型（分辨率 40）：扫描版斯坦福兔子（底部有孔，
 按广义缠绕数体素化）、Fertility（亏格 4）、斯坦福龙（87 万三角形，FBX 没有可用的法线，初始化时重新计算）。
 
+夹持演示 `Assets/Samples/GraspDemo/GraspDemo.unity`（菜单 `AdaptorPhysX/Build Grasp Demo Scene` 重新生成），操作相同，
+开始时选中夹钳（按键 4）：组织片两端短边被夹住、中部下垂，按在近侧长边上夹住边缘，按住拖动、滚轮提起，`Q` / `E` 绕钳口转动。
+夹钳只能从侧面夹住组织的边缘；转动角度受夹持力限制，转到 45° 以上时组织可能滑脱（DESIGN 10.3 节）。
+
 ## 在自己的场景中使用
 
 1. 在带 `MeshFilter` + `MeshRenderer` 的对象上添加 `ApxSoftBody`。网格需开启 Read/Write，最好闭合：有孔的网格
@@ -166,6 +174,7 @@ Assets/AdaptorPhysX/Benchmarks/     基准测试（编辑器，JSON 输出）
 Assets/Samples/SurgeryDemo/         演示场景、脚本、场景生成器、标准场景截图工具
 Assets/Samples/InteractionDemo/     交互演示场景（S8–S11）、场景生成器与截图工具
 Assets/Samples/RealMeshDemo/        真实网格演示场景（S12）、场景生成器与截图工具
+Assets/Samples/GraspDemo/           夹持演示场景（S13）、场景生成器与截图工具
 Benchmarks/                         基准网格下载脚本；网格与结果不提交
 docs/                               设计说明、路线图、待办清单（TODO.md）、截图
 ```
@@ -183,7 +192,9 @@ docs/                               设计说明、路线图、待办清单（TO
 截图工具按脚本执行 `docs/ROADMAP.md` 中的标准场景 S1–S7，输出 PNG，并在日志中记录每个阶段的块大小与耗时。
 交互场景 S8–S11 用 `AdaptorPhysX.Samples.Editor.InteractionDemoCapture.CaptureBatch`（参数相同），
 编辑器内为菜单 `AdaptorPhysX/Capture Interaction Scenarios`；真实网格场景 S12 用
-`AdaptorPhysX.Samples.Editor.RealMeshDemoCapture.CaptureBatch`，菜单 `AdaptorPhysX/Capture Real Mesh Scenarios`。
+`AdaptorPhysX.Samples.Editor.RealMeshDemoCapture.CaptureBatch`，菜单 `AdaptorPhysX/Capture Real Mesh Scenarios`；夹持场景 S13 用
+`AdaptorPhysX.Samples.Editor.GraspDemoCapture.CaptureBatch`，菜单 `AdaptorPhysX/Capture Grasp Scenario`。
+S1–S7 与 S13 的截图工具录制全过程，截图之后重新打开场景回放，日志记录回放的节点位置是否与录制时相同。
 
 ## 基准测试
 

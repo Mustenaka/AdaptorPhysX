@@ -273,7 +273,7 @@ public sealed class ApxHapticBridge
 | 6 | 体素材料标签 → 非线性与粘弹性材料 → 撕裂（MED-5、MED-1、MED-2、MED-6） | 未开始 |
 | 7 | 缝合：SUT-1、SUT-5、SUT-9 并入第 9 项；SUT-2 至 SUT-4、SUT-6 依赖穿刺（MED-9）与缝线（ECO-5） | 未开始 |
 | 8 | 真实网格（ROADMAP M6）：ENG-3、BUG-10 → 用高面数测试模型摸底 → PERF-10、PERF-7、PERF-6 → PERF-5、BUG-13 剩余部分（bunny 64 落地后耳朵持续运动）。2026-10-28 收窄为分辨率不超过 64；PERF-2 的高分辨率数据已记录，MED-7、PERF-8 移到 PERF-9 与 M4 之后 | 进行中（ENG-3、BUG-10、PERF-10、PERF-5 已完成；PERF-6、PERF-7、BUG-13 部分完成） |
-| 9 | 组织操作闭环（ROADMAP M7）：SUT-1 → ECO-13 → MED-17 → MED-10 → SUT-5、SUT-9 → ECO-10、MED-13 评分示例、MED-14；ECO-11 在需要从表面选取材料点时实现 | 进行中（SUT-1、ECO-13、MED-17、MED-10、SUT-5、SUT-9、ECO-10、MED-13、MED-14 已完成） |
+| 9 | 组织操作闭环（ROADMAP M7）：SUT-1 → ECO-13 → MED-17 → MED-10 → SUT-5、SUT-9 → ECO-10、MED-13 评分示例、MED-14；ECO-11 在需要从表面选取材料点时实现 | 进行中（条目均已完成；交互工具中的夹钳与标准场景 S13 已加入，待人工验收） |
 | 10 | 求解方法评估（PERF-9，与 BUG-3、BUG-2 一起），与第 9 项并行 | 未开始 |
 | 11 | 运行时与平台：ECO-9（局部参考空间）、ECO-12（渲染插值）、ENG-6（Unity 6）与 MED-15（URP）、ENG-7（求解后端接口，M4 之前） | 未开始 |
 
@@ -350,4 +350,5 @@ ENG-6 与 MED-15 的时机、缝线的实现方式见 ROADMAP“待决定”。
 | 2026-10-29 | `bd52ca1` | MED-13 已完成：`ApxScorer`（切口的长度、深度、面积与位置，超力时段，切面总面积与块数，JSON 报告）；物体事件加入 `StrokeEnded`、`StepCompleted`，另一个刀路切到物体时未结束的刀路结束；S1–S7 截图脚本写出 `score.json`。新增 EditMode 测试 3 个；EditMode 91 / 92（1 个为 BUG-8 的 `[Ignore]`），PlayMode 2 / 2；基准测试 16 组与基线一致 |
 | 2026-10-29 | `c2e8bfa` | MED-14 已完成：`ApxRecorder` 录制器械的局部位姿与设置、物体的操作与跳过的步，并从场景初始状态回放，每 60 步与最后一步之后比较 `positionsHash`；`SoftBodySimulation.PositionsHash`（基准测试改为调用）；S1–S7 截图脚本录制并回放，80 次检查一致、评分相同。新增 EditMode 测试 2 个、PlayMode 测试 1 个；EditMode 93 / 94（1 个为 BUG-8 的 `[Ignore]`），PlayMode 3 / 3；基准测试 16 组与基线一致 |
 | 2026-10-29 | `02f81ff` | MED-14 修正：录制时把读出的器械位姿设回 Transform，回放中转动的器械与录制时逐位相同（Unity 设置旋转时重新归一化，读出的旋转再设置可能改变最后几位）。新增 EditMode 测试 1 个，`ReplayRepeatsTheRecordedProcedureBitForBit` 中夹钳转动 30°；EditMode 96 / 97（与夹钳工具一起运行，1 个为 BUG-8 的 `[Ignore]`），PlayMode 3 / 3；基准测试 16 组与基线一致 |
-| 2026-10-29 | — | 交互工具加入夹钳（ENG-5、MED-10）：`ApxGrasperTool`（按键 4）驱动 `ApxGrasper`，沿视线水平进入、钳口上下夹住组织边缘，张开量按夹取处组织的厚度，拖动、滚轮提起与三个方向的转动，Shift 松开后保持（换用其他工具时也保持）；`ApxGrasper.jawMaterial` 画出钳口；`CreateDefault` 加入夹钳，手术、交互、真实网格三个演示场景重新生成，S1–S12 截图与重新生成前最多差 1 级。从上方压下的钳口不能夹住表面（试验）；转动的限度见 DESIGN 10.3 节。新增 EditMode 测试 2 个；EditMode 96 / 97（1 个为 BUG-8 的 `[Ignore]`），PlayMode 3 / 3；基准测试 16 组与基线一致 |
+| 2026-10-29 | `595187a` | 交互工具加入夹钳（ENG-5、MED-10）：`ApxGrasperTool`（按键 4）驱动 `ApxGrasper`，沿视线水平进入、钳口上下夹住组织边缘，张开量按夹取处组织的厚度，拖动、滚轮提起与三个方向的转动，Shift 松开后保持（换用其他工具时也保持）；`ApxGrasper.jawMaterial` 画出钳口；`CreateDefault` 加入夹钳，手术、交互、真实网格三个演示场景重新生成，S1–S12 截图与重新生成前最多差 1 级。从上方压下的钳口不能夹住表面（试验）；转动的限度见 DESIGN 10.3 节。新增 EditMode 测试 2 个；EditMode 96 / 97（1 个为 BUG-8 的 `[Ignore]`），PlayMode 3 / 3；基准测试 16 组与基线一致 |
+| 2026-10-29 | — | 标准场景 S13（`Assets/Samples/GraspDemo`，M7 人工验收）：两端夹住的组织片，夹钳工具夹住近侧长边，提起 20 mm 后绕钳口转 45°，夹持 18 → 14 → 10 个点，松开后落回；截图脚本录制并回放，7 次检查一致。截图 3 张加入 `docs/images` 与 README；ROADMAP 加入 S13，M7 的条目均已完成，待人工验收 |
