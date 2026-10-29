@@ -483,10 +483,12 @@ namespace AdaptorPhysX
             _stepBodies.Clear();
             // The events start from the restored state; the cuts since the capture are undone.
             _pendingCuts.Clear();
+            _openStrokes.Clear();
+            _endedStrokes.Clear();
             _contacts.Clear();
-            _attachmentHandles.Clear();
-            _attachmentHandles.AddRange(_heldPoints.Keys);
-            foreach (int attachment in _attachmentHandles)
+            _handles.Clear();
+            _handles.AddRange(_heldPoints.Keys);
+            foreach (int attachment in _handles)
             {
                 _heldPoints[attachment] = Simulation.HeldPoints(attachment);
             }

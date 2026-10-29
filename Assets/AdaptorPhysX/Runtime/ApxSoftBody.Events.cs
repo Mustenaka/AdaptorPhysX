@@ -53,6 +53,12 @@ namespace AdaptorPhysX
     {
         /// <summary>A stroke severed edges; raised after the next step, once per stroke and step.</summary>
         public event Action<ApxSoftBody, ApxCutEvent> Severed;
+        /// <summary>
+        /// A stroke that severed edges in the body ended (<see cref="EndStroke"/>, or another stroke cut the body), after the
+        /// edges it restored; raised after the next step, or in the next <see cref="Simulate"/> of a sleeping body. Not raised
+        /// for stroke 0.
+        /// </summary>
+        public event Action<ApxSoftBody, int> StrokeEnded;
         /// <summary>The number of material pieces changed (a cut separated a part, or a state was restored).</summary>
         public event Action<ApxSoftBody, ApxPiecesEvent> PiecesChanged
         {
@@ -75,12 +81,17 @@ namespace AdaptorPhysX
         public event Action<ApxSoftBody, ApxReleaseEvent> PointsReleased;
         /// <summary>The body fell asleep (true) or woke up (false).</summary>
         public event Action<ApxSoftBody, bool> SleepChanged;
+        /// <summary>A step completed; raised after its other events (TODO MED-13: the forces of every step).</summary>
+        public event Action<ApxSoftBody> StepCompleted;
 
         private Action<ApxSoftBody, ApxPiecesEvent> _piecesChanged;
         /// <summary>Step whose events were raised.</summary>
         private int _eventStep = -1;
         /// <summary>Strokes that severed edges since the last events, in order.</summary>
         private readonly List<ApxCutEvent> _pendingCuts = new List<ApxCutEvent>();
+        /// <summary>Strokes that severed edges and have not ended, and those that ended since the last events.</summary>
+        private readonly HashSet<int> _openStrokes = new HashSet<int>();
+        private readonly List<int> _endedStrokes = new List<int>();
         /// <summary>Piece count at topology version <see cref="_pieceTopology"/>; -1 when not counted.</summary>
         private int _pieceCount = -1;
         private int _pieceTopology = -1;
@@ -89,7 +100,8 @@ namespace AdaptorPhysX
         private readonly List<Collider> _endedContacts = new List<Collider>();
         /// <summary>Points each dynamic attachment held at the last events.</summary>
         private readonly SortedDictionary<int, int> _heldPoints = new SortedDictionary<int, int>();
-        private readonly List<int> _attachmentHandles = new List<int>();
+        /// <summary>Scratch list of handles (attachments, strokes) while their dictionaries change.</summary>
+        private readonly List<int> _handles = new List<int>();
         private bool _sleeping;
 
         /// <summary>Raises the events of the last completed step, once.</summary>
@@ -108,14 +120,16 @@ namespace AdaptorPhysX
             RaiseCuts();
             RaisePieces();
             RaiseContacts();
-            _attachmentHandles.Clear();
-            _attachmentHandles.AddRange(_heldPoints.Keys);
-            foreach (int attachment in _attachmentHandles)
+            _handles.Clear();
+            _handles.AddRange(_heldPoints.Keys);
+            foreach (int attachment in _handles)
             {
                 RaiseReleases(attachment);
             }
+            StepCompleted?.Invoke(this);
         }
 
+        /// <summary>Raises the cuts and the ended strokes; also for a sleeping body, which has no step to wait for.</summary>
         private void RaiseCuts()
         {
             foreach (ApxCutEvent cut in _pendingCuts)
@@ -123,6 +137,11 @@ namespace AdaptorPhysX
                 Severed?.Invoke(this, cut);
             }
             _pendingCuts.Clear();
+            foreach (int stroke in _endedStrokes)
+            {
+                StrokeEnded?.Invoke(this, stroke);
+            }
+            _endedStrokes.Clear();
         }
 
         /// <summary>Counts the pieces after a topology change; only while someone listens.</summary>
@@ -215,6 +234,40 @@ namespace AdaptorPhysX
                 }
             }
             _pendingCuts.Add(new ApxCutEvent { Stroke = stroke, SeveredEdges = severed });
+            if (stroke != 0)
+            {
+                _openStrokes.Add(stroke);
+            }
+        }
+
+        /// <summary>Ends the open strokes other than <paramref name="stroke"/>, which the simulation ends when it cuts.</summary>
+        private void EndOtherStrokes(int stroke)
+        {
+            if (_openStrokes.Count == 0 || (_openStrokes.Count == 1 && _openStrokes.Contains(stroke)))
+            {
+                return;
+            }
+            _handles.Clear();
+            foreach (int open in _openStrokes)
+            {
+                if (open != stroke)
+                {
+                    _handles.Add(open);
+                }
+            }
+            foreach (int open in _handles)
+            {
+                RecordStrokeEnd(open);
+            }
+        }
+
+        /// <summary>Adds the end of a stroke that severed edges in the body to the events of the next step.</summary>
+        private void RecordStrokeEnd(int stroke)
+        {
+            if (_openStrokes.Remove(stroke))
+            {
+                _endedStrokes.Add(stroke);
+            }
         }
 
         /// <summary>Starts the events afresh for a new simulation.</summary>
@@ -222,6 +275,8 @@ namespace AdaptorPhysX
         {
             _eventStep = -1;
             _pendingCuts.Clear();
+            _openStrokes.Clear();
+            _endedStrokes.Clear();
             _pieceCount = Simulation != null ? Simulation.CountPieces() : -1;
             _pieceTopology = Simulation != null ? Simulation.TopologyVersion : -1;
             _contacts.Clear();

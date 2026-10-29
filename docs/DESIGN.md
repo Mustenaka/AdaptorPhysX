@@ -517,7 +517,7 @@
   日志记录各物体的包围盒、钢球高度、环形器械下方与塑性块中部的表面高度。batchmode 入口
   `AdaptorPhysX.Samples.Editor.InteractionDemoCapture.CaptureBatch`，参数同上。
 - `AdaptorPhysX/Capture Standard Scenarios`：在编辑模式下按脚本执行 S1–S7，并输出 PNG 与日志
-  （每个阶段的块大小、副本数、耗时；S7 另记切口表面的张开量与针脚张力）。S7 的针脚点在 S6 切开之前放置，
+  （每个阶段的块大小、副本数、耗时；S7 另记切口表面的张开量与针脚张力），并写出评分 `score.json`（9.13 节）。S7 的针脚点在 S6 切开之前放置，
   高度取渲染皮肤的高度（最高节点可能高出皮肤近一个体素）；缝线画为两点之间、高出皮肤 1.2 mm 的弧形细管，只用于截图
   （`LineRenderer` 在编辑模式下随相机移动只渲染出部分线段，未采用）。菜单执行前提示保存已修改的场景，结束后从磁盘重新加载原场景；
   Play 模式下不可用。batchmode 用法：
@@ -1000,6 +1000,11 @@
   - `PointsReleased`（`ApxReleaseEvent`）：动态附着（9.8 节）的点在一步中超过断开力而脱开，附附着句柄、本步脱开的点数与仍被
     附着的点数。`RemoveAttachment` 先报告尚未报告的脱开。
   - `SleepChanged`（bool）：物体进入休眠（true）或恢复步进（false），在 `Simulate` 判断休眠之后触发：休眠的物体不步进，没有步末。
+  - `StrokeEnded`（刀路编号，MED-13 加入）：切到物体的刀路结束，在其恢复的棱之后。`EndStroke` 结束刀路；另一个刀路切到物体时，
+    物体上未结束的刀路也结束，与 `SoftBodySimulation.Cut` 一致。截图脚本中相邻的刀路之间刀不停，`ApxScalpel` 不调用 `EndStroke`，
+    只按 `EndStroke` 判断时 9 个刀路只结束了 5 个（试验）。休眠的物体在 `Simulate` 中触发尚未触发的 `Severed` 与 `StrokeEnded`，
+    不为此唤醒：唤醒会推迟休眠，而休眠决定物体之间同步子步的配对（9.4 节），试验中唤醒使 S2–S7 的截图改变。
+  - `StepCompleted`（MED-13 加入）：每步在其他事件之后，供需要每步受力的使用者（超力，9.13 节）。
 - 测试（`InteractionTests`）：
   - `FullCutRaisesTheCutAndThePiecesOnce`：8 × 4 × 6 cm 组织块（分辨率 8，无重力）由一个刀路的 4 次扫掠全切；经过组织的两次
     扫掠各在之后的步末触发一次 `Severed`（各 24 条棱，刀路编号 7），分离之后触发一次 `PiecesChanged`：之前 1 块，现在两块，
@@ -1012,6 +1017,35 @@
   - `SleepAndWakeAreReported`：无重力的静止物体在第 30 步后进入休眠，`WakeUp` 后恢复，各报告一次。
 - 限制：事件只在 `ApxSoftBody` 上，`SoftBodySimulation` 没有事件；碰撞体接触只有开始与结束，接触期间的受力从 `ColliderWrenches`
   读取；不改变块数的切割（半切）只有 `Severed`。
+
+### 9.13 评分（TODO MED-13，`ApxScorer.cs`）
+
+- `ApxScorer` 组件按观察的物体的事件（9.12 节）评分：
+  - 切口：每个刀路一个（`IncisionMade`），刀路结束（`StrokeEnded`；`stroke = 0` 的切割立即）时在静止空间中测量该刀路断开的棱。
+    `Severed` 事件时把物体的断棱与上一次记下的比较，新增的棱归入该刀路；两个刀路在同两次步末之间切同一物体时，归入先报告的
+    刀路。测量时只计仍断开的棱（`EndStroke` 恢复的不计），每条 lattice 棱只计一次（共享该棱的 4 个体素都记有它）。
+    - 切点在棱上 `EdgeT` 处，其深度为该处的静止 SDF：棱两端节点的 `NodeSdf` 线性插值（比格点 SDF 在表面以内 1.5 个体素以深
+      也准确，9.4 节）。
+    - 深度为切点在表面以下的最大距离；长度为距表面不超过半个体素的切点沿其主方向（协方差的幂迭代）的范围，起点、终点与中心为
+      这些点按静止放置（`RestToWorld`）的位置。两者都按断开的棱计算，切口止于最后一条断棱与下一条之间，比实际短不到一个体素。
+    - 切面面积（一侧，表面以内）：法向为 n 的平面被沿轴 a 的棱穿过 |n_a| A / h² 次；每条棱只在其切面法线的最大分量沿棱方向时
+      计入 h² / |n_a|，乘以表面以内的比例 saturate(0.5 − sdf / h)。平面切口的面积与截面一致（下面的测试）。
+  - 超力：每步（`StepCompleted`）读取抓取（`TryGetGrabWrench`）与 `instruments` 中碰撞体的受力（HAP-1），超过 `forceLimit` 时
+    开始一次超力（`ForceExceeded` 在第一步触发），低于限值或接触结束时结束；记录开始时间、持续时间（第一步到最后一步的模拟
+    时间）与峰值。支撑物不在 `instruments` 中：截图场景中静止在桌面上的组织块对桌面的力为 16.6 N（试验中计入了所有碰撞体）。
+  - 报告（`Report`，`ApxScoreReport.ToJson`）：切口、超力（含尚未结束的）、观察的物体的全部切面面积（切割造成的组织损伤）与块数、
+    超力总时间与峰值力。
+- 测试（`ScoringTests`）：
+  - `ScorerMeasuresAnIncision`：10 × 4 × 6 cm 组织块（体素 5 mm，无重力），10 次扫掠的刀路在顶面上切出长 50 mm、深 15 mm 的切口；
+    刀路结束后报告一个切口：长 45.0 mm、深 12.5 mm（各短不到一个体素）、面积 750 mm²（50 × 15 mm），中心在切口平面与顶面上。
+  - `CutAreaOfAFullCutIsTheCrossSection`：8 × 4 × 6 cm 组织块全切，切面面积 2400 mm²（4 × 6 cm 截面），2 块。
+  - `ScorerReportsTheTimeAboveTheForceLimit`：球压入两端钉住的组织条 6 mm，最大受力 2.225 N；限值取其一半时报告一次超力，
+    持续 0.550 s、峰值 2.225 N；限值 1000 N 时没有。
+- 标准场景（第 8 节）：S1–S7 的截图脚本观察全部物体（限值 1 N），截图与不评分时逐像素相同（`99_overview` 有 3 个像素差 1 级），
+  写出 `score.json`：9 个切口（S6 的切口长 21.9 mm、深 5.3 mm，
+  刀路长 24 mm），切面总面积 23098 mm²，共 9 块；镊子 4 次超过 1 N，共 1.98 s，峰值 5.92 N。
+- 限制：长度为切点沿主方向的范围，弯曲的切口按直线计；切口位置按静止放置，不随组织移动；动态附着（夹钳）的受力不计入超力；
+  缝合指标见 SUT-8。
 
 ## 10. 交互工具与调试显示（`Assets/AdaptorPhysX/Tools/`，TODO ENG-5）
 

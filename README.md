@@ -50,6 +50,7 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
   半切切口两壁之间有切面接触，缝合对合后两壁不相互穿过（DESIGN 9.11 节）。
 - 事件：`ApxSoftBody` 在每步结束后于主线程触发切割（`Severed`）、块数变化（`PiecesChanged`）、碰撞体接触开始与结束
   （`ContactBegan`、`ContactEnded`，附受力）、附着点脱开（`PointsReleased`）、休眠与唤醒（`SleepChanged`）（DESIGN 9.12 节）。
+- 评分（`ApxScorer`）：每个刀路的切口长度、深度、切面面积与位置，器械受力超过限值的时段，切面总面积与块数，输出 JSON（DESIGN 9.13 节）。
 - 材料点：嵌入体素副本的点（`AddMaterialPoint(世界坐标)`、`MaterialPointPosition`），随组织移动，切割后留在原来的一侧；用作缝合、附着与接触的锚点（DESIGN 4.4 节）。
 - 交互工具与调试显示（`AdaptorPhysX.Tools`）：相机旋转、平移、向指针缩放；手术刀的航向、侧倾、前倾与深度可调；
   镊子抓取与提起；测量；参考网格、lattice、节点、断棱、受力与刀刃扫掠面的调试显示；暂停与单步。

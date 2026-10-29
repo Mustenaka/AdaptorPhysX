@@ -120,6 +120,19 @@ namespace AdaptorPhysX.Samples.Editor
             ApxSoftBody flap = Find("Skin Flap");
             ApxSoftBody liver = Find("Liver Lobe");
             ApxSoftBody pad = Find("Tissue Pad");
+            // TODO MED-13: a scorer observes the bodies through all scenarios; its report is written next to the shots.
+            var scorer = new GameObject("Scorer").AddComponent<ApxScorer>();
+            scorer.forceLimit = ForceLimit;
+            foreach (ApxSoftBody body in ApxSoftBody.Active)
+            {
+                scorer.Observe(body);
+            }
+            scorer.IncisionMade += incision => Debug.Log(
+                $"[ApxCapture] incision: {incision.Body} stroke {incision.Stroke}, {incision.SeveredEdges} edges, length " +
+                $"{incision.Length * 1000:0.0} mm, depth {incision.Depth * 1000:0.0} mm, area {incision.Area * 1e6f:0} mm^2, " +
+                $"centre {incision.Center * 1000} mm");
+            scorer.ForceExceeded += force => Debug.Log(
+                $"[ApxCapture] force above {ForceLimit} N: {force.Body} {force.Source} at {force.Start:0.00} s, {force.Peak:0.00} N");
 
             Run(45);
             Log("settled");
@@ -261,7 +274,16 @@ namespace AdaptorPhysX.Samples.Editor
                       $"tensions {string.Join(" / ", Array.ConvertAll(stitches, t => pad.StitchTension(t).ToString("0.000")))} N");
             Shot("S7a_pad_sutured", new Vector3(0.0f, padTop + 0.06f, -0.27f), new Vector3(0.0f, padTop, -0.21f));
             Shot("S7b_pad_sutured_close", new Vector3(0.0f, skin + 0.03f, -0.218f), new Vector3(0.0f, skin, -0.21f));
+
+            ApxScoreReport report = scorer.Report();
+            File.WriteAllText(Path.Combine(_directory, "score.json"), report.ToJson());
+            Debug.Log($"[ApxCapture] score: {report.Incisions.Count} incisions, cut area {report.CutArea * 1e6f:0} mm^2, " +
+                      $"{report.Pieces} pieces, {report.ForceEvents.Count} times above {ForceLimit} N for {report.OverForceTime:0.00} s, " +
+                      $"peak {report.PeakForce:0.00} N");
         }
+
+        /// <summary>Force on an instrument above which the scorer reports it, N.</summary>
+        private const float ForceLimit = 1.0f;
 
         /// <summary>
         /// Largest opening of an incision: the distance of each pair of wall points less the one before the cut; negative where

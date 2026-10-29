@@ -379,6 +379,7 @@ namespace AdaptorPhysX
             RaiseSleep();
             if (IsSleeping)
             {
+                RaiseCuts();
                 Simulation.SkipStep();
                 return;
             }
@@ -433,6 +434,8 @@ namespace AdaptorPhysX
         /// </summary>
         public int Cut(Vector3 a0, Vector3 b0, Vector3 a1, Vector3 b1, int stroke = 0)
         {
+            // The simulation ends its stroke when another one cuts (SoftBodySimulation.Cut).
+            EndOtherStrokes(stroke);
             int severed = Simulation == null ? 0 : Simulation.Cut(a0, b0, a1, b1, stroke);
             if (severed > 0)
             {
@@ -450,6 +453,7 @@ namespace AdaptorPhysX
             {
                 WakeUp();
             }
+            RecordStrokeEnd(stroke);
             return healed;
         }
 
