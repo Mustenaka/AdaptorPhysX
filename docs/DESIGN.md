@@ -986,6 +986,33 @@
     体素内的弯曲，不带摩擦。
   - S6 测试中，离切口较远、靠近固定侧面的外层节点在缝合前后都有 0.1–0.3 m/s 的运动，原因未查明。
 
+### 9.12 事件（TODO ECO-10，`ApxSoftBody.Events.cs`）
+
+- `ApxSoftBody` 的 C# 事件，第一个参数为物体，在主线程、一步完成之后触发：在 `UpdateRender`（LateUpdate）中；一步在其他时候
+  完成时（一帧内多步），在下一次 `Simulate` 开始时。每一步只触发一次。
+  - `Severed`（`ApxCutEvent`）：刀路断开了棱，附刀路编号与断棱数。`Cut` 的调用先记下，在之后第一次步末触发；同一刀路在两次
+    步末之间的多次调用合为一个事件，`stroke = 0` 的调用各为一个事件。
+  - `PiecesChanged`（`ApxPiecesEvent`）：块数改变，附之前的块数与现在的全部块（编号与实节点数，`SoftBodySimulation.Pieces`，按
+    节点数从大到小）。编号为块内最小的节点号，到下一次拓扑变化之前有效。只在有订阅时、拓扑变化之后统计（按节点号计数，
+    遍历一次节点）；第一次订阅时记下当时的块数。`RestoreState` 改变块数时也触发。`PieceSizes` 改为由 `Pieces` 得到，结果不变。
+  - `ContactBegan`、`ContactEnded`（`ApxContactEvent`）：碰撞体在一步中有接触而上一步没有，或相反；附该碰撞体在接触的第一步
+    （开始）或最后一步（结束）的受力（HAP-1）。钉住区域与抓取不产生接触事件。
+  - `PointsReleased`（`ApxReleaseEvent`）：动态附着（9.8 节）的点在一步中超过断开力而脱开，附附着句柄、本步脱开的点数与仍被
+    附着的点数。`RemoveAttachment` 先报告尚未报告的脱开。
+  - `SleepChanged`（bool）：物体进入休眠（true）或恢复步进（false），在 `Simulate` 判断休眠之后触发：休眠的物体不步进，没有步末。
+- 测试（`InteractionTests`）：
+  - `FullCutRaisesTheCutAndThePiecesOnce`：8 × 4 × 6 cm 组织块（分辨率 8，无重力）由一个刀路的 4 次扫掠全切；经过组织的两次
+    扫掠各在之后的步末触发一次 `Severed`（各 24 条棱，刀路编号 7），分离之后触发一次 `PiecesChanged`：之前 1 块，现在两块，
+    各 240 个实节点，与 `PieceSizes` 一致，编号为块内的节点。
+  - `PressedAndLiftedBallBeginsAndEndsOneContact`：两端钉住的组织条（14 × 4 × 6 cm，体素 10 mm，无重力），半径 10 mm 的球从
+    表面上方 10 mm 压入 4 mm、保持、抬回：`ContactBegan`、`ContactEnded` 各一次，球受到向上的力，开始时 0.040 N，结束时
+    0.011 N。组织条只有 1.4 个体素厚时（试验），球从节点之间进入，没有接触（9.9 节的限制）。
+  - `ReleasedAttachmentPointsAreReported`：5 cm 立方体由顶面 25 个材料点的附着悬挂，断开力为每点平均载荷的一半：在第一步全部
+    脱开，报告一次（脱开 25，仍附着 0）。
+  - `SleepAndWakeAreReported`：无重力的静止物体在第 30 步后进入休眠，`WakeUp` 后恢复，各报告一次。
+- 限制：事件只在 `ApxSoftBody` 上，`SoftBodySimulation` 没有事件；碰撞体接触只有开始与结束，接触期间的受力从 `ColliderWrenches`
+  读取；不改变块数的切割（半切）只有 `Severed`。
+
 ## 10. 交互工具与调试显示（`Assets/AdaptorPhysX/Tools/`，TODO ENG-5）
 
 程序集 `AdaptorPhysX.Tools`，引用运行时程序集，运行时程序集不引用它。两个演示场景由场景生成器调用

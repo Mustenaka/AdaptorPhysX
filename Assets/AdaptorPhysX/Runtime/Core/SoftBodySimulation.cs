@@ -1065,21 +1065,34 @@ namespace AdaptorPhysX
         public int CountPieces() => PieceSizes().Count;
 
         /// <summary>Real node count of every material piece, largest first.</summary>
-        public List<int> PieceSizes()
+        public List<int> PieceSizes() => Pieces().ConvertAll(p => p.RealNodes);
+
+        /// <summary>
+        /// Every material piece with its id (<see cref="PieceId"/>: the piece's smallest node, valid until the next topology
+        /// change) and real node count, largest first, then by id.
+        /// </summary>
+        public List<ApxPiece> Pieces()
         {
             CompleteStep();
-            var sizes = new Dictionary<int, int>();
+            var counts = new int[NodeCount];
             for (int i = 0; i < NodeCount; i++)
             {
                 int piece = PieceId[i];
                 if (piece >= 0)
                 {
-                    sizes[piece] = sizes.TryGetValue(piece, out int c) ? c + 1 : 1;
+                    counts[piece]++;
                 }
             }
-            var result = new List<int>(sizes.Values);
-            result.Sort((x, y) => y.CompareTo(x));
-            return result;
+            var pieces = new List<ApxPiece>();
+            for (int i = 0; i < counts.Length; i++)
+            {
+                if (counts[i] > 0)
+                {
+                    pieces.Add(new ApxPiece { Id = i, RealNodes = counts[i] });
+                }
+            }
+            pieces.Sort((x, y) => x.RealNodes != y.RealNodes ? y.RealNodes.CompareTo(x.RealNodes) : x.Id.CompareTo(y.Id));
+            return pieces;
         }
 
         private void RebuildTopology(bool hasOld)

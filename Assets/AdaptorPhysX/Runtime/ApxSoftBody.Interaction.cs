@@ -125,6 +125,7 @@ namespace AdaptorPhysX
                 Simulation.AttachPoint(attachment, point);
             }
             _attachmentTargets[attachment] = target;
+            _heldPoints[attachment] = Simulation.HeldPoints(attachment);
             WakeUp();
             return attachment;
         }
@@ -132,6 +133,12 @@ namespace AdaptorPhysX
         /// <summary>Lets go of all points of an attachment.</summary>
         public void RemoveAttachment(int attachment)
         {
+            if (Simulation != null)
+            {
+                // Points that let go before the attachment is removed are still reported.
+                RaiseReleases(attachment);
+            }
+            _heldPoints.Remove(attachment);
             Simulation?.RemoveAttachment(attachment);
             _attachmentTargets.Remove(attachment);
             WakeUp();
@@ -474,6 +481,15 @@ namespace AdaptorPhysX
             _forceModels.Clear();
             _estimators.Clear();
             _stepBodies.Clear();
+            // The events start from the restored state; the cuts since the capture are undone.
+            _pendingCuts.Clear();
+            _contacts.Clear();
+            _attachmentHandles.Clear();
+            _attachmentHandles.AddRange(_heldPoints.Keys);
+            foreach (int attachment in _attachmentHandles)
+            {
+                _heldPoints[attachment] = Simulation.HeldPoints(attachment);
+            }
         }
 
         private static ApxGrab[] CloneGrabs(IEnumerable<ApxGrab> grabs)

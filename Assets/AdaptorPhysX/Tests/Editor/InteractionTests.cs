@@ -736,6 +736,166 @@ namespace AdaptorPhysX.Tests
             Assert.Greater(Vector3.Dot(acrossRight, Vector3.down), 0.95f, $"width direction at the right grasper {acrossRight}");
         }
 
+        /// <summary>
+        /// A stroke of four sweeps cuts a block through (TODO ECO-10): each step after a sweep that severed edges raises one
+        /// Severed event with the stroke and the edges, and the step after the cut that separated the block raises one
+        /// PiecesChanged event whose pieces have the sizes of <see cref="SoftBodySimulation.PieceSizes"/>.
+        /// </summary>
+        [Test]
+        public void FullCutRaisesTheCutAndThePiecesOnce()
+        {
+            ApxSoftBody block = CreateBody("Block", new Vector3(0.08f, 0.04f, 0.06f), Vector3.zero, 8);
+            block.useGravity = false;
+            block.Initialize();
+            var cuts = new List<ApxCutEvent>();
+            var changes = new List<ApxPiecesEvent>();
+            block.Severed += (body, cut) => cuts.Add(cut);
+            block.PiecesChanged += (body, change) => changes.Add(change);
+            int severed = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                float z0 = -0.2f + 0.1f * i, z1 = z0 + 0.1f;
+                severed += block.Cut(new Vector3(0.003f, 0.5f, z0), new Vector3(0.003f, -0.5f, z0), new Vector3(0.003f, 0.5f, z1),
+                    new Vector3(0.003f, -0.5f, z1), 7);
+                block.Simulate(Dt);
+                block.UpdateRender();
+            }
+            block.EndStroke(7);
+            for (int f = 0; f < 5; f++)
+            {
+                block.Simulate(Dt);
+                block.UpdateRender();
+            }
+            List<int> sizes = block.Simulation.PieceSizes();
+            TestContext.WriteLine($"cut events {cuts.Count} ({string.Join(", ", cuts.ConvertAll(c => c.SeveredEdges))} edges of {severed}), " +
+                                  $"piece changes {changes.Count}, pieces [{string.Join(", ", sizes)}]");
+            Assert.AreEqual(2, cuts.Count, "the two sweeps through the block");
+            Assert.AreEqual(severed, cuts[0].SeveredEdges + cuts[1].SeveredEdges);
+            Assert.IsTrue(cuts.TrueForAll(c => c.Stroke == 7));
+            Assert.AreEqual(1, changes.Count);
+            Assert.AreEqual(1, changes[0].PreviousCount);
+            Assert.AreEqual(2, changes[0].Pieces.Length);
+            for (int i = 0; i < 2; i++)
+            {
+                ApxPiece piece = changes[0].Pieces[i];
+                Assert.AreEqual(sizes[i], piece.RealNodes);
+                Assert.AreEqual(piece.Id, block.Simulation.PieceId[piece.Id], "the id of a piece is one of its nodes");
+            }
+        }
+
+        /// <summary>
+        /// A ball pressed into a slab and lifted off again raises one ContactBegan and one ContactEnded event, with the force
+        /// of the first and of the last step of the contact (TODO ECO-10).
+        /// </summary>
+        [Test]
+        public void PressedAndLiftedBallBeginsAndEndsOneContact()
+        {
+            // 4 cells thick (cell 10 mm), so the ball is pushed by the surface cells where it is between the nodes (MED-17).
+            ApxSoftBody slab = CreateBody("Slab", new Vector3(0.14f, 0.04f, 0.06f), Vector3.zero, 14);
+            slab.pinColliders = new[]
+            {
+                Trigger(new Vector3(-0.07f, 0.0f, 0.0f), new Vector3(0.02f, 0.1f, 0.1f)),
+                Trigger(new Vector3(0.07f, 0.0f, 0.0f), new Vector3(0.02f, 0.1f, 0.1f)),
+            };
+            slab.useGravity = false;
+            GameObject ball = Primitive(PrimitiveType.Sphere);
+            ball.transform.localScale = new Vector3(0.02f, 0.02f, 0.02f);
+            ball.transform.position = new Vector3(0.0f, 0.04f, 0.0f);
+            Physics.SyncTransforms();
+            slab.Initialize();
+            var began = new List<ApxContactEvent>();
+            var ended = new List<ApxContactEvent>();
+            Collider collider = ball.GetComponent<Collider>();
+            slab.ContactBegan += (body, contact) =>
+            {
+                if (contact.Collider == collider)
+                {
+                    began.Add(contact);
+                }
+            };
+            slab.ContactEnded += (body, contact) =>
+            {
+                if (contact.Collider == collider)
+                {
+                    ended.Add(contact);
+                }
+            };
+            // The ball (radius 10 mm) from 10 mm above the top face (y = 20 mm) down to 4 mm into it, held, and back.
+            for (int f = 0; f < 120; f++)
+            {
+                float depth = f < 40 ? f / 40.0f : f < 60 ? 1.0f : math.saturate((100 - f) / 40.0f);
+                ball.transform.position = new Vector3(0.0f, 0.04f - 0.014f * depth, 0.0f);
+                Physics.SyncTransforms();
+                slab.Simulate(Dt);
+                slab.UpdateRender();
+            }
+            TestContext.WriteLine($"began {began.Count} ({(began.Count > 0 ? began[0].Wrench.Force.ToString() : "-")} N), " +
+                                  $"ended {ended.Count} ({(ended.Count > 0 ? ended[0].Wrench.Force.ToString() : "-")} N)");
+            Assert.AreEqual(1, began.Count);
+            Assert.AreEqual(1, ended.Count);
+            Assert.Greater(began[0].Wrench.Force.y, 0.0f, "the tissue pushes the ball up");
+            Assert.Greater(ended[0].Wrench.Force.y, 0.0f);
+            Assert.IsFalse(slab.TryGetColliderWrench(collider, out _));
+        }
+
+        /// <summary>
+        /// A cube hangs from a dynamic attachment on material points of its top face whose break force is half their mean
+        /// load: the points that let go are reported, until none is held (TODO ECO-10).
+        /// </summary>
+        [Test]
+        public void ReleasedAttachmentPointsAreReported()
+        {
+            ApxSoftBody cube = CreateBody("Cube", new Vector3(0.05f, 0.05f, 0.05f), new Vector3(0.0f, 0.2f, 0.0f), 8);
+            cube.Initialize();
+            var points = new List<int>();
+            for (int x = -2; x <= 2; x++)
+            for (int z = -2; z <= 2; z++)
+            {
+                int point = cube.AddMaterialPoint(new Vector3(0.01f * x, 0.2245f, 0.01f * z));
+                Assert.GreaterOrEqual(point, 0);
+                points.Add(point);
+            }
+            float meanLoad = cube.Simulation.TotalMass * 9.81f / points.Count;
+            Transform target = InScene(new GameObject("Hook")).transform;
+            int attachment = cube.AddAttachment(target, points, 0.0f, 0.5f * meanLoad);
+            var releases = new List<ApxReleaseEvent>();
+            cube.PointsReleased += (body, release) => releases.Add(release);
+            for (int f = 0; f < 30; f++)
+            {
+                cube.Simulate(Dt);
+                cube.UpdateRender();
+            }
+            int released = 0;
+            releases.ForEach(r => released += r.Released);
+            TestContext.WriteLine($"releases: {string.Join(", ", releases.ConvertAll(r => $"{r.Released} (held {r.Held})"))}");
+            Assert.Greater(releases.Count, 0);
+            Assert.AreEqual(points.Count, released);
+            Assert.AreEqual(0, releases[releases.Count - 1].Held);
+            Assert.IsTrue(releases.TrueForAll(r => r.Attachment == attachment));
+            Assert.AreEqual(0, cube.HeldPoints(attachment));
+        }
+
+        /// <summary>A body at rest falls asleep and wakes up again, each reported once (TODO ECO-10).</summary>
+        [Test]
+        public void SleepAndWakeAreReported()
+        {
+            ApxSoftBody block = CreateBody("Block", new Vector3(0.05f, 0.05f, 0.05f), Vector3.zero, 6);
+            block.useGravity = false;
+            block.Initialize();
+            var states = new List<bool>();
+            block.SleepChanged += (body, sleeping) => states.Add(sleeping);
+            for (int f = 0; f < ApxSoftBody.SleepSteps + 5; f++)
+            {
+                block.Simulate(Dt);
+                block.UpdateRender();
+            }
+            Assert.IsTrue(block.IsSleeping);
+            block.WakeUp();
+            block.Simulate(Dt);
+            block.UpdateRender();
+            CollectionAssert.AreEqual(new[] { true, false }, states);
+        }
+
         private SoftBodySimulation HangFromAttachment(float breakForce, out int attachment, out List<int> points)
         {
             var parameters = SoftBodyParameters.Default;

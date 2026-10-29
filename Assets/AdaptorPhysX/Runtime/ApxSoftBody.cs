@@ -330,6 +330,7 @@ namespace AdaptorPhysX
             LastInitializeTimings = timings;
             _initializedMesh = mesh;
             _initializedResolution = resolution;
+            ResetEvents();
             Active.Add(this);
         }
 
@@ -349,6 +350,7 @@ namespace AdaptorPhysX
             }
             SoftBodyWorld.BeginStep(this);
             Simulation.CompleteStep();
+            RaiseStepEvents();
             ApplyRigidResponse();
             Simulation.Parameters = BuildParameters();
             bool disturbed = GatherColliders() || _grabs.Count > 0;
@@ -374,6 +376,7 @@ namespace AdaptorPhysX
             }
 
             _restSteps = disturbed || !allowSleep || Simulation.MaxSpeed > SleepSpeed ? 0 : _restSteps + 1;
+            RaiseSleep();
             if (IsSleeping)
             {
                 Simulation.SkipStep();
@@ -391,10 +394,11 @@ namespace AdaptorPhysX
             Simulation.ScheduleStep(dt, substeps, shapes, _fieldBuffer, bodies);
         }
 
-        /// <summary>Deforms the rendered mesh to the current node positions.</summary>
+        /// <summary>Deforms the rendered mesh to the current node positions and raises the events of the step.</summary>
         public void UpdateRender()
         {
             Simulation?.CompleteStep();
+            RaiseStepEvents();
             Surface?.Update(transform.worldToLocalMatrix);
         }
 
@@ -433,6 +437,7 @@ namespace AdaptorPhysX
             if (severed > 0)
             {
                 WakeUp();
+                RecordCut(stroke, severed);
             }
             return severed;
         }
