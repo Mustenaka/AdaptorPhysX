@@ -1114,6 +1114,89 @@ namespace AdaptorPhysX.Tests
         }
 
         /// <summary>
+        /// A stroke that leaves a half incision at a slant (TODO BUG-18): a box 12 x 5 x 10 cm (cell 5 mm, no gravity) with an
+        /// incision 2 cm deep along z; a second stroke, as deep, starts on it and leaves it at 10 degrees. Over the first 2 cm the
+        /// two cuts are less than 0.75 cells apart. When the stroke ends, every edge it severed is still severed: the thin layer
+        /// between the cuts joins the far side of the incision, whose edges there are restored. Before, the stroke's own edges
+        /// there were restored, and its cut started 2 cm away from the incision.
+        /// </summary>
+        [Test]
+        public void StrokeLeavingAHalfIncisionKeepsItsWholeCut()
+        {
+            SoftBodySimulation sim = HalfIncision(out ushort[] incision, out float top);
+            float slope = math.tan(math.radians(10.0f));
+            ushort[] stroke = Stroke(sim, 2, new float3(0.0013f, 0.0f, -0.02f), new float3(0.0013f + 0.06f * slope, 0.0f, 0.04f), top);
+            int healed = sim.EndStroke(2);
+            int lost = 0, restored = 0;
+            for (int c = 0; c < sim.CellCount; c++)
+            {
+                lost += math.countbits((uint)(stroke[c] & ~incision[c] & ~sim.Severed[c]));
+                restored += math.countbits((uint)(incision[c] & ~sim.Severed[c]));
+            }
+            TestContext.WriteLine($"edges restored at the end of the stroke: {healed}; in the cells: of the incision {restored}, of the stroke {lost}");
+            Assert.Greater(healed, 0, "the stroke ran alongside the incision");
+            Assert.AreEqual(0, lost, "edges of the stroke restored");
+            Assert.Greater(restored, 0);
+        }
+
+        /// <summary>
+        /// A stroke along a half incision 2.2 mm (0.44 cells) beside it, with a layer of lattice nodes between the two (TODO
+        /// BUG-18): more than half of the edges it severs lie alongside the incision, so it traced the incision again: its edges
+        /// there are restored and the incision keeps all of its own.
+        /// </summary>
+        [Test]
+        public void StrokeAlongAHalfIncisionKeepsTheIncision()
+        {
+            SoftBodySimulation sim = HalfIncision(out ushort[] incision, out float top);
+            ushort[] stroke = Stroke(sim, 2, new float3(0.0035f, 0.0f, -0.035f), new float3(0.0035f, 0.0f, 0.035f), top);
+            int healed = sim.EndStroke(2);
+            int lost = 0, restored = 0;
+            for (int c = 0; c < sim.CellCount; c++)
+            {
+                lost += math.countbits((uint)(incision[c] & ~sim.Severed[c]));
+                restored += math.countbits((uint)(stroke[c] & ~incision[c] & ~sim.Severed[c]));
+            }
+            TestContext.WriteLine($"edges restored at the end of the stroke: {healed}; in the cells: of the stroke {restored}, of the incision {lost}");
+            Assert.Greater(healed, 0, "the stroke ran alongside the incision");
+            Assert.AreEqual(0, lost, "edges of the incision restored");
+            Assert.Greater(restored, 0);
+        }
+
+        /// <summary>
+        /// A box 12 x 5 x 10 cm (cell 5 mm, no gravity) with an incision 2 cm deep along z at x = 1.3 mm, ended; the severed
+        /// edges afterwards and the height of the top.
+        /// </summary>
+        private SoftBodySimulation HalfIncision(out ushort[] severed, out float top)
+        {
+            var parameters = SoftBodyParameters.Default;
+            parameters.Gravity = float3.zero;
+            SoftBodySimulation sim = CreateBox(new float3(0.12f, 0.05f, 0.1f), parameters, 24);
+            top = sim.BoundsMax.y;
+            Stroke(sim, 1, new float3(0.0013f, 0.0f, -0.04f), new float3(0.0013f, 0.0f, 0.04f), top);
+            Assert.AreEqual(0, sim.EndStroke(1));
+            Assert.AreEqual(1, sim.CountPieces());
+            severed = sim.Severed.ToArray();
+            return sim;
+        }
+
+        /// <summary>
+        /// A stroke of a vertical blade from 1 cm above <paramref name="top"/> to 2 cm below it, moved from
+        /// <paramref name="from"/> to <paramref name="to"/> (x, z) in 1 mm sweeps; the severed edges at its end.
+        /// </summary>
+        private static ushort[] Stroke(SoftBodySimulation sim, int stroke, float3 from, float3 to, float top)
+        {
+            int sweeps = (int)math.ceil(math.distance(from.xz, to.xz) / 0.001f);
+            float3 Point(int i) => math.lerp(from, to, i / (float)sweeps);
+            for (int i = 1; i <= sweeps; i++)
+            {
+                float3 a = Point(i - 1), b = Point(i);
+                sim.Cut(new float3(a.x, top + 0.01f, a.z), new float3(a.x, top - 0.02f, a.z), new float3(b.x, top + 0.01f, b.z),
+                    new float3(b.x, top - 0.02f, b.z), stroke);
+            }
+            return sim.Severed.ToArray();
+        }
+
+        /// <summary>
         /// A cut that only severs edges updates the topology instead of rebuilding it (TODO PERF-5), with the rebuild's
         /// result bit for bit, also after stepping on. Two boxes pinned at one end and sagging under gravity take the same
         /// strokes, one rebuilding every time: a stroke through, a half-depth stroke across it, a stroke along the first

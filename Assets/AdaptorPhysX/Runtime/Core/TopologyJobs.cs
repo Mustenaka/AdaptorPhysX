@@ -1460,15 +1460,22 @@ namespace AdaptorPhysX
     }
 
     /// <summary>
-    /// At the end of a stroke, restores the edges it severed alongside the cut surface of an earlier stroke without
-    /// separating anything: a severed edge whose ends are in one piece, with a node at an end lying between its cut
-    /// point and the Hermite point of an edge that was severed before the stroke and shares that node, the two less than
-    /// <see cref="MaxGap"/> apart along the normal of the earlier edge and the normals within <see cref="MinAlignment"/>.
-    /// A blade drawn beside an incision whose walls have moved since slices into a wall a fraction of a cell from it and
-    /// leaves flaps of the wall attached along one side; they turned and swung apart, and the wall showed slits
-    /// (TODO BUG-16). Only the end of the stroke tells: a strip cut off along the whole incision is such a flap until the
-    /// blade has passed its far end. A node between the two cut points rules out a stroke that continues an earlier cut
-    /// in its own plane, and one that starts from an incision at a right angle.
+    /// At the end of a stroke, joins the thin layers it left alongside the cut surface of an earlier stroke to one side.
+    /// Such a layer is at an edge the stroke severed without separating anything (its ends in one piece), with a node at an
+    /// end lying between the edge's cut point and the Hermite point of an edge that was severed before the stroke and shares
+    /// that node, the two less than <see cref="MaxGap"/> apart along the normal of the earlier edge and the normals within
+    /// <see cref="MinAlignment"/>. A blade drawn beside an incision whose walls have moved since slices into a wall a fraction
+    /// of a cell from it and leaves flaps of the wall attached along one side; they turned and swung apart, and the wall
+    /// showed slits (TODO BUG-16). Only the end of the stroke tells: a strip cut off along the whole incision is such a flap
+    /// until the blade has passed its far end. A node between the two cut points rules out a stroke that continues an
+    /// earlier cut in its own plane, and one that starts from an incision at a right angle.
+    /// The layer joins the side across the earlier cut (its edges there are restored, the stroke's cut stays) when that cut
+    /// separated nothing there either and the stroke is not mostly alongside earlier cuts: a stroke that leaves an incision,
+    /// approaches it or runs on from its end keeps its whole cut, and the earlier incision gives up the part beside it.
+    /// Restoring the stroke's edges instead closed the part of the new cut beside the incision when the stroke ended (TODO
+    /// BUG-18). Otherwise the stroke's edge is restored: beside a cut that separated pieces, joining the layer across it
+    /// would join the pieces; and a stroke mostly along an incision (more than half of its edges beside earlier cuts) traced
+    /// the incision again, which keeps its wall.
     /// </summary>
     [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct HealStrokeJob : IJob
@@ -1495,18 +1502,57 @@ namespace AdaptorPhysX
 
         public void Execute()
         {
+            var earlier = new FixedList512Bytes<int2>();
+            // Whether the stroke mostly traced earlier cuts again (edges counted once in each cell sharing them).
+            int stroke = 0, alongside = 0;
+            for (int c = 0; c < CellCoord.Length; c++)
+            {
+                for (int e = 0; e < Lattice.EdgeCount; e++)
+                {
+                    if (((Severed[c] & ~StrokeStartSevered[c]) & (1 << e)) == 0 || Separates(c, e))
+                    {
+                        continue;
+                    }
+                    stroke++;
+                    earlier.Clear();
+                    alongside += Alongside(c, e, ref earlier) ? 1 : 0;
+                }
+            }
+            bool traced = 2 * alongside > stroke;
             int healed = 0;
             for (int c = 0; c < CellCoord.Length; c++)
             {
                 for (int e = 0; e < Lattice.EdgeCount; e++)
                 {
                     // Edges restored from a cell sharing them are no longer severed here.
-                    if (((Severed[c] & ~StrokeStartSevered[c]) & (1 << e)) == 0 || Separates(c, e) || !Alongside(c, e))
+                    if (((Severed[c] & ~StrokeStartSevered[c]) & (1 << e)) == 0 || Separates(c, e))
                     {
                         continue;
                     }
-                    RestoreShared(c, e);
-                    healed++;
+                    earlier.Clear();
+                    if (!Alongside(c, e, ref earlier))
+                    {
+                        continue;
+                    }
+                    bool joinAcross = !traced;
+                    for (int i = 0; i < earlier.Length; i++)
+                    {
+                        joinAcross &= !Separates(earlier[i].x, earlier[i].y);
+                    }
+                    if (!joinAcross)
+                    {
+                        RestoreShared(c, e);
+                        healed++;
+                        continue;
+                    }
+                    for (int i = 0; i < earlier.Length; i++)
+                    {
+                        if ((Severed[earlier[i].x] & (1 << earlier[i].y)) != 0)
+                        {
+                            RestoreShared(earlier[i].x, earlier[i].y);
+                            healed++;
+                        }
+                    }
                 }
             }
             Healed[0] = healed;
@@ -1533,7 +1579,11 @@ namespace AdaptorPhysX
             return p0 != p1;
         }
 
-        private bool Alongside(int cell, int edge)
+        /// <summary>
+        /// Whether the edge, severed by the stroke, leaves a thin layer beside an earlier cut; the earlier edges that bound the
+        /// layer are added to <paramref name="earlierEdges"/> as (cell, edge).
+        /// </summary>
+        private bool Alongside(int cell, int edge, ref FixedList512Bytes<int2> earlierEdges)
         {
             int3 coord = CellCoord[cell];
             int k0 = EdgeCorners[2 * edge], k1 = EdgeCorners[2 * edge + 1];
@@ -1572,14 +1622,14 @@ namespace AdaptorPhysX
                             EdgeT[other * Lattice.EdgeCount + f]);
                         float toCut = math.dot(earlier, x - (float3)node);
                         float toEarlier = math.dot(earlier, hermite - (float3)node);
-                        if (toCut * toEarlier < 0.0f && math.abs(toCut - toEarlier) < MaxGap)
+                        if (toCut * toEarlier < 0.0f && math.abs(toCut - toEarlier) < MaxGap && earlierEdges.Length < earlierEdges.Capacity)
                         {
-                            return true;
+                            earlierEdges.Add(new int2(other, f));
                         }
                     }
                 }
             }
-            return false;
+            return earlierEdges.Length > 0;
         }
 
         private void RestoreShared(int cell, int edge)
