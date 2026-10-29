@@ -151,7 +151,12 @@ namespace AdaptorPhysX.Tools
             return body != null;
         }
 
-        /// <summary>Height of the topmost real node of <paramref name="body"/> within a cell of the vertical through <paramref name="point"/>.</summary>
+        /// <summary>
+        /// Height of the topmost real node of <paramref name="body"/> within two cells of the vertical through
+        /// <paramref name="point"/>. Within two cells the walls of an incision that has opened (up to about four cells wide)
+        /// hold the height: with one cell, the floor of the incision was the surface, and a blade drawn along it again went its
+        /// depth below the floor, through a 16 mm flap (TODO BUG-19).
+        /// </summary>
         public static bool SurfaceHeight(ApxSoftBody body, Vector3 point, out float height)
         {
             height = point.y;
@@ -161,7 +166,7 @@ namespace AdaptorPhysX.Tools
                 return false;
             }
             Bounds bounds = body.WorldBounds;
-            int node = sim.PickNode(new Vector3(point.x, bounds.max.y + sim.CellSize, point.z), Vector3.down, sim.CellSize);
+            int node = sim.PickNode(new Vector3(point.x, bounds.max.y + sim.CellSize, point.z), Vector3.down, 2.0f * sim.CellSize);
             if (node < 0)
             {
                 return false;

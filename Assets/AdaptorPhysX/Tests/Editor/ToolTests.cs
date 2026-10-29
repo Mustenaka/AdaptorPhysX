@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using AdaptorPhysX.Tools;
 using NUnit.Framework;
+using Unity.Mathematics;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -280,6 +281,105 @@ namespace AdaptorPhysX.Tests
                 }
             }
             Assert.AreEqual(lines.Count, view.CutCount(body));
+        }
+
+        /// <summary>
+        /// A second stroke along an incision that has opened keeps the blade's depth below the tissue beside the incision
+        /// (TODO BUG-19): a pre-tensioned flap 12 x 1.6 x 8 cm (cell 5 mm) held at its ends, an incision 12 mm deep along z that
+        /// gapes, then a stroke 1.5 mm beside it. With the height of the tissue taken within one cell of the blade, the floor of
+        /// the opened incision was the surface and the second stroke cut through the flap.
+        /// </summary>
+        [Test]
+        public void ScalpelToolKeepsItsDepthOverAnOpenIncision()
+        {
+            Mesh mesh = MeshUtil.CreateBox(new Vector3(0.12f, 0.016f, 0.08f), 4);
+            _objects.Add(mesh);
+            GameObject go = InScene(new GameObject("Flap", typeof(MeshFilter), typeof(MeshRenderer)));
+            go.transform.position = new Vector3(0.0f, 0.06f, 0.0f);
+            go.GetComponent<MeshFilter>().sharedMesh = mesh;
+            var flap = go.AddComponent<ApxSoftBody>();
+            flap.resolution = 24;
+            flap.youngsModulus = 6.0e4f;
+            flap.preStrain = 0.2f;
+            flap.pinColliders = new[] { Clamp(-0.06f, 0.06f), Clamp(0.06f, 0.06f) };
+            _bodies.Add(flap);
+            Physics.SyncTransforms();
+            flap.Initialize();
+            var scalpel = InScene(new GameObject("Scalpel")).AddComponent<ApxScalpel>();
+            var tool = InScene(new GameObject("Tool")).AddComponent<ApxScalpelTool>();
+            tool.scalpel = scalpel;
+            tool.blade.depth = 0.012f;
+            for (int f = 0; f < 60; f++)
+            {
+                Frame(tool, scalpel, flap, default);
+            }
+            float bottom = LowestRealNode(flap.Simulation);
+            float Stroke(float x)
+            {
+                float lowest = float.MaxValue;
+                Frame(tool, scalpel, flap, Pointer(x, -0.025f, true, true, false));
+                for (int f = 1; f <= 34; f++)
+                {
+                    Frame(tool, scalpel, flap, Pointer(x, -0.025f + 0.0015f * f, false, true, false));
+                    lowest = tool.IsCutting ? Mathf.Min(lowest, tool.BladePoint.y) : lowest;
+                }
+                Frame(tool, scalpel, flap, Pointer(x, 0.026f, false, false, true));
+                for (int f = 0; f < 30; f++)
+                {
+                    Frame(tool, scalpel, flap, default);
+                }
+                return lowest;
+            }
+            float first = Stroke(0.003f);
+            float firstCut = LowestCut(flap.Simulation) - bottom;
+            float second = Stroke(0.0045f);
+            float secondCut = LowestCut(flap.Simulation) - bottom;
+            TestContext.WriteLine($"blade at the surface down to {first * 1000:0.0} / {second * 1000:0.0} mm; lowest cut " +
+                                  $"{firstCut * 1000:0.0} / {secondCut * 1000:0.0} mm above the bottom");
+            Assert.Greater(firstCut, 0.002f, "the first stroke leaves a floor");
+            Assert.Greater(secondCut, 0.5f * firstCut, "the second stroke does not cut through the floor");
+            Assert.Greater(second, first - flap.Simulation.CellSize, "the blade stays at the height of the tissue beside the incision");
+        }
+
+        private Collider Clamp(float x, float y)
+        {
+            GameObject go = InScene(new GameObject("Clamp"));
+            go.transform.position = new Vector3(x, y, 0.0f);
+            var box = go.AddComponent<BoxCollider>();
+            box.size = new Vector3(0.02f, 0.03f, 0.1f);
+            box.isTrigger = true;
+            return box;
+        }
+
+        /// <summary>Rest height (body space) of the lowest real node.</summary>
+        private static float LowestRealNode(SoftBodySimulation sim)
+        {
+            float low = float.MaxValue;
+            for (int n = 0; n < sim.NodeCount; n++)
+            {
+                low = sim.NodeReal[n] != 0 ? Mathf.Min(low, sim.RestPositions[n].y) : low;
+            }
+            return low;
+        }
+
+        /// <summary>Rest height (body space) of the lowest Hermite point of a severed edge.</summary>
+        private static float LowestCut(SoftBodySimulation sim)
+        {
+            sim.CompleteStep();
+            float low = float.MaxValue;
+            for (int c = 0; c < sim.CellCount; c++)
+            {
+                for (int e = 0; e < Lattice.EdgeCount; e++)
+                {
+                    if ((sim.Severed[c] & (1 << e)) != 0)
+                    {
+                        float y = math.lerp(Lattice.CornerOffset(Lattice.EdgeCorners[2 * e]).y, Lattice.CornerOffset(Lattice.EdgeCorners[2 * e + 1]).y,
+                            sim.EdgeT[c * Lattice.EdgeCount + e]);
+                        low = Mathf.Min(low, sim.Grid.Origin.y + (sim.CellCoord[c].y + y) * sim.CellSize);
+                    }
+                }
+            }
+            return low;
         }
 
         /// <summary>
