@@ -1203,6 +1203,24 @@ namespace AdaptorPhysX
                 _cutTriangles.Add(cell, blockers);
                 CutRegions(cell, range, severed, region);
                 _cutPlanes.Add(cell, FitPlanes(cell, severed, cellMin, region));
+                var edgePoints = new FixedList512Bytes<float3>();
+                var edgeNormals = new FixedList512Bytes<float3>();
+                var cutPoints = new FixedList512Bytes<float3>();
+                var cutNormals = new FixedList512Bytes<float3>();
+                for (int e = 0; e < Lattice.EdgeCount; e++)
+                {
+                    edgePoints.Add(HermitePoint(cell, e));
+                    edgeNormals.Add(_edgeNormal[cell * Lattice.EdgeCount + e]);
+                    if ((severed & (1 << e)) != 0)
+                    {
+                        cutPoints.Add(edgePoints[e]);
+                        cutNormals.Add(edgeNormals[e]);
+                    }
+                }
+                CellCuts cuts = CutsOf(cutPoints, cutNormals);
+                float3 creaseA = float3.zero, creaseB = float3.zero;
+                bool crease = cuts.Count == 2 && Crease(severed, edgePoints, edgeNormals, out creaseA, out creaseB);
+                float creaseSdfA = crease ? CellSdf(coord, creaseA) : 0.0f, creaseSdfB = crease ? CellSdf(coord, creaseB) : 0.0f;
 
                 for (int q = range.x; q < range.x + range.y; q++)
                 {
@@ -1261,36 +1279,85 @@ namespace AdaptorPhysX
                                 Copy = CopyOwning(range, realA ? a : c),
                             });
                         }
+                        if (crease && SplitAtCrease(polygon, cuts, creaseA, creaseB, creaseSdfA, creaseSdfB, out List<CutVertex> part0,
+                                out List<CutVertex> part1, out float3 normal0, out float3 normal1))
+                        {
+                            EmitFace(b, part0, normal0, cellMin, blockers, clipped);
+                            EmitFace(b, part1, normal1, cellMin, blockers, clipped);
+                            continue;
+                        }
                         if (polygon.Count < 3)
                         {
                             continue;
                         }
-                        SortAroundNormal(polygon, math.normalizesafe(faceNormal));
-                        for (int i = 1; i + 1 < polygon.Count; i++)
-                        {
-                            blockers.Add(cellMin + polygon[0].U * h);
-                            blockers.Add(cellMin + polygon[i].U * h);
-                            blockers.Add(cellMin + polygon[i + 1].U * h);
-                        }
-                        ClipInside(polygon, clipped);
-                        if (clipped.Count < 3)
-                        {
-                            continue;
-                        }
-                        int first = b.BaseCount + b.Copies.Count;
-                        foreach (CutVertex cv in clipped)
-                        {
-                            b.Add(cv.Copy, cv.U, math.normalizesafe(cv.Normal), new Vector2(-cv.Sdf, 0.0f), cellMin + cv.U * h);
-                        }
-                        for (int i = 1; i + 1 < clipped.Count; i++)
-                        {
-                            b.Cut.Add(first);
-                            b.Cut.Add(first + i);
-                            b.Cut.Add(first + i + 1);
-                        }
+                        EmitFace(b, polygon, math.normalizesafe(faceNormal), cellMin, blockers, clipped);
                     }
                 }
             }
+        }
+
+        /// <summary>A cut face: the polygon sorted around its normal as blocker triangles, then clipped and added as a face.</summary>
+        private void EmitFace(Builder b, List<CutVertex> polygon, float3 normal, float3 cellMin, List<float3> blockers,
+            List<CutVertex> clipped)
+        {
+            float h = _sim.CellSize;
+            SortAroundNormal(polygon, normal);
+            for (int i = 1; i + 1 < polygon.Count; i++)
+            {
+                blockers.Add(cellMin + polygon[0].U * h);
+                blockers.Add(cellMin + polygon[i].U * h);
+                blockers.Add(cellMin + polygon[i + 1].U * h);
+            }
+            ClipInside(polygon, clipped);
+            if (clipped.Count < 3)
+            {
+                return;
+            }
+            int first = b.BaseCount + b.Copies.Count;
+            foreach (CutVertex cv in clipped)
+            {
+                b.Add(cv.Copy, cv.U, math.normalizesafe(cv.Normal), new Vector2(-cv.Sdf, 0.0f), cellMin + cv.U * h);
+            }
+            for (int i = 1; i + 1 < clipped.Count; i++)
+            {
+                b.Cut.Add(first);
+                b.Cut.Add(first + i);
+                b.Cut.Add(first + i + 1);
+            }
+        }
+
+        /// <summary><see cref="SplitAtCrease(in FixedList4096Bytes{CutVertex}, in CellCuts, float3, float3, float, float, ref FixedList4096Bytes{CutVertex}, ref FixedList4096Bytes{CutVertex}, out float3, out float3)"/> on lists.</summary>
+        private static bool SplitAtCrease(List<CutVertex> polygon, in CellCuts cuts, float3 a, float3 b, float sdfA, float sdfB,
+            out List<CutVertex> part0, out List<CutVertex> part1, out float3 normal0, out float3 normal1)
+        {
+            var source = new FixedList4096Bytes<CutVertex>();
+            foreach (CutVertex v in polygon)
+            {
+                source.Add(v);
+            }
+            var fixed0 = new FixedList4096Bytes<CutVertex>();
+            var fixed1 = new FixedList4096Bytes<CutVertex>();
+            bool split = SplitAtCrease(source, cuts, a, b, sdfA, sdfB, ref fixed0, ref fixed1, out normal0, out normal1);
+            part0 = new List<CutVertex>(fixed0.Length);
+            part1 = new List<CutVertex>(fixed1.Length);
+            foreach (CutVertex v in fixed0)
+            {
+                part0.Add(v);
+            }
+            foreach (CutVertex v in fixed1)
+            {
+                part1.Add(v);
+            }
+            return split;
+        }
+
+        /// <summary>The SDF at <paramref name="u"/> (cell coordinates) in the cell at <paramref name="coord"/>.</summary>
+        private float CellSdf(int3 coord, float3 u)
+        {
+            VoxelGrid grid = _sim.Grid;
+            float Sdf(int3 p) => grid.Sdf[grid.PointIndex(p)];
+            return CornerLerp(u, Sdf(coord), Sdf(coord + new int3(1, 0, 0)), Sdf(coord + new int3(0, 1, 0)), Sdf(coord + new int3(1, 1, 0)),
+                Sdf(coord + new int3(0, 0, 1)), Sdf(coord + new int3(1, 0, 1)), Sdf(coord + new int3(0, 1, 1)), Sdf(coord + new int3(1, 1, 1)));
         }
 
         /// <summary>

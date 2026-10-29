@@ -982,6 +982,29 @@ namespace AdaptorPhysX.Tests
         /// Severs the edge from grid point <paramref name="start"/> along <paramref name="axis"/> in every cell sharing it,
         /// as <see cref="CutJob"/> does; false when no cell has it.
         /// </summary>
+        /// <summary>
+        /// Two half incisions crossing at a right angle, ending 0.3 cells above a row of lattice points (TODO BUG-21): the cells
+        /// of the crossing above the floor of the incisions are split into four copies, each bounded by both cuts. One polygon
+        /// through the Hermite points of both cuts cut across the corner between them, the four such polygons met the cell below
+        /// (crossed but not separated, without faces) along the diagonals of their shared face, and a hole was left at the floor
+        /// of the incisions. The cut faces have no open edges below the surface, in the jobs and in the managed rebuild.
+        /// </summary>
+        [Test]
+        public void CrossingHalfIncisionsLeaveNoHoleAtTheirFloor()
+        {
+            SoftBodySimulation sim = CreateBox(new float3(Size), gravity: false, out float3[] rest, out float3[] normals,
+                out Vector2[] uvs, out int[] triangles);
+            using var surface = new SurfaceMesh(sim, rest, normals, uvs, triangles);
+            int3 middle = sim.Grid.Dims / 2;
+            float3 p = math.transform(sim.RestToWorld, sim.Grid.Origin + ((float3)middle + new float3(0.37f, 0.3f, 0.41f)) * sim.CellSize);
+            sim.Cut(new float3(p.x, 0.5f, -0.2f), new float3(p.x, p.y, -0.2f), new float3(p.x, 0.5f, 0.2f), new float3(p.x, p.y, 0.2f));
+            sim.Cut(new float3(-0.2f, 0.5f, p.z), new float3(-0.2f, p.y, p.z), new float3(0.2f, 0.5f, p.z), new float3(0.2f, p.y, p.z));
+            Assert.AreEqual(1, sim.CountPieces());
+            surface.Update(float4x4.identity);
+            Assert.AreEqual(0, OpenCutFaceEdges(sim, surface), "open edges of the cut faces below the surface");
+            AssertManagedRebuildMatches(sim, rest, normals, uvs, triangles, surface);
+        }
+
         private static bool SeverEdge(SoftBodySimulation sim, int3 start, int axis, float t, float3 normal)
         {
             int3 dims = sim.Grid.Dims;

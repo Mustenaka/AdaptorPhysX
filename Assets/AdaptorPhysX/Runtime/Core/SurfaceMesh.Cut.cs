@@ -12,6 +12,258 @@ namespace AdaptorPhysX
         /// <summary>Stream records of <see cref="CutGeometryJob"/>.</summary>
         private const int RecordEnd = 0, RecordBlocker = 1, RecordFace = 2;
 
+        /// <summary>
+        /// The cuts through a cell: its severed edges in at most two groups, with the sums of their Hermite points and of their
+        /// normals turned to the group's seed. The seeds are the normal of the first severed edge and, when some normal is less
+        /// aligned with it than <see cref="CreaseAlignment"/>, the least aligned one; each edge joins the seed it is more aligned
+        /// with. A blade that turns sharply inside a cell gives normals in between: they join one of the two cuts.
+        /// </summary>
+        private struct CellCuts
+        {
+            public int Count;
+            public float3 Seed0, Seed1;
+            public float3 PointSum0, PointSum1;
+            public float3 NormalSum0, NormalSum1;
+            public int Edges0, Edges1;
+        }
+
+        /// <summary>Least |cos| between the normals of the severed edges of one cut (<see cref="CellCuts"/>).</summary>
+        private const float CreaseAlignment = 0.9f;
+
+        /// <summary>The cuts of a cell from the Hermite points and normals of its severed edges, in edge order.</summary>
+        private static CellCuts CutsOf(in FixedList512Bytes<float3> points, in FixedList512Bytes<float3> normals)
+        {
+            var cuts = new CellCuts();
+            if (normals.Length == 0)
+            {
+                return cuts;
+            }
+            cuts.Count = 1;
+            cuts.Seed0 = normals[0];
+            float least = CreaseAlignment;
+            for (int i = 1; i < normals.Length; i++)
+            {
+                float alignment = math.abs(math.dot(normals[i], cuts.Seed0));
+                if (alignment < least)
+                {
+                    least = alignment;
+                    cuts.Seed1 = normals[i];
+                    cuts.Count = 2;
+                }
+            }
+            for (int i = 0; i < normals.Length; i++)
+            {
+                float3 n = normals[i];
+                if (cuts.Count == 1 || CutOf(cuts, n) == 0)
+                {
+                    cuts.PointSum0 += points[i];
+                    cuts.NormalSum0 += math.dot(n, cuts.Seed0) < 0.0f ? -n : n;
+                    cuts.Edges0++;
+                }
+                else
+                {
+                    cuts.PointSum1 += points[i];
+                    cuts.NormalSum1 += math.dot(n, cuts.Seed1) < 0.0f ? -n : n;
+                    cuts.Edges1++;
+                }
+            }
+            return cuts;
+        }
+
+        /// <summary>The cut of a cell with two (<see cref="CellCuts"/>) a severed edge belongs to: 0 or 1.</summary>
+        private static int CutOf(in CellCuts cuts, float3 normal) =>
+            math.abs(math.dot(normal, cuts.Seed0)) >= math.abs(math.dot(normal, cuts.Seed1)) ? 0 : 1;
+
+        /// <summary>
+        /// Where the two cuts of a cell meet inside it: the segment from <paramref name="a"/> to <paramref name="b"/> (cell
+        /// coordinates) between the two faces of the cell on which the lines of both cuts cross (<see cref="CrossOnFace"/>).
+        /// The point depends on the face only, so the cells on either side of it put the end of their crease at the same place.
+        /// False unless exactly two faces have such a point. <paramref name="points"/> and <paramref name="normals"/> hold the
+        /// Hermite point and normal of every edge of the cell.
+        /// </summary>
+        private static bool Crease(int severed, in FixedList512Bytes<float3> points, in FixedList512Bytes<float3> normals,
+            out float3 a, out float3 b)
+        {
+            a = b = float3.zero;
+            int found = 0;
+            var face = new FixedList32Bytes<int>();
+            for (int axis = 0; axis < 3; axis++)
+            {
+                for (int side = 0; side < 2; side++)
+                {
+                    face.Clear();
+                    for (int e = 0; e < Lattice.EdgeCount; e++)
+                    {
+                        if (e / 4 != axis && Lattice.CornerOffset(Lattice.EdgeCorners[2 * e])[axis] == side && (severed & (1 << e)) != 0)
+                        {
+                            face.Add(e);
+                        }
+                    }
+                    if (!CrossOnFace(axis, points, normals, face, out float3 point))
+                    {
+                        continue;
+                    }
+                    if (found == 0)
+                    {
+                        a = point;
+                    }
+                    else if (found == 1)
+                    {
+                        b = point;
+                    }
+                    found++;
+                }
+            }
+            return found == 2;
+        }
+
+        /// <summary>
+        /// The point where the lines of two cuts cross on a face of a cell (normal along <paramref name="axis"/>), from its
+        /// severed edges: of four, the pairing with the more aligned normals gives two cuts of two points; of three, the most
+        /// aligned pair is one cut and the third edge the other; two edges whose normals are less aligned than
+        /// <see cref="CreaseAlignment"/> are one cut each. A cut of two points runs through them; a cut of one point, where
+        /// a cut ends inside the cell, runs through it across its normal. False otherwise, for parallel lines and for a
+        /// crossing outside the face.
+        /// </summary>
+        private static bool CrossOnFace(int axis, in FixedList512Bytes<float3> points, in FixedList512Bytes<float3> normals,
+            in FixedList32Bytes<int> face, out float3 point)
+        {
+            point = float3.zero;
+            int p0, p1, q0, q1;
+            if (face.Length == 4)
+            {
+                int bestPair = 0;
+                float best = -1.0f;
+                for (int pair = 0; pair < 3; pair++)
+                {
+                    int j0 = pair == 0 ? 2 : 1, j1 = pair == 2 ? 2 : 3;
+                    float alignment = math.min(math.abs(math.dot(normals[face[0]], normals[face[pair + 1]])),
+                        math.abs(math.dot(normals[face[j0]], normals[face[j1]])));
+                    if (alignment > best)
+                    {
+                        best = alignment;
+                        bestPair = pair;
+                    }
+                }
+                p0 = face[0];
+                p1 = face[bestPair + 1];
+                q0 = face[bestPair == 0 ? 2 : 1];
+                q1 = face[bestPair == 2 ? 2 : 3];
+            }
+            else if (face.Length == 3)
+            {
+                int alone = 0;
+                float best = -1.0f;
+                for (int i = 0; i < 3; i++)
+                {
+                    float alignment = math.abs(math.dot(normals[face[(i + 1) % 3]], normals[face[(i + 2) % 3]]));
+                    if (alignment > best)
+                    {
+                        best = alignment;
+                        alone = i;
+                    }
+                }
+                p0 = face[(alone + 1) % 3];
+                p1 = face[(alone + 2) % 3];
+                q0 = q1 = face[alone];
+            }
+            else if (face.Length == 2 && math.abs(math.dot(normals[face[0]], normals[face[1]])) < CreaseAlignment)
+            {
+                p0 = p1 = face[0];
+                q0 = q1 = face[1];
+            }
+            else
+            {
+                return false;
+            }
+            // In the plane of the face: the coordinates along the two other axes.
+            int u = (axis + 1) % 3, v = (axis + 2) % 3;
+            if (!LineOnFace(u, v, points, normals, p0, p1, out float2 origin, out float2 r) ||
+                !LineOnFace(u, v, points, normals, q0, q1, out float2 other, out float2 s))
+            {
+                return false;
+            }
+            float denominator = r.x * s.y - r.y * s.x;
+            if (math.abs(denominator) < 1e-6f)
+            {
+                return false;
+            }
+            float2 w = other - origin;
+            float t = (w.x * s.y - w.y * s.x) / denominator;
+            float2 cross = origin + t * r;
+            if (math.any(cross < 0.0f) || math.any(cross > 1.0f))
+            {
+                return false;
+            }
+            point = points[face[0]];
+            point[u] = cross.x;
+            point[v] = cross.y;
+            return true;
+        }
+
+        /// <summary>
+        /// The line of a cut on a face, in the face's coordinates <paramref name="u"/>, <paramref name="v"/>: through the
+        /// Hermite points of edges <paramref name="e0"/> and <paramref name="e1"/>, or through the point of one edge across the
+        /// face's part of its normal.
+        /// </summary>
+        private static bool LineOnFace(int u, int v, in FixedList512Bytes<float3> points, in FixedList512Bytes<float3> normals,
+            int e0, int e1, out float2 origin, out float2 direction)
+        {
+            origin = new float2(points[e0][u], points[e0][v]);
+            direction = e0 != e1 ? new float2(points[e1][u], points[e1][v]) - origin
+                : new float2(-normals[e0][v], normals[e0][u]);
+            return math.lengthsq(direction) > 1e-8f;
+        }
+
+        /// <summary>
+        /// Splits the cut polygon of a copy bounded by both cuts of its cell (a crossing, or a turn sharper than the alignment)
+        /// into one polygon per cut, each closed along the crease where the two meet (<see cref="Crease"/>). One polygon through
+        /// the Hermite points of both cuts cut across the corner between them: the copies around a crossing left a hole at the
+        /// floor of the incisions, where their faces did not meet. False when the polygon has points of one cut only.
+        /// </summary>
+        private static bool SplitAtCrease(in FixedList4096Bytes<CutVertex> polygon, in CellCuts cuts, float3 a, float3 b, float sdfA,
+            float sdfB, ref FixedList4096Bytes<CutVertex> part0, ref FixedList4096Bytes<CutVertex> part1, out float3 normal0,
+            out float3 normal1)
+        {
+            part0.Clear();
+            part1.Clear();
+            normal0 = normal1 = float3.zero;
+            for (int i = 0; i < polygon.Length; i++)
+            {
+                CutVertex v = polygon[i];
+                if (CutOf(cuts, v.Normal) == 0)
+                {
+                    part0.Add(v);
+                    normal0 += v.Normal;
+                }
+                else
+                {
+                    part1.Add(v);
+                    normal1 += v.Normal;
+                }
+            }
+            if (part0.Length == 0 || part1.Length == 0)
+            {
+                return false;
+            }
+            normal0 = math.normalizesafe(normal0);
+            normal1 = math.normalizesafe(normal1);
+            int copy0 = part0[0].Copy, copy1 = part1[0].Copy;
+            part0.Add(new CutVertex { U = a, Normal = normal0, Sdf = sdfA, Copy = copy0 });
+            part0.Add(new CutVertex { U = b, Normal = normal0, Sdf = sdfB, Copy = copy0 });
+            part1.Add(new CutVertex { U = a, Normal = normal1, Sdf = sdfA, Copy = copy1 });
+            part1.Add(new CutVertex { U = b, Normal = normal1, Sdf = sdfB, Copy = copy1 });
+            return true;
+        }
+
+        /// <summary>Trilinear interpolation at <paramref name="u"/> (cell coordinates) of the SDF at a cell's corners.</summary>
+        private static float CornerLerp(float3 u, float sdf0, float sdf1, float sdf2, float sdf3, float sdf4, float sdf5, float sdf6, float sdf7)
+        {
+            float x0 = math.lerp(math.lerp(sdf0, sdf1, u.x), math.lerp(sdf2, sdf3, u.x), u.y);
+            float x1 = math.lerp(math.lerp(sdf4, sdf5, u.x), math.lerp(sdf6, sdf7, u.x), u.y);
+            return math.lerp(x0, x1, u.z);
+        }
+
         /// <summary>A vertex of a cut or crack face.</summary>
         private struct CutFaceVertex
         {
@@ -139,7 +391,28 @@ namespace AdaptorPhysX
                 float3 cellMin = Origin + (float3)coord * CellSize;
                 var polygon = new FixedList4096Bytes<CutVertex>();
                 var clipped = new FixedList4096Bytes<CutVertex>();
+                var part0 = new FixedList4096Bytes<CutVertex>();
+                var part1 = new FixedList4096Bytes<CutVertex>();
                 var group = new FixedList64Bytes<int>();
+                var edgePoints = new FixedList512Bytes<float3>();
+                var edgeNormals = new FixedList512Bytes<float3>();
+                var cutPoints = new FixedList512Bytes<float3>();
+                var cutNormals = new FixedList512Bytes<float3>();
+                for (int e = 0; e < Lattice.EdgeCount; e++)
+                {
+                    edgePoints.Add(math.lerp((float3)Lattice.CornerOffset(EdgeCorners[2 * e]), Lattice.CornerOffset(EdgeCorners[2 * e + 1]),
+                        EdgeT[cell * Lattice.EdgeCount + e]));
+                    edgeNormals.Add(EdgeNormal[cell * Lattice.EdgeCount + e]);
+                    if ((severed & (1 << e)) != 0)
+                    {
+                        cutPoints.Add(edgePoints[e]);
+                        cutNormals.Add(edgeNormals[e]);
+                    }
+                }
+                CellCuts cuts = CutsOf(cutPoints, cutNormals);
+                float3 creaseA = float3.zero, creaseB = float3.zero;
+                bool crease = cuts.Count == 2 && Crease(severed, edgePoints, edgeNormals, out creaseA, out creaseB);
+                float sdfA = crease ? CellSdf(coord, creaseA) : 0.0f, sdfB = crease ? CellSdf(coord, creaseB) : 0.0f;
                 for (int q = range.x; q < range.x + range.y; q++)
                 {
                     if (Root(ref region, q - range.x) != q - range.x)
@@ -195,46 +468,65 @@ namespace AdaptorPhysX
                                 Copy = range.x + Ordinal(range, realA ? a : c),
                             });
                         }
+                        if (crease && SplitAtCrease(polygon, cuts, creaseA, creaseB, sdfA, sdfB, ref part0, ref part1,
+                                out float3 normal0, out float3 normal1))
+                        {
+                            EmitFace(ref part0, normal0, cellMin, ref clipped);
+                            EmitFace(ref part1, normal1, cellMin, ref clipped);
+                            continue;
+                        }
                         if (polygon.Length < 3)
                         {
                             continue;
                         }
-                        SortAroundNormal(ref polygon, math.normalizesafe(faceNormal));
-                        for (int i = 1; i + 1 < polygon.Length; i++)
-                        {
-                            Output.Write(RecordBlocker);
-                            Output.Write(cellMin + polygon[0].U * CellSize);
-                            Output.Write(cellMin + polygon[i].U * CellSize);
-                            Output.Write(cellMin + polygon[i + 1].U * CellSize);
-                        }
-                        ClipInside(ref polygon, ref clipped);
-                        if (clipped.Length < 3)
-                        {
-                            continue;
-                        }
-                        Output.Write(RecordFace);
-                        Output.Write(new int2(clipped.Length, 3 * (clipped.Length - 2)));
-                        for (int i = 0; i < clipped.Length; i++)
-                        {
-                            CutVertex cv = clipped[i];
-                            Output.Write(new CutFaceVertex
-                            {
-                                Copy = cv.Copy,
-                                U = cv.U,
-                                Normal = math.normalizesafe(cv.Normal),
-                                Uv0 = new float2(-cv.Sdf, 0.0f),
-                                Rest = cellMin + cv.U * CellSize,
-                            });
-                        }
-                        for (int i = 1; i + 1 < clipped.Length; i++)
-                        {
-                            Output.Write(0);
-                            Output.Write(i);
-                            Output.Write(i + 1);
-                        }
+                        EmitFace(ref polygon, math.normalizesafe(faceNormal), cellMin, ref clipped);
                     }
                 }
             }
+
+            /// <summary>A cut face: the polygon sorted around its normal as blocker triangles, then clipped and written as a face.</summary>
+            private void EmitFace(ref FixedList4096Bytes<CutVertex> polygon, float3 normal, float3 cellMin,
+                ref FixedList4096Bytes<CutVertex> clipped)
+            {
+                SortAroundNormal(ref polygon, normal);
+                for (int i = 1; i + 1 < polygon.Length; i++)
+                {
+                    Output.Write(RecordBlocker);
+                    Output.Write(cellMin + polygon[0].U * CellSize);
+                    Output.Write(cellMin + polygon[i].U * CellSize);
+                    Output.Write(cellMin + polygon[i + 1].U * CellSize);
+                }
+                ClipInside(ref polygon, ref clipped);
+                if (clipped.Length < 3)
+                {
+                    return;
+                }
+                Output.Write(RecordFace);
+                Output.Write(new int2(clipped.Length, 3 * (clipped.Length - 2)));
+                for (int i = 0; i < clipped.Length; i++)
+                {
+                    CutVertex cv = clipped[i];
+                    Output.Write(new CutFaceVertex
+                    {
+                        Copy = cv.Copy,
+                        U = cv.U,
+                        Normal = math.normalizesafe(cv.Normal),
+                        Uv0 = new float2(-cv.Sdf, 0.0f),
+                        Rest = cellMin + cv.U * CellSize,
+                    });
+                }
+                for (int i = 1; i + 1 < clipped.Length; i++)
+                {
+                    Output.Write(0);
+                    Output.Write(i);
+                    Output.Write(i + 1);
+                }
+            }
+
+            /// <summary>The SDF at <paramref name="u"/> (cell coordinates) in the cell at <paramref name="coord"/>.</summary>
+            private float CellSdf(int3 coord, float3 u) => CornerLerp(u, Sdf(coord), Sdf(coord + new int3(1, 0, 0)),
+                Sdf(coord + new int3(0, 1, 0)), Sdf(coord + new int3(1, 1, 0)), Sdf(coord + new int3(0, 0, 1)),
+                Sdf(coord + new int3(1, 0, 1)), Sdf(coord + new int3(0, 1, 1)), Sdf(coord + new int3(1, 1, 1)));
 
             private void EmitCrackFaces(int cell)
             {
