@@ -48,7 +48,11 @@ namespace AdaptorPhysX
 
         private void Awake() => CreateJaws();
 
-        private void OnDisable() => Release();
+        private void OnDisable()
+        {
+            using var unrecorded = ApxRecorder.Scope.Begin();
+            Release();
+        }
 
         private void FixedUpdate() => Step();
 
@@ -58,6 +62,8 @@ namespace AdaptorPhysX
         /// </summary>
         public void Step()
         {
+            // The hold follows from the jaws' pose and gap, which a recording holds: a replay grasps again (TODO MED-14).
+            using var unrecorded = ApxRecorder.Scope.Begin();
             CreateJaws();
             PlaceJaws();
             bool closed = gap <= graspGap;
@@ -121,6 +127,8 @@ namespace AdaptorPhysX
         /// <summary>Lets go of the tissue.</summary>
         public void Release()
         {
+            ApxRecorder.Record(this, ApxOperationKind.ReleaseGrasp);
+            using var unrecorded = ApxRecorder.Scope.Begin();
             if (Held != null)
             {
                 Held.RemoveAttachment(_attachment);

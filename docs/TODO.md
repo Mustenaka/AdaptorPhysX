@@ -208,7 +208,7 @@ public sealed class ApxHapticBridge
 | 编号 | 需求 | 现状 | 状态 | 验收 |
 |---|---|---|---|---|
 | MED-13 | 评分事件与指标 | 已实现（DESIGN 9.13 节）：`ApxScorer` 按 ECO-10 的事件评分。切口：每个刀路结束时在静止空间中测量其断开的棱，得到表面处的长度、深度、切面面积与位置（`IncisionMade`）；长度与深度按断棱计算，比实际短不到一个体素。超力：抓取与 `instruments` 中碰撞体的受力超过 `forceLimit` 的时段（`ForceExceeded`），记开始、持续时间与峰值。报告（`Report`，JSON）另有切面总面积（组织损伤）与块数。物体事件加入 `StrokeEnded`、`StepCompleted`，另一个刀路切到物体时未结束的刀路也结束。EditMode 测试：长 50 mm、深 15 mm 的切口报告为 45.0 / 12.5 mm、面积 750 mm²（`ScorerMeasuresAnIncision`）；全切面积 2400 mm²，与截面一致（`CutAreaOfAFullCutIsTheCrossSection`）；超过限值一次，持续 0.550 s、峰值 2.225 N（`ScorerReportsTheTimeAboveTheForceLimit`）。标准场景：S1–S7 的截图脚本写出 `score.json`，9 个切口（S6 长 21.9 mm、深 5.3 mm），镊子 4 次超过 1 N。缝合指标见 SUT-8 | 已完成 | 事件 API 与一个标准场景的评分输出 |
-| MED-14 | 输入录制与回放 | 同一机器、同一构建下结果逐位一致（`SameInputsGiveBitIdenticalResults`）；基准测试输出节点位置哈希。没有录制与回放 API | 部分完成 | 录制器械位姿与操作序列，回放后 `positionsHash` 与录制时一致 |
+| MED-14 | 输入录制与回放 | 已实现（DESIGN 9.14 节）：`ApxRecorder` 在每个固定步开始时录制器械（`instruments`）的局部位姿与手术刀、夹钳的设置（变化时），物体的操作（切割、抓取、材料点、附着、针脚等）与物体跳过的步；器械组件、操作内部与事件处理程序中的操作不录制，回放时再次发出。回放（`Replay`）从场景的初始状态开始，每步设置器械、执行录制的操作，物体只跳过录制时跳过的步；每 60 步与最后一步之后比较各物体的 `positionsHash`（`SoftBodySimulation.PositionsHash`，基准测试改为调用它），第一个不一致处记为 `DivergedTick`。录制可写成 JSON。EditMode 测试：组织条经夹钳、球、镊子、手术刀全切、针脚与直接切割的 180 步，经 JSON 回放后 9 次检查一致、最后的节点位置逐位相同（`ReplayRepeatsTheRecordedProcedureBitForBit`）；球半径大 0.2 mm 时报告在第 40 步不一致（`ReplayInAChangedSceneReportsWhereItDiverged`）。PlayMode 测试：每帧 3 个固定步录制、物体跳过 112 / 168 步，每帧 1 个固定步回放，结果逐位相同（`RecordingReplaysAtAnotherFrameRate`）。限制：只从场景初始状态回放；录制期间的参数修改、`RestoreState`、动态 Rigidbody 不录制 | 已完成 | 录制器械位姿与操作序列，回放后 `positionsHash` 与录制时一致 |
 
 ### 3.6 平台
 
@@ -273,7 +273,7 @@ public sealed class ApxHapticBridge
 | 6 | 体素材料标签 → 非线性与粘弹性材料 → 撕裂（MED-5、MED-1、MED-2、MED-6） | 未开始 |
 | 7 | 缝合：SUT-1、SUT-5、SUT-9 并入第 9 项；SUT-2 至 SUT-4、SUT-6 依赖穿刺（MED-9）与缝线（ECO-5） | 未开始 |
 | 8 | 真实网格（ROADMAP M6）：ENG-3、BUG-10 → 用高面数测试模型摸底 → PERF-10、PERF-7、PERF-6 → PERF-5、BUG-13 剩余部分（bunny 64 落地后耳朵持续运动）。2026-10-28 收窄为分辨率不超过 64；PERF-2 的高分辨率数据已记录，MED-7、PERF-8 移到 PERF-9 与 M4 之后 | 进行中（ENG-3、BUG-10、PERF-10、PERF-5 已完成；PERF-6、PERF-7、BUG-13 部分完成） |
-| 9 | 组织操作闭环（ROADMAP M7）：SUT-1 → ECO-13 → MED-17 → MED-10 → SUT-5、SUT-9 → ECO-10、MED-13 评分示例、MED-14；ECO-11 在需要从表面选取材料点时实现 | 进行中（SUT-1、ECO-13、MED-17、MED-10、SUT-5、SUT-9、ECO-10、MED-13 已完成） |
+| 9 | 组织操作闭环（ROADMAP M7）：SUT-1 → ECO-13 → MED-17 → MED-10 → SUT-5、SUT-9 → ECO-10、MED-13 评分示例、MED-14；ECO-11 在需要从表面选取材料点时实现 | 进行中（SUT-1、ECO-13、MED-17、MED-10、SUT-5、SUT-9、ECO-10、MED-13、MED-14 已完成） |
 | 10 | 求解方法评估（PERF-9，与 BUG-3、BUG-2 一起），与第 9 项并行 | 未开始 |
 | 11 | 运行时与平台：ECO-9（局部参考空间）、ECO-12（渲染插值）、ENG-6（Unity 6）与 MED-15（URP）、ENG-7（求解后端接口，M4 之前） | 未开始 |
 
@@ -347,4 +347,5 @@ ENG-6 与 MED-15 的时机、缝线的实现方式见 ROADMAP“待决定”。
 | 2026-10-29 | `e8a76cb` | SUT-5 已完成：针脚（`AddStitch`）为两个材料点之间只拉不推的距离约束，与动态附着在同一个 job 中求解，按速度收紧到两点之间材料的无应力长度（验收原为静止距离，预应力皮肤中切口仍张开 0.85 mm）；切面接触：同一块中半切切口两壁同一格点的两侧节点沿断棱静止法线不相互越过，进行中的刀路不参与；`RestoredStateRepeatsTheSameSteps` 加入针脚。新增 EditMode 测试 4 个；EditMode 84 / 85（1 个为 BUG-8 的 `[Ignore]`），PlayMode 2 / 2；基准测试 16 组与基线一致 |
 | 2026-10-29 | `0989ee3` | SUT-9 已完成：标准场景 S7（S6 的切口上缝 3 针并收紧，切口表面张开量 1.62 → 0.00 mm），截图工具输出 `S7a_pad_sutured`、`S7b_pad_sutured_close`，加入 ROADMAP 标准场景表与 README；与 SUT-5 之前的代码相比 S1–S4 截图不变，S5、S6 略有不同 |
 | 2026-10-29 | `c1e0c02` | ECO-10 已完成：`ApxSoftBody` 的步末事件 `Severed`、`PiecesChanged`、`ContactBegan`、`ContactEnded`、`PointsReleased`、`SleepChanged`；`SoftBodySimulation.Pieces`（块的编号与实节点数），`PieceSizes` 由它得到。新增 EditMode 测试 4 个；EditMode 88 / 89（1 个为 BUG-8 的 `[Ignore]`），PlayMode 2 / 2；基准测试 16 组与基线一致 |
-| 2026-10-29 | — | MED-13 已完成：`ApxScorer`（切口的长度、深度、面积与位置，超力时段，切面总面积与块数，JSON 报告）；物体事件加入 `StrokeEnded`、`StepCompleted`，另一个刀路切到物体时未结束的刀路结束；S1–S7 截图脚本写出 `score.json`。新增 EditMode 测试 3 个；EditMode 91 / 92（1 个为 BUG-8 的 `[Ignore]`），PlayMode 2 / 2；基准测试 16 组与基线一致 |
+| 2026-10-29 | `bd52ca1` | MED-13 已完成：`ApxScorer`（切口的长度、深度、面积与位置，超力时段，切面总面积与块数，JSON 报告）；物体事件加入 `StrokeEnded`、`StepCompleted`，另一个刀路切到物体时未结束的刀路结束；S1–S7 截图脚本写出 `score.json`。新增 EditMode 测试 3 个；EditMode 91 / 92（1 个为 BUG-8 的 `[Ignore]`），PlayMode 2 / 2；基准测试 16 组与基线一致 |
+| 2026-10-29 | — | MED-14 已完成：`ApxRecorder` 录制器械的局部位姿与设置、物体的操作与跳过的步，并从场景初始状态回放，每 60 步与最后一步之后比较 `positionsHash`；`SoftBodySimulation.PositionsHash`（基准测试改为调用）；新增 EditMode 测试 2 个、PlayMode 测试 1 个；EditMode 93 / 94（1 个为 BUG-8 的 `[Ignore]`），PlayMode 3 / 3；基准测试 16 组与基线一致 |

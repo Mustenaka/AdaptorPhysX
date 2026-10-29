@@ -34,7 +34,18 @@ namespace AdaptorPhysX
         private static int s_strokes;
 
         /// <summary>Forget the previous blade pose, e.g. after teleporting the scalpel.</summary>
-        public void ResetSweep() => _hasPrevious = false;
+        public void ResetSweep()
+        {
+            ApxRecorder.Record(this, ApxOperationKind.ResetSweep);
+            _hasPrevious = false;
+        }
+
+        /// <summary>Strokes numbered so far by all scalpels; a replay continues from the recording's count (TODO MED-14).</summary>
+        internal static int Strokes
+        {
+            get => s_strokes;
+            set => s_strokes = value;
+        }
 
         private void OnDisable() => _hasPrevious = false;
 
@@ -43,6 +54,8 @@ namespace AdaptorPhysX
         /// <summary>Cuts with the quad swept since the previous call. Called every fixed step.</summary>
         public void Sweep()
         {
+            // The cuts follow from the blade's pose, which a recording holds: a replay sweeps again (TODO MED-14).
+            using var unrecorded = ApxRecorder.Scope.Begin();
             Vector3 start = transform.TransformPoint(edgeStart);
             Vector3 end = transform.TransformPoint(edgeEnd);
             LastSeveredEdges = 0;

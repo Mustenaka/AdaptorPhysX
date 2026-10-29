@@ -107,6 +107,8 @@ namespace AdaptorPhysX
         /// <summary>Raises the events of the last completed step, once.</summary>
         private void RaiseStepEvents()
         {
+            // Event handlers act again in a replay: their operations are not recorded (TODO MED-14).
+            using var unrecorded = ApxRecorder.Scope.Begin();
             if (Simulation == null)
             {
                 return;
@@ -132,6 +134,7 @@ namespace AdaptorPhysX
         /// <summary>Raises the cuts and the ended strokes; also for a sleeping body, which has no step to wait for.</summary>
         private void RaiseCuts()
         {
+            using var unrecorded = ApxRecorder.Scope.Begin();
             foreach (ApxCutEvent cut in _pendingCuts)
             {
                 Severed?.Invoke(this, cut);
@@ -212,6 +215,7 @@ namespace AdaptorPhysX
         /// <summary>Raises a change of <see cref="IsSleeping"/>; called by <see cref="Simulate"/>.</summary>
         private void RaiseSleep()
         {
+            using var unrecorded = ApxRecorder.Scope.Begin();
             bool sleeping = IsSleeping;
             if (sleeping != _sleeping)
             {

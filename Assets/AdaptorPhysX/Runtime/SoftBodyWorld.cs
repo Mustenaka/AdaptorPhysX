@@ -89,11 +89,11 @@ namespace AdaptorPhysX
                     // A moving body wakes a sleeping one it may touch; two resting bodies both sleep.
                     if (!first.IsSleeping && x.MaxSpeed > ApxSoftBody.SleepSpeed)
                     {
-                        second.WakeUp();
+                        second.Wake();
                     }
                     if (!second.IsSleeping && y.MaxSpeed > ApxSoftBody.SleepSpeed)
                     {
-                        first.WakeUp();
+                        first.Wake();
                     }
                 }
             }

@@ -99,12 +99,20 @@ namespace AdaptorPhysX
         /// returns its handle, or -1 when no cell holds the position. It moves with the tissue and stays on its side of
         /// later cuts. <see cref="Rebuild"/> discards the points.
         /// </summary>
-        public int AddMaterialPoint(Vector3 position) => Simulation?.AddMaterialPoint(position) ?? -1;
+        public int AddMaterialPoint(Vector3 position)
+        {
+            using var record = Record(new ApxOperation { Kind = ApxOperationKind.AddMaterialPoint, A = position });
+            return Simulation?.AddMaterialPoint(position) ?? -1;
+        }
 
         /// <summary>Current world position of a material point from <see cref="AddMaterialPoint"/>.</summary>
         public Vector3 MaterialPointPosition(int point) => Simulation.MaterialPointPosition(point);
 
-        public bool RemoveMaterialPoint(int point) => Simulation != null && Simulation.RemoveMaterialPoint(point);
+        public bool RemoveMaterialPoint(int point)
+        {
+            using var record = Record(new ApxOperation { Kind = ApxOperationKind.RemoveMaterialPoint, I = point });
+            return Simulation != null && Simulation.RemoveMaterialPoint(point);
+        }
 
         /// <summary>
         /// Holds material points (<see cref="AddMaterialPoint"/>) to <paramref name="target"/> with a dynamic attachment
@@ -115,6 +123,10 @@ namespace AdaptorPhysX
         public int AddAttachment(Transform target, IReadOnlyList<int> points, float compliance = 0.0f,
             float breakForce = float.PositiveInfinity)
         {
+            using var record = Record(new ApxOperation
+            {
+                Kind = ApxOperationKind.AddAttachment, X = compliance, Y = float.IsPositiveInfinity(breakForce) ? -1.0f : breakForce,
+            }, points, target);
             if (Simulation == null)
             {
                 return -1;
@@ -133,6 +145,7 @@ namespace AdaptorPhysX
         /// <summary>Lets go of all points of an attachment.</summary>
         public void RemoveAttachment(int attachment)
         {
+            using var record = Record(new ApxOperation { Kind = ApxOperationKind.RemoveAttachment, I = attachment });
             if (Simulation != null)
             {
                 // Points that let go before the attachment is removed are still reported.
@@ -145,8 +158,11 @@ namespace AdaptorPhysX
         }
 
         /// <summary>Changes the force on one point, N, above which the points of an attachment let go.</summary>
-        public void SetAttachmentBreakForce(int attachment, float breakForce) =>
+        public void SetAttachmentBreakForce(int attachment, float breakForce)
+        {
+            using var record = Record(new ApxOperation { Kind = ApxOperationKind.SetAttachmentBreakForce, I = attachment, X = breakForce });
             Simulation?.SetAttachmentBreakForce(attachment, breakForce);
+        }
 
         /// <summary>Points an attachment still holds (the others let go above its break force).</summary>
         public int HeldPoints(int attachment) => Simulation == null ? 0 : Simulation.HeldPoints(attachment);
@@ -169,6 +185,7 @@ namespace AdaptorPhysX
         /// </summary>
         public int AddStitch(int pointA, int pointB, float speed, float compliance = 0.0f)
         {
+            using var record = Record(new ApxOperation { Kind = ApxOperationKind.AddStitch, I = pointA, J = pointB, X = speed, Y = compliance });
             if (Simulation == null)
             {
                 return -1;
@@ -181,6 +198,7 @@ namespace AdaptorPhysX
         /// <summary>Changes the length a stitch is drawn to (its natural length at first), and optionally the speed, m/s.</summary>
         public void SetStitchTarget(int stitch, float length, float speed = -1.0f)
         {
+            using var record = Record(new ApxOperation { Kind = ApxOperationKind.SetStitchTarget, I = stitch, X = length, Y = speed });
             Simulation?.SetStitchTarget(stitch, length, speed);
             WakeUp();
         }
@@ -188,6 +206,7 @@ namespace AdaptorPhysX
         /// <summary>Cuts a stitch.</summary>
         public void RemoveStitch(int stitch)
         {
+            using var record = Record(new ApxOperation { Kind = ApxOperationKind.RemoveStitch, I = stitch });
             Simulation?.RemoveStitch(stitch);
             WakeUp();
         }
@@ -463,6 +482,7 @@ namespace AdaptorPhysX
             {
                 return;
             }
+            Recorder?.Unrecorded(this, nameof(RestoreState));
             Simulation.RestoreState(state.Simulation);
             _grabs.Clear();
             foreach (ApxGrab grab in CloneGrabs(state.Grabs))

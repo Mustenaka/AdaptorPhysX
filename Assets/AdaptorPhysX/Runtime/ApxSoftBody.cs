@@ -163,7 +163,10 @@ namespace AdaptorPhysX
             // A body touching dynamic Rigidbodies keeps pace with the physics engine, which steps them
             // anyway: a skipped step leaves them without the tissue's support for that step (a ball
             // dropped on tissue fell through during the long first frames of Play mode).
-            if (_stepsThisFrame++ < maxStepsPerFrame || _stepBodies.Count > 0)
+            bool step = _stepsThisFrame++ < maxStepsPerFrame || _stepBodies.Count > 0;
+            // A replay skips the steps the recording skipped, whatever the frame rate (TODO MED-14).
+            Recorder?.DecideStep(this, ref step);
+            if (step)
             {
                 Simulate(Time.fixedDeltaTime);
             }
@@ -178,7 +181,7 @@ namespace AdaptorPhysX
 
         private void OnValidate()
         {
-            WakeUp();
+            Wake();
             if (Simulation != null && resolution != _initializedResolution)
             {
                 Debug.LogWarning($"{name}: resolution changed to {resolution}; it takes effect on Rebuild(), which discards the cuts.", this);
@@ -420,6 +423,7 @@ namespace AdaptorPhysX
         /// </summary>
         public void Rebuild()
         {
+            using var record = Record(new ApxOperation { Kind = ApxOperationKind.Rebuild });
             Release();
             _grabs.Clear();
             _attachmentTargets.Clear();
@@ -434,6 +438,7 @@ namespace AdaptorPhysX
         /// </summary>
         public int Cut(Vector3 a0, Vector3 b0, Vector3 a1, Vector3 b1, int stroke = 0)
         {
+            using var record = Record(new ApxOperation { Kind = ApxOperationKind.Cut, A = a0, B = b0, C = a1, D = b1, I = stroke });
             // The simulation ends its stroke when another one cuts (SoftBodySimulation.Cut).
             EndOtherStrokes(stroke);
             int severed = Simulation == null ? 0 : Simulation.Cut(a0, b0, a1, b1, stroke);
@@ -448,6 +453,7 @@ namespace AdaptorPhysX
         /// <summary>Ends a stroke of <see cref="Cut"/> (see <see cref="SoftBodySimulation.EndStroke"/>); returns the restored edges.</summary>
         public int EndStroke(int stroke)
         {
+            using var record = Record(new ApxOperation { Kind = ApxOperationKind.EndStroke, I = stroke });
             int healed = Simulation == null ? 0 : Simulation.EndStroke(stroke);
             if (healed > 0)
             {
@@ -458,17 +464,44 @@ namespace AdaptorPhysX
         }
 
         /// <summary>Resumes stepping a sleeping body.</summary>
-        public void WakeUp() => _restSteps = 0;
+        public void WakeUp()
+        {
+            using var record = Record(new ApxOperation { Kind = ApxOperationKind.WakeUp });
+            Wake();
+        }
+
+        /// <summary>Resumes stepping without recording an operation: for the body's own reasons (contact, settings).</summary>
+        internal void Wake() => _restSteps = 0;
+
+        /// <summary>The recorder recording or replaying this body (TODO MED-14), or null.</summary>
+        internal ApxRecorder Recorder;
+
+        /// <summary>
+        /// Records an operation on the body with its recorder (TODO MED-14), before it acts; the returned scope keeps the
+        /// operations it makes in turn from being recorded.
+        /// </summary>
+        private ApxRecorder.Scope Record(in ApxOperation operation, IReadOnlyList<int> points = null, Transform target = null)
+        {
+            Recorder?.Record(this, operation, points, target);
+            return ApxRecorder.Scope.Begin();
+        }
 
         /// <summary>
         /// Grabs the material under the ray within <paramref name="radius"/> (rest space): the grab of
         /// <see cref="MoveGrab(Vector3)"/>, <see cref="EndGrab()"/> and <c>TryGetGrabWrench(out ApxWrench)</c>.
         /// A grab of these already held is let go first.
         /// </summary>
-        public bool BeginGrab(Ray ray, float radius, out Vector3 point)
+        public bool BeginGrab(Ray ray, float radius, out Vector3 point) => BeginGrab(ray.origin, ray.direction, radius, out point);
+
+        /// <summary>
+        /// <see cref="BeginGrab(Ray, float, out Vector3)"/> with the ray's origin and direction: a replay passes them as
+        /// recorded (a new Ray normalizes the direction again, which can change its last bit).
+        /// </summary>
+        internal bool BeginGrab(Vector3 origin, Vector3 direction, float radius, out Vector3 point)
         {
+            using var record = Record(new ApxOperation { Kind = ApxOperationKind.BeginGrab, A = origin, B = direction, X = radius });
             EndGrab(DefaultGrab);
-            return StartGrab(DefaultGrab, SoftBodySimulation.GrabFrame, ray, radius, quaternion.identity, out point);
+            return StartGrab(DefaultGrab, SoftBodySimulation.GrabFrame, origin, direction, radius, quaternion.identity, out point);
         }
 
         /// <summary>
@@ -477,15 +510,23 @@ namespace AdaptorPhysX
         /// and rotation (<see cref="MoveGrab(int, Vector3, Quaternion)"/>). Returns the grab's handle, or -1 when the ray
         /// picks no tissue. Any number of grabs can hold a body at once; each has a kinematic frame after the pin regions'.
         /// </summary>
-        public int BeginGrab(Ray ray, float radius, Quaternion rotation, out Vector3 point)
+        public int BeginGrab(Ray ray, float radius, Quaternion rotation, out Vector3 point) =>
+            BeginGrab(ray.origin, ray.direction, radius, rotation, out point);
+
+        /// <summary><see cref="BeginGrab(Ray, float, Quaternion, out Vector3)"/> with the ray's origin and direction.</summary>
+        internal int BeginGrab(Vector3 origin, Vector3 direction, float radius, Quaternion rotation, out Vector3 point)
         {
+            using var record = Record(new ApxOperation
+            {
+                Kind = ApxOperationKind.BeginFrameGrab, A = origin, B = direction, X = radius, Rotation = rotation,
+            });
             int frame = pinColliders.Length + 1;
             while (UsesFrame(frame))
             {
                 frame++;
             }
             int handle = _nextGrab;
-            if (!StartGrab(handle, frame, ray, radius, rotation, out point))
+            if (!StartGrab(handle, frame, origin, direction, radius, rotation, out point))
             {
                 return -1;
             }
@@ -496,6 +537,7 @@ namespace AdaptorPhysX
         /// <summary>Moves the grab of <see cref="BeginGrab(Ray, float, out Vector3)"/>; its rotation stays.</summary>
         public void MoveGrab(Vector3 target)
         {
+            using var record = Record(new ApxOperation { Kind = ApxOperationKind.MoveGrab, A = target });
             if (_grabs.TryGetValue(DefaultGrab, out ApxGrab grab))
             {
                 grab.Target = float4x4.TRS(target, new quaternion(grab.Target), new float3(1.0f));
@@ -505,6 +547,7 @@ namespace AdaptorPhysX
         /// <summary>Moves and turns the frame of a grab; the tissue follows during the next step.</summary>
         public void MoveGrab(int grab, Vector3 position, Quaternion rotation)
         {
+            using var record = Record(new ApxOperation { Kind = ApxOperationKind.MoveFrameGrab, I = grab, A = position, Rotation = rotation });
             if (_grabs.TryGetValue(grab, out ApxGrab state))
             {
                 state.Target = float4x4.TRS(position, rotation, new float3(1.0f));
@@ -517,6 +560,7 @@ namespace AdaptorPhysX
         /// <summary>Lets go of a grab; its handle is not used again.</summary>
         public void EndGrab(int grab)
         {
+            using var record = Record(new ApxOperation { Kind = ApxOperationKind.EndGrab, I = grab });
             if (!_grabs.TryGetValue(grab, out ApxGrab state))
             {
                 return;
@@ -526,14 +570,15 @@ namespace AdaptorPhysX
             WakeUp();
         }
 
-        private bool StartGrab(int handle, int frame, Ray ray, float radius, quaternion rotation, out Vector3 point)
+        private bool StartGrab(int handle, int frame, Vector3 origin, Vector3 direction, float radius, quaternion rotation,
+            out Vector3 point)
         {
             point = default;
             if (Simulation == null)
             {
                 return false;
             }
-            int node = Simulation.PickNode(ray.origin, ray.direction, Simulation.CellSize);
+            int node = Simulation.PickNode(origin, direction, Simulation.CellSize);
             if (node < 0)
             {
                 return false;
