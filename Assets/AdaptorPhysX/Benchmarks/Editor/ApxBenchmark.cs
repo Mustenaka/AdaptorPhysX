@@ -387,6 +387,7 @@ namespace AdaptorPhysX.Benchmarks.Editor
                     frames = Summarize(body, RunFrames(body, null, settings.DropSteps, null, out bytes), bytes),
                     volumeRatio = Math.Round(SkinVolume(body) / restVolume, 4),
                     floorPenetrationMm = Stats.Round((floorTop - LowestRealNode(sim)) * 1000.0),
+                    surfacePenetrationMm = Stats.Round((floorTop - LowestSkinVertex(body)) * 1000.0),
                 };
 
                 // Full cut: a vertical blade taller than the body crosses it along x. The blade plane runs
@@ -535,6 +536,19 @@ namespace AdaptorPhysX.Benchmarks.Editor
                 volume += math.dot(a, math.cross(b, c));
             }
             return volume / 6.0;
+        }
+
+        private static float LowestSkinVertex(ApxSoftBody body)
+        {
+            Mesh mesh = body.Surface.Mesh;
+            Vector3[] vertices = mesh.vertices;
+            Matrix4x4 toWorld = body.transform.localToWorldMatrix;
+            float lowest = float.MaxValue;
+            foreach (int i in mesh.GetTriangles(0))
+            {
+                lowest = math.min(lowest, toWorld.MultiplyPoint3x4(vertices[i]).y);
+            }
+            return lowest;
         }
 
         private static float LowestRealNode(SoftBodySimulation sim)

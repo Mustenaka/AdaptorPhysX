@@ -407,7 +407,8 @@ namespace AdaptorPhysX.Tests
             {
                 minY = math.min(minY, sim.Positions[i].y);
             }
-            Assert.Greater(minY, -0.005f, "lattice sank into the floor");
+            // The outer nodes are half a cell outside the faces and enter the floor by as much (TODO MED-17).
+            Assert.Greater(minY, -0.005f - 0.5f * sim.CellSize, "lattice sank into the floor");
             Assert.Less(minY, 0.01f, "body did not land");
             Assert.AreEqual(startVolume, BoundsVolume(sim), 0.2f * startVolume);
             Assert.Less(MaxSpeed(sim), 0.05f, "body did not come to rest");
@@ -642,14 +643,10 @@ namespace AdaptorPhysX.Tests
             parameters.SelfCollision = selfCollision;
             var sim = new SoftBodySimulation(grid, parameters, float4x4.identity);
             _sims.Add(sim);
-            float lowest = float.MaxValue;
-            for (int i = 0; i < sim.NodeCount; i++)
-            {
-                lowest = math.min(lowest, sim.Positions[i].y);
-            }
+            // The floor at the bottom face (y = 0).
             using var floor = new NativeArray<ColliderShape>(new[]
             {
-                ColliderShape.Box(new float3(0.0f, lowest - 0.5f, 0.0f), quaternion.identity, new float3(1.0f, 0.5f, 1.0f), 0.6f),
+                ColliderShape.Box(new float3(0.0f, -0.5f, 0.0f), quaternion.identity, new float3(1.0f, 0.5f, 1.0f), 0.6f),
             }, Allocator.Persistent);
             StepFrames(sim, 240, floor);
 

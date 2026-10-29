@@ -49,7 +49,11 @@ namespace AdaptorPhysX
         // Other soft bodies near this one (see BodyContacts).
         /// <summary>SDF of the grid points for the contact between bodies (see ContactSdfJob).</summary>
         private NativeArray<float> _contactSdf;
+        /// <summary>The voxelizer's direction from the nearest surface point at every grid point, or empty.</summary>
+        private NativeArray<float3> _surfaceDirection;
         private NativeArray<float> _nodeSdf;
+        /// <summary>Direction of the rest SDF gradient at each node (rest space), see <see cref="NodeStepJob"/>.</summary>
+        private NativeArray<float3> _nodeOutward;
         /// <summary>Nodes held by a sticky collider (see NodeStepJob.Stuck).</summary>
         private NativeArray<byte> _stuck;
         /// <summary>Overlap with other bodies left to them during the step (see NodeStepJob.PartnerShare).</summary>
@@ -161,6 +165,7 @@ namespace AdaptorPhysX
             DisposeIfCreated(ref _partnerBucketStart);
             DisposeIfCreated(ref _partnerEntries);
             DisposeIfCreated(ref _contactSdf);
+            DisposeIfCreated(ref _surfaceDirection);
             DisposeIfCreated(ref _cellRestBase);
             DisposeIfCreated(ref _cellPlastic);
         }
@@ -170,6 +175,7 @@ namespace AdaptorPhysX
         {
             DisposeInteractionNodes();
             _nodeSdf = new NativeArray<float>(NodeCount, Allocator.Persistent);
+            _nodeOutward = new NativeArray<float3>(NodeCount, Allocator.Persistent);
             _stuck = new NativeArray<byte>(NodeCount, Allocator.Persistent);
             _partnerShare = new NativeArray<float>(NodeCount, Allocator.Persistent);
             if (!_contactSdf.IsCreated)
@@ -193,11 +199,34 @@ namespace AdaptorPhysX
                 PointDims = Grid.PointDims,
                 NodeSdf = _nodeSdf,
             }.Schedule(NodeCount, 512).Complete();
+            if (!_nodeFirstSlot.IsCreated)
+            {
+                // A restored state: the node job needs a copy of every node (TODO MED-17).
+                _nodeFirstSlot = new NativeList<int>(NodeCount, Allocator.Persistent);
+                _nodeFirstSlot.ResizeUninitialized(NodeCount);
+                new NodeFirstSlotJob { CopyNodes = CopyNodes.AsArray(), FirstSlot = _nodeFirstSlot.AsArray() }.Run();
+            }
+            if (!_surfaceDirection.IsCreated)
+            {
+                _surfaceDirection = new NativeArray<float3>(Grid.SurfaceDirection ?? new float3[0], Allocator.Persistent);
+            }
+            new NodeOutwardJob
+            {
+                RestPositions = RestPositions,
+                Sdf = _contactSdf,
+                Direction = _surfaceDirection,
+                GridToCell = GridToCell,
+                Origin = Grid.Origin,
+                InverseCellSize = 1.0f / Grid.CellSize,
+                Dims = Grid.Dims,
+                NodeOutward = _nodeOutward,
+            }.Schedule(NodeCount, 512).Complete();
         }
 
         private void DisposeInteractionNodes()
         {
             DisposeIfCreated(ref _nodeSdf);
+            DisposeIfCreated(ref _nodeOutward);
             DisposeIfCreated(ref _stuck);
             DisposeIfCreated(ref _partnerShare);
             DisposeIfCreated(ref _partnerCandidate);
@@ -236,12 +265,13 @@ namespace AdaptorPhysX
         /// Sets up the node job's collider forces, distance fields and body contacts for a step,
         /// and schedules the body-contact candidate search.
         /// </summary>
-        private JobHandle ConfigureInteraction(ref NodeStepJob node, JobHandle handle, float dt, int substeps,
-            NativeArray<float> fields, NativeArray<RigidBodyState> rigidBodies)
+        private JobHandle ConfigureInteraction(ref NodeStepJob node, ref SolveCellsJob solve, JobHandle handle, float dt,
+            int substeps, NativeArray<float> fields, NativeArray<RigidBodyState> rigidBodies)
         {
             node.Fields = fields.IsCreated && fields.Length > 0 ? fields : _noFloats;
             node.StepDt = dt;
             node.MaxBodyPush = 0.25f * CellSize;
+            node.TouchDistance = 0.05f * CellSize;
             node.Stuck = _stuck;
             node.Sticky = false;
             for (int s = 0; s < _shapes.Length; s++)
@@ -286,9 +316,11 @@ namespace AdaptorPhysX
                 _impulseTotal = new NativeArray<ColliderImpulse>(shapes, Allocator.Persistent);
             }
             node.AccumulateImpulses = shapes > 0;
+            int nodeBlocks = (NodeCount + NodeBatch - 1) / NodeBatch;
             if (shapes > 0)
             {
-                int blocks = (NodeCount + NodeBatch - 1) / NodeBatch;
+                // The node jobs' blocks, then one per slice for the surface contacts of the constraint solve.
+                int blocks = nodeBlocks + (SurfaceContactsActive ? _slices.Length : 0);
                 if (!_impulsePartial.IsCreated || _impulsePartial.Length != blocks * shapes)
                 {
                     DisposeIfCreated(ref _impulsePartial);
@@ -309,10 +341,14 @@ namespace AdaptorPhysX
             {
                 node.Impulses = _noImpulses;
             }
+            ConfigureSurfaceContacts(ref solve, node.Fields, nodeBlocks);
 
             // Contact with other bodies.
             node.BodyContacts = _partnerCells.Length > 0;
             node.NodeSdf = _nodeSdf;
+            node.NodeOutward = _nodeOutward;
+            node.NodeSlot = _nodeFirstSlot.AsArray();
+            node.TetRotation = _tetRotation;
             node.PartnerShare = _partnerShare;
             node.PartnersSynced = false;
             if (!node.BodyContacts)

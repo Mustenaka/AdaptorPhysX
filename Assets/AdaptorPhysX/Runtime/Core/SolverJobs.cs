@@ -88,6 +88,15 @@ namespace AdaptorPhysX
         public float3 Gravity;
         public float DampingFactor;
         public float Margin;
+        /// <summary>A node this close to a sticky collider touches it (TODO MED-17).</summary>
+        public float TouchDistance;
+        /// <summary>
+        /// Direction of the rest SDF gradient at each node (rest space), the first slot (copy * 8 + corner) of each node
+        /// and the rotations of the tetrahedra, which turn the direction into the world (TODO MED-17).
+        /// </summary>
+        [ReadOnly] public NativeArray<float3> NodeOutward;
+        [ReadOnly] public NativeArray<int> NodeSlot;
+        [ReadOnly] public NativeArray<quaternion> TetRotation;
 
         public void Execute(int i)
         {
@@ -95,6 +104,15 @@ namespace AdaptorPhysX
             if (Finish && kin < 0)
             {
                 float3 x = Positions[i];
+                // A node NodeSdf outside its own surface may enter a collider before the surface touches it (TODO MED-17),
+                // by that distance along the collider's normal: the surface lies NodeSdf away along the rest SDF gradient,
+                // so a node outside an edge or a corner, NodeSdf away from it diagonally, enters a floor by the distance to
+                // the face. Nodes inside their surface keep the margin: the surface cells hold the surface there
+                // (SolveCellsJob), and a larger margin would keep the layer between the node and the collider from
+                // compressing.
+                float outside = math.max(NodeSdf[i], 0.0f);
+                float3 outward = float3.zero;
+                bool turned = false;
                 if (Contacts)
                 {
                     x += ContactCorrection(i);
@@ -116,21 +134,38 @@ namespace AdaptorPhysX
                     float d = shape.Distance(x, dynamic ? 1.0f : FinishTime, Fields, out float3 n);
                     float3 before = x;
                     float pushed;
-                    if (d >= Margin)
+                    float margin = Margin;
+                    if (outside > 0.0f && d < Margin + (shape.Stickiness > 0.0f ? shape.StickDistance : 0.0f))
+                    {
+                        if (!turned)
+                        {
+                            // The rotation of the first tetrahedron of the node's first copy; the solve wrote it.
+                            outward = math.mul(TetRotation[NodeSlot[i] / Lattice.CornerCount * Lattice.TetsPerCell], NodeOutward[i]);
+                            turned = true;
+                        }
+                        margin -= outside * math.saturate(-math.dot(outward, n));
+                    }
+                    if (d >= margin)
                     {
                         // Adhesion: a node that touched a sticky collider is pulled back towards its
-                        // surface until it is further away than the stick distance.
-                        if (!(shape.Stickiness > 0.0f) || Stuck[i] == 0 || d >= Margin + shape.StickDistance)
+                        // surface until it is further away than the stick distance. Touching counts from
+                        // TouchDistance on: the surface cells may hold the surface out of the collider first.
+                        if (!(shape.Stickiness > 0.0f) || d >= margin + shape.StickDistance)
                         {
                             continue;
                         }
-                        pushed = (d - Margin) * shape.Stickiness;
+                        if (Stuck[i] == 0)
+                        {
+                            held |= d < margin + TouchDistance;
+                            continue;
+                        }
+                        pushed = (d - margin) * shape.Stickiness;
                         x -= n * pushed;
                         held = true;
                     }
                     else
                     {
-                        pushed = Margin - d;
+                        pushed = margin - d;
                         x += n * pushed;
                         held |= shape.Stickiness > 0.0f;
                     }
@@ -142,7 +177,8 @@ namespace AdaptorPhysX
                     x -= slip <= limit ? tangent : tangent * (limit / slip);
                     if (AccumulateImpulses)
                     {
-                        AddImpulse(i, s, x, x - before, shape.A1, n);
+                        // The contact point is on the surface, as far out of the node as it lies outside it.
+                        AddImpulse(i, s, x + n * (Margin - margin), x - before, shape.A1, n);
                     }
                 }
                 if (Sticky)
@@ -174,7 +210,7 @@ namespace AdaptorPhysX
         }
 
         /// <summary>Motion during the substep of the point of a dynamic body's collider now at <paramref name="x"/> (translation and rotation).</summary>
-        private static float3 MaterialPointMotion(ColliderShape shape, float3 x)
+        internal static float3 MaterialPointMotion(ColliderShape shape, float3 x)
         {
             float3 local = math.mul(math.conjugate(shape.R1), x - shape.A1);
             return x - (shape.A0 + math.mul(shape.R0, local));
@@ -568,6 +604,27 @@ namespace AdaptorPhysX
         /// <summary>Number of kinematic frames: the stride of FrameImpulses.</summary>
         public int FrameCount;
 
+        /// <summary>
+        /// Contact of the surface cells with the colliders after the cells of each slice (TODO MED-17, see
+        /// <see cref="SolveSurfaceContacts"/>). The slice's momentum goes to block ImpulseBlockOffset + slice of the
+        /// collider impulse sums, after the node jobs' blocks.
+        /// </summary>
+        public bool SurfaceContacts;
+        [ReadOnly] public NativeArray<float3> Previous;
+        [ReadOnly] public NativeArray<float> NodeSdf;
+        [ReadOnly] public NativeArray<ColliderShape> Shapes;
+        [ReadOnly] public NativeArray<float> Fields;
+        [ReadOnly] public NativeArray<int> SurfaceCells;
+        [ReadOnly] public NativeArray<int> SliceSurfaceStart;
+        [NativeDisableParallelForRestriction] public NativeArray<ColliderImpulse> Impulses;
+        public int ImpulseBlockOffset;
+        public float Margin;
+        /// <summary>Colliders thinner than this take part (<see cref="SoftBodySimulation.ThinColliderCells"/>).</summary>
+        public float ThinCollider;
+        /// <summary>Time of the colliders at the end and at the start of the substep, 0 to 1 over the step.</summary>
+        public float ShapeTime;
+        public float ShapeTimePrevious;
+
         public void Execute(int index)
         {
             int sliceIndex = SliceOffset + index;
@@ -592,6 +649,180 @@ namespace AdaptorPhysX
             {
                 SolveCell(SliceCells[c], sliceIndex);
             }
+            if (SurfaceContacts)
+            {
+                SolveSurfaceContacts(sliceIndex);
+            }
+        }
+
+        /// <summary>
+        /// Pushes the surface cells of the slice out of the thin colliders. A cell is tried against a collider when the
+        /// collider comes within the cell's bounding sphere; then each of its copies whose corners are all real: the point p
+        /// of the collider nearest a point one cell inside the surface from the copy's centre (along -grad phi there) is
+        /// located in the copy (u with x(u) = sum w_k(u) x_k = p, by Newton's method). If it lies in the copy, the rest
+        /// SDF there, phi = sum w_k(u) phi_k (the contact SDF of the corners, <see cref="BodyContacts"/>), must put it at
+        /// least the margin outside, phi / |grad phi| >= margin, where the surface faces the collider (grad phi against
+        /// the collider's normal at p). The material at u moves away from the collider along -grad phi by one XPBD correction
+        /// of that constraint, with friction against the collider's motion as at the nodes: dlambda = dx / sum w_k^2 m_k^-1
+        /// and corner k moves by w_k m_k^-1 dlambda. The trilinear interpolation is the one the rendered skin uses. The
+        /// corners are those of the slice, which no other thread writes.
+        /// </summary>
+        private void SolveSurfaceContacts(int slice)
+        {
+            for (int e = SliceSurfaceStart[slice]; e < SliceSurfaceStart[slice + 1]; e++)
+            {
+                int cell = SurfaceCells[e];
+                int2 range = CellCopyRange[cell];
+                float3 lo = new float3(float.MaxValue), hi = new float3(float.MinValue);
+                for (int q = range.x; q < range.x + range.y; q++)
+                {
+                    for (int k = 0; k < Lattice.CornerCount; k++)
+                    {
+                        float3 x = Positions[CopyNodes[q * Lattice.CornerCount + k]];
+                        lo = math.min(lo, x);
+                        hi = math.max(hi, x);
+                    }
+                }
+                float3 center = 0.5f * (lo + hi);
+                float reach = 0.5f * math.length(hi - lo) + math.max(Margin, 0.0f);
+                for (int s = 0; s < Shapes.Length; s++)
+                {
+                    ColliderShape shape = Shapes[s];
+                    float t = shape.DynamicBody > 0 ? 1.0f : ShapeTime;
+                    if (shape.Thickness() >= ThinCollider || shape.BoundDistance(center, t) >= reach)
+                    {
+                        continue;
+                    }
+                    for (int q = range.x; q < range.x + range.y; q++)
+                    {
+                        // A cut copy's virtual corners carry the SDF of the original surface across the cut face.
+                        if (Copies[q].Mask == 0xFF)
+                        {
+                            SurfaceContact(q * Lattice.CornerCount, shape, s, t, slice);
+                        }
+                    }
+                }
+            }
+        }
+
+        private void SurfaceContact(int b, ColliderShape shape, int s, float t, int slice)
+        {
+            // The deepest part of the collider in the cell: its point nearest a point a cell inside the surface from the
+            // copy's centre (the tip of an instrument pressing in, the floor under the cell).
+            float3 centre = float3.zero, centreU = float3.zero;
+            var centreJacobian = float3x3.zero;
+            for (int k = 0; k < Lattice.CornerCount; k++)
+            {
+                float3 corner = Positions[CopyNodes[b + k]];
+                float3 dw = Geometry.TrilinearGradient(k, new float3(0.5f));
+                centre += corner;
+                centreU += dw * NodeSdf[CopyNodes[b + k]];
+                centreJacobian.c0 += corner * dw.x;
+                centreJacobian.c1 += corner * dw.y;
+                centreJacobian.c2 += corner * dw.z;
+            }
+            centre *= 1.0f / Lattice.CornerCount;
+            if (!(math.abs(math.determinant(centreJacobian)) > 0.0f))
+            {
+                return;
+            }
+            float3 inward = -math.normalizesafe(math.mul(math.transpose(math.inverse(centreJacobian)), centreU));
+            // One cell: the length of the deformed cell along its first axis.
+            float3 probe = centre + inward * math.length(centreJacobian.c0);
+            float dc = shape.Distance(probe, t, Fields, out float3 nc);
+            float3 p = probe - dc * nc;
+            if (!Locate(b, p, out float3 u, out float3x3 jacobian) || math.any(u < 0.0f) || math.any(u > 1.0f))
+            {
+                return;
+            }
+            float phi = 0.0f, w2 = 0.0f, free = 0.0f;
+            float3 phiU = float3.zero, previous = float3.zero;
+            for (int k = 0; k < Lattice.CornerCount; k++)
+            {
+                int n = CopyNodes[b + k];
+                float wk = Geometry.TrilinearWeight(k, u);
+                float sdf = NodeSdf[n];
+                float m = Weights[n];
+                phi += wk * sdf;
+                phiU += Geometry.TrilinearGradient(k, u) * sdf;
+                previous += wk * Previous[n];
+                w2 += wk * wk * m;
+                free += m > 0.0f ? wk : 0.0f;
+            }
+            float3 gradient = math.mul(math.transpose(math.inverse(jacobian)), phiU);
+            float g = math.length(gradient);
+            if (g < 0.5f || !(w2 > 0.0f))
+            {
+                // Medial axis of the SDF, where phi / |grad phi| overstates the depth (see BodyContacts).
+                return;
+            }
+            float depth = Margin - phi / g;
+            float3 normal = gradient / g;
+            if (!(depth > 0.0f) || math.dot(normal, nc) >= 0.0f)
+            {
+                // Only where the surface faces the collider: in tissue thinner than about two cells the SDF of the far
+                // side would push the tissue through the collider.
+                return;
+            }
+            float3 dx = -normal * depth;
+            float3 relative = (p + dx - previous) - (shape.DynamicBody > 0
+                ? NodeStepJob.MaterialPointMotion(shape, p)
+                : shape.Displacement(ShapeTimePrevious, ShapeTime));
+            float3 tangent = relative - math.dot(relative, normal) * normal;
+            float slip = math.length(tangent);
+            float limit = shape.Friction * depth;
+            dx -= slip <= limit ? tangent : tangent * (limit / slip);
+            float3 dlambda = dx / w2;
+            for (int k = 0; k < Lattice.CornerCount; k++)
+            {
+                int n = CopyNodes[b + k];
+                Positions[n] += Geometry.TrilinearWeight(k, u) * Weights[n] * dlambda;
+            }
+            // The momentum the corners gained: sum m_k (w_k m_k^-1 dlambda) / h over the free ones.
+            float3 impulse = dlambda * (free * InverseDt);
+            float size = math.length(dx);
+            int index = (ImpulseBlockOffset + slice) * Shapes.Length + s;
+            ColliderImpulse sum = Impulses[index];
+            sum.Add(p, shape.A1, impulse, size);
+            sum.AddNormal(normal, size);
+            Impulses[index] = sum;
+        }
+
+        /// <summary>
+        /// Position <paramref name="u"/> in the copy with corners at b of world point <paramref name="target"/>, inverting
+        /// the trilinear interpolation by Newton's method, and the Jacobian dx/du there; false when it does not converge.
+        /// </summary>
+        private bool Locate(int b, float3 target, out float3 u, out float3x3 jacobian)
+        {
+            u = new float3(0.5f);
+            jacobian = float3x3.zero;
+            for (int iteration = 0; iteration < 8; iteration++)
+            {
+                float3 x = float3.zero;
+                jacobian = float3x3.zero;
+                for (int k = 0; k < Lattice.CornerCount; k++)
+                {
+                    float3 corner = Positions[CopyNodes[b + k]];
+                    float3 gradient = Geometry.TrilinearGradient(k, u);
+                    x += Geometry.TrilinearWeight(k, u) * corner;
+                    jacobian.c0 += corner * gradient.x;
+                    jacobian.c1 += corner * gradient.y;
+                    jacobian.c2 += corner * gradient.z;
+                }
+                float3 r = target - x;
+                float det = math.determinant(jacobian);
+                if (!(math.abs(det) > 0.0f))
+                {
+                    return false;
+                }
+                float3 step = math.mul(math.inverse(jacobian), r);
+                if (math.cmax(math.abs(step)) < 1e-5f)
+                {
+                    return true;
+                }
+                u = math.clamp(u + step, -1.0f, 2.0f);
+            }
+            return false;
         }
 
         private void SolveCell(int cell, int slice)

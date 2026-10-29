@@ -37,6 +37,8 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
   （真皮、脂肪、肌肉）。
 - 接触：Unity Sphere/Capsule/Box 碰撞体（含摩擦，子步内插值位姿）；MeshCollider 与任意形状的器械
   （有符号距离场，运行时或在编辑器中烘焙）；切下的块之间、折叠的组织之间、不同 `ApxSoftBody` 之间的接触。
+  接触距离按可见表面计算（`collisionMargin` 为 0 时表面贴住碰撞体）；比 2.5 个体素细的器械另推出表面体素，
+  不从 lattice 节点之间穿入（`surfaceContact`）。
 - 器械与刚体：碰撞体受到的力、力矩与接触中心（`TryGetColliderWrench`），抓取与钉住区域受到的力
   （`TryGetGrabWrench`、`TryGetPinWrench`）；与非运动学 Rigidbody 的双向耦合（组织托住、推开刚体）；
   器械表面粘附（stickiness）。
@@ -124,6 +126,8 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
      （菜单 Create → AdaptorPhysX → Distance Field，检视面板中烘焙），在器械的 Collider 上添加 `ApxColliderMaterial`
      并引用该资产；此时 Collider 只用于包围范围查询。
    - `ApxColliderMaterial` 还可设置该碰撞体的摩擦系数与粘附（`stickiness`、`stickDistance`）。
+   - 半径（盒为最小半边长）小于 2.5 个体素的碰撞体按表面体素接触，压入时组织表面随器械尖端下陷；一个体素不能形成比它窄的
+     凹坑，针杆旁的表面在器械内最深约 0.23 个体素（DESIGN 9.9 节）。`surfaceContact` 关闭时只有节点接触。
    - 碰撞体带非运动学 Rigidbody 时与组织双向耦合（`twoWayCoupling`，默认开启）；此时物体每次 FixedUpdate 都步进，不受 `maxStepsPerFrame` 限制。
    - 器械受力：`TryGetColliderWrench(collider, out ApxWrench)`；多个软体对同一碰撞体的合力用 `ApxHaptics.TrySumColliderWrench`。
    - 力反馈：`TryGetColliderForceModel(collider, out ApxForceModel)` 给出每步发布的局部线性力模型，

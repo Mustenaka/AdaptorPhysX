@@ -22,6 +22,11 @@ namespace AdaptorPhysX
         public float[] Depth;
         /// <summary>Outward surface normal at each cell centre (normalised SDF gradient, zero deep inside).</summary>
         public float3[] Normal;
+        /// <summary>
+        /// Direction from the nearest surface point to each grid point within 1.5 cells of the surface (unit length; zero
+        /// further away). Null for a grid from a blueprint baked before it was added (TODO MED-17).
+        /// </summary>
+        public float3[] SurfaceDirection;
 
         public int3 PointDims => Dims + 1;
 
@@ -86,6 +91,7 @@ namespace AdaptorPhysX
             using var tris = new NativeArray<int>(triangles, Allocator.TempJob);
             using var inside = new NativeArray<byte>(pointCount, Allocator.TempJob);
             using var distance = new NativeArray<float>(pointCount, Allocator.TempJob);
+            using var direction = new NativeArray<float3>(pointCount, Allocator.TempJob);
             using var order = new NativeArray<int>(closed ? 0 : triangles.Length / 3, Allocator.TempJob);
             using var nodes = new NativeList<WindingNode>(Allocator.TempJob);
             using var rowStart = new NativeArray<int>(closed ? pd.y * pd.z + 1 : 1, Allocator.TempJob);
@@ -153,6 +159,7 @@ namespace AdaptorPhysX
                 CellSize = cellSize,
                 PointDims = pd,
                 Distance = distance,
+                Direction = direction,
             }.Schedule(pd.z, 1, slabs);
             JobHandle.CombineDependencies(parity, near).Complete();
 
@@ -161,6 +168,7 @@ namespace AdaptorPhysX
             {
                 grid.Sdf[i] = inside[i] != 0 ? -distance[i] : distance[i];
             }
+            grid.SurfaceDirection = direction.ToArray();
 
             var vertexCells = new HashSet<int>();
             foreach (float3 v in vertices)
@@ -626,6 +634,8 @@ namespace AdaptorPhysX
             public float CellSize;
             public int3 PointDims;
             [NativeDisableParallelForRestriction] public NativeArray<float> Distance;
+            /// <summary>Direction from the nearest surface point to the grid point, zero where none is near.</summary>
+            [NativeDisableParallelForRestriction] public NativeArray<float3> Direction;
 
             public void Execute(int z)
             {
@@ -634,6 +644,7 @@ namespace AdaptorPhysX
                 for (int i = 0; i < layer; i++)
                 {
                     Distance[z * layer + i] = far;
+                    Direction[z * layer + i] = float3.zero;
                 }
                 for (int e = SlabStart[z]; e < SlabStart[z + 1]; e++)
                 {
@@ -647,9 +658,14 @@ namespace AdaptorPhysX
                         for (int x = p0.x; x <= p1.x; x++)
                         {
                             float3 p = Origin + new float3(x, y, z) * CellSize;
-                            float dist = math.distance(p, Geometry.ClosestPointOnTriangle(p, a, b, c));
+                            float3 offset = p - Geometry.ClosestPointOnTriangle(p, a, b, c);
+                            float dist = math.length(offset);
                             int index = x + PointDims.x * (y + PointDims.y * z);
-                            Distance[index] = math.min(Distance[index], dist);
+                            if (dist < Distance[index])
+                            {
+                                Distance[index] = dist;
+                                Direction[index] = math.normalizesafe(offset);
+                            }
                         }
                     }
                 }

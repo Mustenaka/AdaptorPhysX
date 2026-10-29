@@ -28,6 +28,7 @@ namespace AdaptorPhysX
         [SerializeField, HideInInspector] private float[] _fill;
         [SerializeField, HideInInspector] private float[] _depth;
         [SerializeField, HideInInspector] private Vector3[] _cellNormals;
+        [SerializeField, HideInInspector] private Vector3[] _surfaceDirections;
 
         public Mesh Mesh => _mesh;
         public int Resolution => _resolution;
@@ -57,6 +58,7 @@ namespace AdaptorPhysX
             _fill = (float[])grid.Fill.Clone();
             _depth = (float[])grid.Depth.Clone();
             _cellNormals = System.Array.ConvertAll(grid.Normal, n => (Vector3)n);
+            _surfaceDirections = grid.SurfaceDirection != null ? System.Array.ConvertAll(grid.SurfaceDirection, d => (Vector3)d) : null;
         }
 
         public void Load(out float3[] positions, out float3[] normals, out Vector2[] uvs, out int[] triangles,
@@ -76,6 +78,10 @@ namespace AdaptorPhysX
                 Fill = (float[])_fill.Clone(),
                 Depth = (float[])_depth.Clone(),
                 Normal = System.Array.ConvertAll(_cellNormals, n => (float3)n),
+                // Blueprints baked before TODO MED-17 have none; the simulation then estimates the directions from the SDF.
+                SurfaceDirection = _surfaceDirections != null && _surfaceDirections.Length == _sdf.Length
+                    ? System.Array.ConvertAll(_surfaceDirections, d => (float3)d)
+                    : null,
             };
         }
     }

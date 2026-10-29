@@ -236,6 +236,84 @@ namespace AdaptorPhysX
         }
     }
 
+    /// <summary>
+    /// Direction from the nearest surface point to each node (rest space): the voxelizer's
+    /// (<see cref="VoxelGrid.SurfaceDirection"/>) where the grid has it. Otherwise an estimate: the mean of the gradients of
+    /// the trilinear SDF of the cells around the node's grid point, each at the corner that is the node (the differences
+    /// along the cell's three edges from it), with only corners of the lattice taking part, not the grid points outside it,
+    /// whose SDF is set to a constant beyond 1.5 cells. Next to an edge of the surface the estimate mixes the directions
+    /// of the face and the edge.
+    /// </summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal struct NodeOutwardJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<float3> RestPositions;
+        [ReadOnly] public NativeArray<float> Sdf;
+        /// <summary>The voxelizer's directions per grid point, or empty.</summary>
+        [ReadOnly] public NativeArray<float3> Direction;
+        [ReadOnly] public NativeArray<int> GridToCell;
+        public float3 Origin;
+        public float InverseCellSize;
+        public int3 Dims;
+        public NativeArray<float3> NodeOutward;
+
+        public void Execute(int i)
+        {
+            int3 p = math.clamp((int3)math.round((RestPositions[i] - Origin) * InverseCellSize), 0, Dims);
+            if (Direction.Length > 0 && math.lengthsq(Direction[Point(p)]) > 0.0f)
+            {
+                NodeOutward[i] = Direction[Point(p)];
+                return;
+            }
+            float own = Sdf[Point(p)];
+            float3 sum = float3.zero;
+            for (int k = 0; k < Lattice.CornerCount; k++)
+            {
+                int3 corner = Lattice.CornerOffset(k);
+                int3 cell = p - corner;
+                if (math.any(cell < 0) || math.any(cell >= Dims) || GridToCell[cell.x + Dims.x * (cell.y + Dims.y * cell.z)] < 0)
+                {
+                    continue;
+                }
+                for (int axis = 0; axis < 3; axis++)
+                {
+                    // The node is corner `corner` of the cell; its neighbour along the axis is the other end of the edge.
+                    int3 other = p;
+                    other[axis] += corner[axis] == 0 ? 1 : -1;
+                    float difference = Sdf[Point(other)] - own;
+                    sum[axis] += corner[axis] == 0 ? difference : -difference;
+                }
+            }
+            NodeOutward[i] = math.normalizesafe(sum);
+        }
+
+        private int Point(int3 p) => p.x + (Dims.x + 1) * (p.y + (Dims.y + 1) * p.z);
+    }
+
+    /// <summary>First slot (copy * 8 + corner) of every node, as the topology numbers them (after a state is restored).</summary>
+    [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
+    internal struct NodeFirstSlotJob : IJob
+    {
+        [ReadOnly] public NativeArray<int> CopyNodes;
+        public NativeArray<int> FirstSlot;
+
+        public void Execute()
+        {
+            for (int i = 0; i < FirstSlot.Length; i++)
+            {
+                FirstSlot[i] = -1;
+            }
+            for (int s = 0; s < CopyNodes.Length; s++)
+            {
+                int n = CopyNodes[s];
+                if (FirstSlot[n] < 0)
+                {
+                    FirstSlot[n] = s;
+                }
+            }
+        }
+    }
+
     /// <summary>Copies the cell copies of a partner body that intersect a region into the receiving body's arrays.</summary>
     [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct ExtractPartnerCellsJob : IJob

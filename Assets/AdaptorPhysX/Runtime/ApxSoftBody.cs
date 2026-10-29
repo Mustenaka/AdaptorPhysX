@@ -66,8 +66,11 @@ namespace AdaptorPhysX
         [Header("Collision")]
         public LayerMask collisionLayers = ~0;
         [Range(0.0f, 2.0f)] public float friction = 0.6f;
-        [Tooltip("Distance kept between lattice nodes and colliders; negative lets the surface touch.")]
+        [Tooltip("Distance kept between the surface and colliders; negative lets the surface enter them.")]
         public float collisionMargin;
+        [Tooltip("Colliders also push the cells at the surface where they enter them deepest, so instruments thinner " +
+                 "than a cell do not pass between the lattice nodes. Off: colliders push the nodes only.")]
+        public bool surfaceContact = true;
         [Tooltip("Contact between cut-off pieces and between folded parts of the body.")]
         public bool selfCollision = true;
         [Tooltip("Contact with other ApxSoftBody objects whose collision layers include this body's layer.")]
@@ -554,6 +557,7 @@ namespace AdaptorPhysX
             PreStrain = preStrain,
             Gravity = useGravity ? (float3)Physics.gravity : float3.zero,
             CollisionMargin = collisionMargin,
+            SurfaceContact = surfaceContact,
             SelfCollision = selfCollision,
             SkinThickness = skinThickness,
             SkinStiffness = Mathf.Max(skinYoungsModulus, 1.0f) / Mathf.Max(youngsModulus, 1.0f),

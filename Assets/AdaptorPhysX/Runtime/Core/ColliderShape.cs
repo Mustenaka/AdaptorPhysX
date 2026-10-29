@@ -159,6 +159,42 @@ namespace AdaptorPhysX
             }
         }
 
+        /// <summary>
+        /// A lower bound of the distance from <paramref name="p"/> to the shape at time <paramref name="t"/>: the distance
+        /// for the primitive shapes, and for a distance field the distance to the box of its samples.
+        /// </summary>
+        public float BoundDistance(float3 p, float t)
+        {
+            if (Type != ColliderShapeType.DistanceField)
+            {
+                return Distance(p, t, out _);
+            }
+            float3 a = math.lerp(A0, A1, t);
+            quaternion r = math.all(R0.value == R1.value) ? R0 : math.nlerp(R0, R1, t);
+            float3 local = math.mul(math.conjugate(r), p - a) / FieldScale;
+            float3 lo = FieldOrigin, hi = FieldOrigin + (float3)(FieldDims - 1) * FieldCellSize;
+            float3 outside = math.max(math.max(lo - local, local - hi), 0.0f);
+            return math.length(outside) * math.cmin(math.abs(FieldScale));
+        }
+
+        /// <summary>
+        /// Half the smallest size of the shape: the radius of a sphere or capsule, the smallest half extent of a box, and for
+        /// a distance field half the smallest extent of its samples without the two cells of margin on each side.
+        /// </summary>
+        public float Thickness()
+        {
+            switch (Type)
+            {
+                case ColliderShapeType.Sphere:
+                case ColliderShapeType.Capsule:
+                    return Radius;
+                case ColliderShapeType.Box:
+                    return math.cmin(HalfExtents);
+                default:
+                    return 0.5f * math.cmin(math.max((float3)(FieldDims - 5), 0.0f) * FieldCellSize * math.abs(FieldScale));
+            }
+        }
+
         /// <summary>Displacement of the shape's reference point between substep times.</summary>
         public float3 Displacement(float t0, float t1) => math.lerp(A0, A1, t1) - math.lerp(A0, A1, t0);
 

@@ -191,6 +191,163 @@ namespace AdaptorPhysX.Tests
             return minY;
         }
 
+        /// <summary>
+        /// A cube resting on a Box collider with a collision margin of 0 touches it with its visible surface (TODO MED-17):
+        /// the vertices of its bottom face are within a tenth of a cell of the floor, also when its faces cross the lattice
+        /// obliquely (the cube voxelized turned by 30 degrees about z and placed turned back). The outer nodes are half a
+        /// cell outside the faces and used to rest on the floor, half a cell below the surface. The cube is stiff, so the
+        /// outer half cell, between the nodes the floor holds and the surface, hardly gives under the weight.
+        /// </summary>
+        [Test]
+        public void RestingBodyTouchesTheFloorWithItsVisibleSurface()
+        {
+            void Rest(float turn, out float lowest, out float highest, out float cell)
+            {
+                var parameters = SoftBodyParameters.Default;
+                parameters.YoungsModulus = 3.0e5f;
+                parameters.Damping = 3.0f;
+                SoftBodySimulation sim = CreateBox(new float3(Size), parameters, 8, 0.002f, quaternion.RotateZ(math.radians(turn)),
+                    out float3[] vertices);
+                cell = sim.CellSize;
+                var bottom = new List<int>();
+                foreach (float3 v in vertices)
+                {
+                    float3 w = math.transform(sim.RestToWorld, v);
+                    if (w.y < 0.002f + 1e-5f)
+                    {
+                        int point = sim.AddMaterialPoint(w);
+                        Assert.GreaterOrEqual(point, 0, $"vertex {w} is in no cell");
+                        bottom.Add(point);
+                    }
+                }
+                using NativeArray<ColliderShape> floor = Floor();
+                using var fields = new NativeArray<float>(1, Allocator.Persistent);
+                for (int f = 0; f < 120; f++)
+                {
+                    sim.Step(Dt, Substeps, floor, fields);
+                }
+                AssertFinite(sim);
+                lowest = float.MaxValue;
+                highest = float.MinValue;
+                foreach (int point in bottom)
+                {
+                    float y = sim.MaterialPointPosition(point).y;
+                    lowest = math.min(lowest, y);
+                    highest = math.max(highest, y);
+                }
+                TestContext.WriteLine($"turned {turn} deg: bottom face from {lowest * 1000:0.000} " +
+                                      $"to {highest * 1000:0.000} mm above the floor ({bottom.Count} vertices, cell {cell * 1000:0.00} mm), " +
+                                      $"max speed {sim.MaxSpeed:0.0000} m/s");
+            }
+
+            foreach (float turn in new[] { 0.0f, 30.0f })
+            {
+                Rest(turn, out float lowest, out float highest, out float cell);
+                Assert.Greater(lowest, -0.1f * cell, $"turned {turn} deg: the surface enters the floor");
+                Assert.Less(highest, 0.1f * cell, $"turned {turn} deg: gap under the surface");
+            }
+        }
+
+        /// <summary>
+        /// A frictionless capsule of radius 0.3 h pressed 2 h deep into a block between its nodes (TODO MED-17): the surface
+        /// under the tip goes in with it, and the capsule carries the force. A cell cannot form a dimple narrower than
+        /// itself: beside the shaft, above the tip, surface vertices are inside the capsule by less than a quarter of a cell.
+        /// Without the surface contact the capsule passes between the nodes into the block and the surface stays.
+        /// </summary>
+        [Test]
+        public void ThinInstrumentPressesTheSurfaceInsteadOfPassingBetweenTheNodes()
+        {
+            int Press(bool surfaceContact, out float deepest, out float dent, out float force, out float h)
+            {
+                var parameters = SoftBodyParameters.Default;
+                parameters.Gravity = float3.zero;
+                parameters.Damping = 5.0f;
+                parameters.SurfaceContact = surfaceContact;
+                var size = new float3(0.06f, 0.03f, 0.06f);
+                SoftBodySimulation sim = CreateBox(size, parameters, 12, 0.0f, quaternion.identity, out float3[] vertices);
+                h = sim.CellSize;
+                var clamped = new List<int>();
+                for (int i = 0; i < sim.NodeCount; i++)
+                {
+                    if (sim.Positions[i].y < -0.5f * h + 1e-5f)
+                    {
+                        clamped.Add(i);
+                    }
+                }
+                sim.Attach(clamped, 1, float4x4.identity);
+                // x = z = 0 is the centre of a cell column and a mesh vertex; the vertices are h / 2 apart. The axis is
+                // 0.35 h from the nearest node and vertex columns.
+                float2 axis = new float2(0.25f * h);
+                float top = size.y;
+                var points = new List<int>();
+                var rest = new List<float3>();
+                foreach (float3 v in vertices)
+                {
+                    float3 w = math.transform(sim.RestToWorld, v);
+                    if (w.y > top - 1e-5f && math.distance(w.xz, axis) < 3.0f * h)
+                    {
+                        int point = sim.AddMaterialPoint(w);
+                        Assert.GreaterOrEqual(point, 0, $"vertex {w} is in no cell");
+                        points.Add(point);
+                        rest.Add(w);
+                    }
+                }
+                float radius = 0.3f * h;
+                ColliderShape Capsule(float depth)
+                {
+                    float3 tip = new float3(axis.x, top - depth, axis.y);
+                    return ColliderShape.Capsule(tip + new float3(0.0f, radius, 0.0f), tip + new float3(0.0f, 0.04f, 0.0f), radius, 0.0f);
+                }
+                NativeArray<ColliderShape> shapes = Track(new NativeArray<ColliderShape>(1, Allocator.Persistent));
+                NativeArray<float> fields = Track(new NativeArray<float>(1, Allocator.Persistent));
+                float previous = -0.002f;
+                for (int f = 0; f < 90; f++)
+                {
+                    // From 2 mm above the surface to 2 h below it in a second, then held.
+                    float depth = math.lerp(-0.002f, 2.0f * h, math.saturate(f / 60.0f));
+                    ColliderShape capsule = Capsule(depth);
+                    ColliderShape start = Capsule(previous);
+                    capsule.A0 = start.A1;
+                    capsule.B0 = start.B1;
+                    shapes[0] = capsule;
+                    sim.Step(Dt, Substeps, shapes, fields);
+                    previous = depth;
+                }
+                AssertFinite(sim);
+                ColliderShape held = shapes[0];
+                deepest = float.MinValue;
+                dent = 0.0f;
+                int inside = 0;
+                for (int k = 0; k < points.Count; k++)
+                {
+                    float3 x = sim.MaterialPointPosition(points[k]);
+                    float3 ab = held.B1 - held.A1;
+                    float s = math.saturate(math.dot(x - held.A1, ab) / math.dot(ab, ab));
+                    float penetration = radius - math.distance(x, held.A1 + s * ab);
+                    deepest = math.max(deepest, penetration);
+                    inside += penetration > 0.0f ? 1 : 0;
+                    if (math.distance(rest[k].xz, axis) < 0.5f * h)
+                    {
+                        dent = math.max(dent, rest[k].y - x.y);
+                    }
+                }
+                force = sim.TryGetShapeWrench(0, out ApxWrench wrench) ? wrench.Force.y : 0.0f;
+                TestContext.WriteLine($"surface contact {surfaceContact}: {inside} of {points.Count} vertices inside the capsule, " +
+                                      $"deepest {deepest / h:0.000} h, dent under the tip {dent / h:0.000} h, force {force * 1000:0.00} mN, " +
+                                      $"max speed {sim.MaxSpeed:0.0000} m/s, cell {h * 1000:0.00} mm");
+                return inside;
+            }
+
+            Press(true, out float deepestWith, out float dentWith, out float forceWith, out float cell);
+            Assert.Greater(dentWith, 1.8f * cell, "the surface under the tip did not go in with it");
+            Assert.Less(deepestWith, 0.25f * cell, "surface vertices inside the capsule");
+            Assert.Greater(forceWith, 0.0f, "the tissue does not push the capsule back");
+            int insideWithout = Press(false, out _, out float dentWithout, out float forceWithout, out _);
+            Assert.Greater(insideWithout, 0, "without the surface contact the capsule should pass between the nodes");
+            Assert.Less(dentWithout, 0.25f * cell);
+            Assert.AreEqual(0.0f, forceWithout);
+        }
+
         [Test]
         public void ColliderForceEqualsTheWeightOfARestingBody()
         {
@@ -546,12 +703,14 @@ namespace AdaptorPhysX.Tests
                 slab.Simulate(Dt);
                 slab.UpdateRender();
             }
-            // From 1 mm above the top nodes under the ball down to 5 mm below them in 30 frames, then held.
+            // From 1 mm above the surface under the ball down to 5 mm below it in 30 frames, then held. The surface is
+            // as far below the top nodes as they lie outside it.
             float top = float.MinValue;
             for (int i = 0; i < slab.Simulation.NodeCount; i++)
             {
                 float3 x = slab.Simulation.Positions[i];
-                top = math.abs(x.x - 0.03f) < 0.01f && math.abs(x.z) < 0.01f ? math.max(top, x.y) : top;
+                float surface = x.y - math.max(slab.Simulation.NodeSdf[i], 0.0f);
+                top = math.abs(x.x - 0.03f) < 0.01f && math.abs(x.z) < 0.01f ? math.max(top, surface) : top;
             }
             for (int f = 0; f < 210; f++)
             {
@@ -710,7 +869,8 @@ namespace AdaptorPhysX.Tests
             Physics.SyncTransforms();
             block.Initialize();
             Collider ballCollider = ball.GetComponent<Collider>();
-            float top = block.Simulation.BoundsMax.y;
+            // The block's top face; the outer lattice nodes are half a cell above it.
+            const float top = 0.04f;
             const float radius = 0.02f, speed = 0.012f;
             var models = new List<ApxForceModel>();
             var depths = new List<float>();
@@ -803,7 +963,7 @@ namespace AdaptorPhysX.Tests
 
         /// <summary>
         /// Presses a frictionless sphere into the middle of the top face of a block with a clamped base (frame 1,
-        /// no gravity), to each of <paramref name="depths"/> in turn below the top lattice nodes, 60 steps each.
+        /// no gravity), to each of <paramref name="depths"/> in turn below its top face, 60 steps each.
         /// Returns the force on the sphere at each depth and the force on the clamp in <paramref name="clampForces"/>
         /// (y components).
         /// </summary>
@@ -812,11 +972,10 @@ namespace AdaptorPhysX.Tests
         {
             parameters.Gravity = float3.zero;
             SoftBodySimulation sim = CreateBox(size, parameters, resolution, 0.0f);
-            float bottom = float.MaxValue, top = float.MinValue;
+            float bottom = float.MaxValue;
             for (int i = 0; i < sim.NodeCount; i++)
             {
                 bottom = math.min(bottom, sim.Positions[i].y);
-                top = math.max(top, sim.Positions[i].y);
             }
             var clamped = new List<int>();
             for (int i = 0; i < sim.NodeCount; i++)
@@ -827,6 +986,8 @@ namespace AdaptorPhysX.Tests
                 }
             }
             sim.Attach(clamped, 1, float4x4.identity);
+            // Depths from the top face of the block (CreateBox puts its bottom face at y = 0).
+            float top = size.y;
             NativeArray<ColliderShape> shapes = Track(new NativeArray<ColliderShape>(1, Allocator.Persistent));
             NativeArray<float> fields = Track(new NativeArray<float>(1, Allocator.Persistent));
             var forces = new float[depths.Length];
@@ -926,12 +1087,9 @@ namespace AdaptorPhysX.Tests
                 GameObject floor = Primitive(PrimitiveType.Cube);
                 floor.transform.position = new Vector3(0.0f, -0.05f, 0.0f);
                 floor.transform.localScale = new Vector3(0.5f, 0.1f, 0.5f);
-                // The bottom face touches the floor (the lattice reaches half a cell below the surface);
-                // the top body starts 4 mm above the bottom body.
+                // The bottom face touches the floor; the top body starts 4 mm above the bottom body.
                 ApxSoftBody bottom = CreateBody("Bottom", new Vector3(0.1f, 0.04f, 0.1f), new Vector3(0.0f, 0.02f, 0.0f), 10);
                 ApxSoftBody top = CreateBody("Top", new Vector3(0.06f, 0.04f, 0.06f), new Vector3(0.005f, 0.064f, 0.0f), 8);
-                bottom.collisionMargin = -LatticeOffset(10, 0.1f);
-                top.collisionMargin = -LatticeOffset(8, 0.06f);
                 bottom.collideWithBodies = contact;
                 top.collideWithBodies = contact;
                 Physics.SyncTransforms();
@@ -1054,7 +1212,6 @@ namespace AdaptorPhysX.Tests
             {
                 pushed.pinColliders = new[] { Trigger(new Vector3(0.0025f + pushedLength, 0.03f, 0.0f), new Vector3(0.012f, 0.08f, 0.08f)) };
             }
-            pushed.collisionMargin = -LatticeOffset(resolution, pushedLength);
             pushed.friction = friction;
             pusher.collideWithBodies = contact;
             pushed.collideWithBodies = contact;
@@ -1113,7 +1270,9 @@ namespace AdaptorPhysX.Tests
                 NativeArray<float> fields = Track(new NativeArray<float>(1, Allocator.Persistent));
                 shapes[0] = FloorShape();
                 StepWith(sim, shapes, fields, 60, 1.0f);
-                float top = TopCenter(sim);
+                float restTop = TopCenter(sim);
+                // The top face, half a cell below the outer nodes.
+                float top = restTop - LatticeOffset(8);
                 ColliderShape Plate(float y)
                 {
                     ColliderShape plate = ColliderShape.Box(new float3(0.0f, y + 0.01f, 0.0f), quaternion.identity,
@@ -1134,7 +1293,7 @@ namespace AdaptorPhysX.Tests
                     sim.Step(Dt, Substeps, shapes, fields);
                 }
                 AssertFinite(sim);
-                return TopCenter(sim) - top;
+                return TopCenter(sim) - restTop;
             }
 
             float plain = Lift(0.0f);
@@ -1163,7 +1322,7 @@ namespace AdaptorPhysX.Tests
                 shapes[0] = FloorShape();
                 StepWith(sim, shapes, fields, 30, 1.0f);
                 float restTop = TopCenter(sim);
-                float top = restTop;
+                float top = restTop - LatticeOffset(10);
                 // A 2 cm ball pressed 15 mm into the top face, held, then lifted away.
                 const float radius = 0.02f;
                 float3 previous = new float3(0.0f, top + radius + 0.002f, 0.0f);
@@ -1363,7 +1522,16 @@ namespace AdaptorPhysX.Tests
             new NativeArray<ColliderShape>(new[] { FloorShape() }, Allocator.Persistent);
 
         /// <param name="height">Gap between the floor (y = 0) and the bottom of the box.</param>
-        private SoftBodySimulation CreateBox(float3 size, SoftBodyParameters parameters, int resolution, float height)
+        private SoftBodySimulation CreateBox(float3 size, SoftBodyParameters parameters, int resolution, float height) =>
+            CreateBox(size, parameters, resolution, height, quaternion.identity, out _);
+
+        /// <summary>
+        /// A box voxelized turned by <paramref name="turn"/> in rest space and placed turned back, so its faces are axis
+        /// aligned in the world and cross the lattice obliquely unless the turn is zero. <paramref name="vertices"/> are the
+        /// subdivided surface mesh in rest space.
+        /// </summary>
+        private SoftBodySimulation CreateBox(float3 size, SoftBodyParameters parameters, int resolution, float height,
+            quaternion turn, out float3[] vertices)
         {
             Mesh mesh = MeshUtil.CreateBox(size, 8);
             var p = new List<float3>();
@@ -1375,9 +1543,14 @@ namespace AdaptorPhysX.Tests
             Object.DestroyImmediate(mesh);
             float cell = math.cmax(size) / resolution;
             MeshUtil.Subdivide(p, n, uv, tris, 0.5f * cell);
-            VoxelGrid grid = Voxelizer.Voxelize(p.ToArray(), tris.ToArray(), cell);
+            for (int i = 0; i < p.Count; i++)
+            {
+                p[i] = math.rotate(turn, p[i]);
+            }
+            vertices = p.ToArray();
+            VoxelGrid grid = Voxelizer.Voxelize(vertices, tris.ToArray(), cell);
             var sim = new SoftBodySimulation(grid, parameters,
-                float4x4.Translate(new float3(0.0f, height + 0.5f * size.y, 0.0f)));
+                math.mul(float4x4.Translate(new float3(0.0f, height + 0.5f * size.y, 0.0f)), new float4x4(math.conjugate(turn), float3.zero)));
             _sims.Add(sim);
             return sim;
         }

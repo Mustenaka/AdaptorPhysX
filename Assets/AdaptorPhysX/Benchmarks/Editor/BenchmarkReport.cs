@@ -137,8 +137,13 @@ namespace AdaptorPhysX.Benchmarks.Editor
         public PhaseResult frames;
         /// <summary>Enclosed volume of the skin surface relative to the start.</summary>
         public double volumeRatio;
-        /// <summary>Lowest real node below the floor top (positive = penetration).</summary>
+        /// <summary>
+        /// Lowest real node below the floor top (positive = penetration). Nodes outside the surface enter the floor by as
+        /// far as they lie outside it (TODO MED-17).
+        /// </summary>
         public double floorPenetrationMm;
+        /// <summary>Lowest vertex of the rendered skin below the floor top (positive = penetration).</summary>
+        public double surfacePenetrationMm;
     }
 
     [Serializable]

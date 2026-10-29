@@ -20,7 +20,13 @@ namespace AdaptorPhysX
         /// <summary>Rest-shape contraction in [0, 0.5); pinned tissue is then under tension and incisions gape.</summary>
         public float PreStrain;
         public float3 Gravity;
+        /// <summary>Distance kept between the surface and the colliders; negative lets the surface enter them.</summary>
         public float CollisionMargin;
+        /// <summary>
+        /// Contact of the colliders with the cells at the surface (TODO MED-17), so instruments thinner than a cell do not
+        /// pass between the nodes. Without it the colliders push the nodes only.
+        /// </summary>
+        public bool SurfaceContact;
         /// <summary>Contact between separated pieces and folded tissue.</summary>
         public bool SelfCollision;
         /// <summary>
@@ -50,6 +56,7 @@ namespace AdaptorPhysX
             PreStrain = 0.0f,
             Gravity = new float3(0.0f, -9.81f, 0.0f),
             CollisionMargin = 0.0f,
+            SurfaceContact = true,
             SelfCollision = true,
             SkinThickness = 0.0f,
             SkinStiffness = 10.0f,
@@ -345,6 +352,7 @@ namespace AdaptorPhysX
             _materialPoints = new NativeList<MaterialPoint>(0, Allocator.Persistent);
             CreateAttachments();
             RebuildTopology(false);
+            CreateSurfaceCells(grid);
         }
 
         public void Dispose()
@@ -374,6 +382,7 @@ namespace AdaptorPhysX
             if (Copies.IsCreated) Copies.Dispose();
             if (CopyNodes.IsCreated) CopyNodes.Dispose();
             if (_materialPoints.IsCreated) _materialPoints.Dispose();
+            DisposeSurfaceCells();
             DisposeAttachments();
             DisposeNodes();
             DisposeIfCreated(ref _bounds);
@@ -609,7 +618,7 @@ namespace AdaptorPhysX
                 handle = JobHandle.CombineDependencies(pairs, ScheduleFoldCandidates(handle, dt));
             }
 
-            handle = ConfigureInteraction(ref node, handle, dt, substeps, fields, rigidBodies);
+            handle = ConfigureInteraction(ref node, ref solve, handle, dt, substeps, fields, rigidBodies);
             _step = new StepJobs
             {
                 Solve = solve,
@@ -726,6 +735,8 @@ namespace AdaptorPhysX
             }
             JobHandle handle = _step.Handle;
             SolveCellsJob solve = _step.Solve;
+            solve.ShapeTimePrevious = s / (float)_step.Substeps;
+            solve.ShapeTime = (s + 1) / (float)_step.Substeps;
             for (int color = 0; color < 2; color++)
             {
                 int count = _colorSliceStart[color + 1] - _colorSliceStart[color];
