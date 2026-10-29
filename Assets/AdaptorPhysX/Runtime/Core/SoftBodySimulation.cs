@@ -27,7 +27,7 @@ namespace AdaptorPhysX
         /// pass between the nodes. Without it the colliders push the nodes only.
         /// </summary>
         public bool SurfaceContact;
-        /// <summary>Contact between separated pieces and folded tissue.</summary>
+        /// <summary>Contact between separated pieces, folded tissue and the walls of an incision (cut-face contact, TODO SUT-5).</summary>
         public bool SelfCollision;
         /// <summary>
         /// Skin layer: cells within this depth below the surface use SkinStiffness times the
@@ -351,6 +351,7 @@ namespace AdaptorPhysX
             CreateInteraction();
             _materialPoints = new NativeList<MaterialPoint>(0, Allocator.Persistent);
             CreateAttachments();
+            CreateSutures();
             RebuildTopology(false);
             CreateSurfaceCells(grid);
         }
@@ -384,6 +385,7 @@ namespace AdaptorPhysX
             if (_materialPoints.IsCreated) _materialPoints.Dispose();
             DisposeSurfaceCells();
             DisposeAttachments();
+            DisposeSutures();
             DisposeNodes();
             DisposeIfCreated(ref _bounds);
             DisposeIfCreated(ref _bucketStart);
@@ -564,6 +566,7 @@ namespace AdaptorPhysX
             }
             ConfigureFrames(ref solve, h);
             BeginAttachments();
+            BeginStitches(dt);
             JobHandle handle = new EffectiveMassJob
             {
                 InverseMass = InverseMass,
@@ -747,7 +750,7 @@ namespace AdaptorPhysX
                 solve.SliceOffset = _colorSliceStart[color];
                 handle = solve.Schedule(count, 1, handle);
             }
-            _step.Handle = ScheduleAttachments(handle, s);
+            _step.Handle = ScheduleCutFaceContacts(ScheduleAttachments(handle, s));
         }
 
         /// <summary>Jobs of the begun step scheduled so far.</summary>
@@ -902,8 +905,9 @@ namespace AdaptorPhysX
         /// <summary>
         /// Ends stroke <paramref name="stroke"/> (nothing for stroke 0, another stroke or one already ended): restores the
         /// edges it severed less than <see cref="StrokeHealGap"/> cells alongside the cut surface of an earlier stroke without
-        /// separating anything (<see cref="HealStrokeJob"/>) and rebuilds the topology if there were any. Returns their
-        /// number. <see cref="ApxScalpel"/> calls it when it stops cutting; a new stroke ends the previous one.
+        /// separating anything (<see cref="HealStrokeJob"/>) and rebuilds the topology if there were any; the walls of the
+        /// stroke's incision get the cut-face contact. Returns the number of edges restored. <see cref="ApxScalpel"/> calls
+        /// it when it stops cutting; a new stroke ends the previous one.
         /// </summary>
         public int EndStroke(int stroke)
         {
@@ -935,6 +939,11 @@ namespace AdaptorPhysX
             if (healed[0] > 0)
             {
                 RebuildTopology(true);
+            }
+            else
+            {
+                // The walls of the stroke's incision now have the cut-face contact.
+                RebuildCutFacePairs();
             }
             return healed[0];
         }

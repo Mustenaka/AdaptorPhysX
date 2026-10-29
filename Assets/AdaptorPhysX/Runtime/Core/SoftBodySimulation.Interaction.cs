@@ -221,6 +221,7 @@ namespace AdaptorPhysX
                 Dims = Grid.Dims,
                 NodeOutward = _nodeOutward,
             }.Schedule(NodeCount, 512).Complete();
+            RebuildCutFacePairs();
         }
 
         private void DisposeInteractionNodes()
@@ -872,6 +873,7 @@ namespace AdaptorPhysX
                 Attachments = _attachments.AsArray().ToArray(),
                 AttachedPoints = _attachedPoints.AsArray().ToArray(),
                 AttachmentPrevious = _attachmentPrevious.ToArray(),
+                Stitches = _stitches.AsArray().ToArray(),
             };
         }
 
@@ -953,7 +955,13 @@ namespace AdaptorPhysX
                 _attachedPoints.CopyFromNBC(state.AttachedPoints);
                 _attachmentPrevious.AddRange(state.AttachmentPrevious);
             }
+            _stitches.Clear();
+            if (state.Stitches != null)
+            {
+                _stitches.CopyFromNBC(state.Stitches);
+            }
             DisposeIfCreated(ref _attachmentImpulses);
+            DisposeIfCreated(ref _stitchImpulses);
             DisposeIfCreated(ref _impulsePartial);
             RebuildInteractionNodes();
             _stuck.CopyFrom(state.Stuck);
@@ -1011,6 +1019,8 @@ namespace AdaptorPhysX
         internal AttachmentState[] Attachments;
         internal AttachedPoint[] AttachedPoints;
         internal float4x4[] AttachmentPrevious;
+        /// <summary>Stitches (TODO SUT-5).</summary>
+        internal StitchState[] Stitches;
 
         public int NodeCount => Positions.Length;
     }

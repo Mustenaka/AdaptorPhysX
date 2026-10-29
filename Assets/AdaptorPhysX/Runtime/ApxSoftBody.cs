@@ -71,7 +71,7 @@ namespace AdaptorPhysX
         [Tooltip("Colliders also push the cells at the surface where they enter them deepest, so instruments thinner " +
                  "than a cell do not pass between the lattice nodes. Off: colliders push the nodes only.")]
         public bool surfaceContact = true;
-        [Tooltip("Contact between cut-off pieces and between folded parts of the body.")]
+        [Tooltip("Contact between cut-off pieces, between folded parts of the body and between the walls of an incision.")]
         public bool selfCollision = true;
         [Tooltip("Contact with other ApxSoftBody objects whose collision layers include this body's layer.")]
         public bool collideWithBodies = true;
@@ -352,7 +352,7 @@ namespace AdaptorPhysX
             ApplyRigidResponse();
             Simulation.Parameters = BuildParameters();
             bool disturbed = GatherColliders() || _grabs.Count > 0;
-            disturbed |= MoveAttachments();
+            disturbed |= MoveAttachments() || Simulation.StitchesDrawing;
 
             foreach (ApxGrab grab in _grabs.Values)
             {

@@ -215,10 +215,10 @@ namespace AdaptorPhysX
             }
         }
 
-        /// <summary>Schedules the attachment constraints of substep <paramref name="s"/> after <paramref name="handle"/>.</summary>
+        /// <summary>Schedules the attachment and stitch constraints of substep <paramref name="s"/> after <paramref name="handle"/>.</summary>
         private JobHandle ScheduleAttachments(JobHandle handle, int s)
         {
-            if (!_attachmentsActive)
+            if (!_attachmentsActive && !_stitchesActive)
             {
                 return handle;
             }
@@ -232,6 +232,8 @@ namespace AdaptorPhysX
                 Attachments = _attachments.AsArray(),
                 Points = _attachedPoints.AsArray(),
                 Impulses = _attachmentImpulses,
+                Stitches = _stitches.AsArray(),
+                StitchImpulses = _stitchImpulses,
                 Time = (s + 1) / (float)_step.Substeps,
                 InverseH = 1.0f / h,
                 InverseH2 = 1.0f / (h * h),
@@ -240,10 +242,12 @@ namespace AdaptorPhysX
     }
 
     /// <summary>
-    /// One XPBD pass over the attached points (see <see cref="SoftBodySimulation"/>' attachments) at the end of a
-    /// substep, in order. A point x = sum w_k x_k (trilinear weights of its copy's corners) is pulled to its target t:
-    /// with lambda starting at zero each substep, dlambda = -(x - t) / (sum w_k^2 m_k^-1 + compliance / h^2) and each
-    /// corner moves by w_k m_k^-1 dlambda.
+    /// One XPBD pass over the attached points (see <see cref="SoftBodySimulation"/>' attachments) and then over the
+    /// stitches (TODO SUT-5) at the end of a substep, in order. A point x = sum w_k x_k (trilinear weights of its copy's
+    /// corners) is pulled to its target t: with lambda starting at zero each substep, dlambda = -(x - t) / (sum w_k^2 m_k^-1
+    /// + compliance / h^2) and each corner moves by w_k m_k^-1 dlambda. A stitch longer than its length L at the end of
+    /// the substep (interpolated over the step) pulls its points together: C = |x_a - x_b| - L, the denominator the sum
+    /// of both points' (nodes the two share are counted for each).
     /// </summary>
     [BurstCompile(CompileSynchronously = true, DisableSafetyChecks = true)]
     internal struct AttachmentJob : IJob
@@ -255,12 +259,78 @@ namespace AdaptorPhysX
         [ReadOnly] public NativeArray<AttachmentState> Attachments;
         public NativeArray<AttachedPoint> Points;
         public NativeArray<ColliderImpulse> Impulses;
+        [ReadOnly] public NativeArray<StitchState> Stitches;
+        public NativeArray<float> StitchImpulses;
         /// <summary>Time of the end of the substep within the step, 0 to 1.</summary>
         public float Time;
         public float InverseH;
         public float InverseH2;
 
         public void Execute()
+        {
+            SolveAttachments();
+            SolveStitches();
+        }
+
+        private void SolveStitches()
+        {
+            for (int i = 0; i < Stitches.Length; i++)
+            {
+                StitchState s = Stitches[i];
+                if (s.Active == 0)
+                {
+                    continue;
+                }
+                MaterialPoint a = MaterialPoints[s.PointA], b = MaterialPoints[s.PointB];
+                if (a.Copy < 0 || b.Copy < 0)
+                {
+                    continue;
+                }
+                float3 d = Position(a, out float wa) - Position(b, out float wb);
+                float distance = math.length(d);
+                float length = math.lerp(s.StartLength, s.Length, Time);
+                float denominator = wa + wb + s.Compliance * InverseH2;
+                if (distance <= length || denominator <= 0.0f)
+                {
+                    continue;
+                }
+                // dlambda < 0: the thread pulls a towards b and b towards a.
+                float3 n = d / distance;
+                float dlambda = (length - distance) / denominator;
+                Move(a, dlambda * n);
+                Move(b, -dlambda * n);
+                StitchImpulses[i] -= dlambda * InverseH;
+            }
+        }
+
+        /// <summary>Position of a material point and the sum w_k^2 m_k^-1 of its corners.</summary>
+        private float3 Position(MaterialPoint m, out float w)
+        {
+            int b = m.Copy * Lattice.CornerCount;
+            float3 x = float3.zero;
+            w = 0.0f;
+            for (int k = 0; k < Lattice.CornerCount; k++)
+            {
+                int n = CopyNodes[b + k];
+                float wk = Geometry.TrilinearWeight(k, m.U);
+                x += wk * Positions[n];
+                w += wk * wk * Weights[n];
+            }
+            return x;
+        }
+
+        /// <summary>Moves the corners of a material point by w_k m_k^-1 <paramref name="dlambda"/>.</summary>
+        private void Move(MaterialPoint m, float3 dlambda)
+        {
+            int b = m.Copy * Lattice.CornerCount;
+            for (int k = 0; k < Lattice.CornerCount; k++)
+            {
+                int n = CopyNodes[b + k];
+                Positions[n] += Geometry.TrilinearWeight(k, m.U) * Weights[n] * dlambda;
+            }
+        }
+
+        private void SolveAttachments()
         {
             for (int i = 0; i < Points.Length; i++)
             {
@@ -277,16 +347,7 @@ namespace AdaptorPhysX
                     Points[i] = p;
                     continue;
                 }
-                int b = m.Copy * Lattice.CornerCount;
-                float3 x = float3.zero;
-                float w = 0.0f;
-                for (int k = 0; k < Lattice.CornerCount; k++)
-                {
-                    int n = CopyNodes[b + k];
-                    float wk = Geometry.TrilinearWeight(k, m.U);
-                    x += wk * Positions[n];
-                    w += wk * wk * Weights[n];
-                }
+                float3 x = Position(m, out float w);
                 float3 target = math.lerp(math.transform(a.Start, p.Local), math.transform(a.End, p.Local), Time);
                 float denominator = w + a.Compliance * InverseH2;
                 if (denominator <= 0.0f)
@@ -300,11 +361,7 @@ namespace AdaptorPhysX
                     Points[i] = p;
                     continue;
                 }
-                for (int k = 0; k < Lattice.CornerCount; k++)
-                {
-                    int n = CopyNodes[b + k];
-                    Positions[n] += Geometry.TrilinearWeight(k, m.U) * Weights[n] * dlambda;
-                }
+                Move(m, dlambda);
                 // The momentum the corners gained: sum m_k (w_k m_k^-1 dlambda) / h = dlambda / h.
                 float3 impulse = dlambda * InverseH;
                 ColliderImpulse sum = Impulses[p.Attachment];

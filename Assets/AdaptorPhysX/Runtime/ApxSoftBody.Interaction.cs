@@ -154,6 +154,46 @@ namespace AdaptorPhysX
             return Simulation != null && Simulation.TryGetAttachmentWrench(attachment, out wrench);
         }
 
+        /// <summary>
+        /// Adds a stitch (TODO SUT-5) between material points (<see cref="AddMaterialPoint"/>) on the two sides of an incision:
+        /// a thread that only pulls, whose length is drawn by <paramref name="speed"/> m/s from the points' distance to the
+        /// length of the tissue between them without stress (<see cref="StitchNaturalLength"/>), which brings the walls
+        /// together. <paramref name="compliance"/> is in m/N (0 rigid). Returns the handle.
+        /// </summary>
+        public int AddStitch(int pointA, int pointB, float speed, float compliance = 0.0f)
+        {
+            if (Simulation == null)
+            {
+                return -1;
+            }
+            int stitch = Simulation.AddStitch(pointA, pointB, speed, compliance);
+            WakeUp();
+            return stitch;
+        }
+
+        /// <summary>Changes the length a stitch is drawn to (its natural length at first), and optionally the speed, m/s.</summary>
+        public void SetStitchTarget(int stitch, float length, float speed = -1.0f)
+        {
+            Simulation?.SetStitchTarget(stitch, length, speed);
+            WakeUp();
+        }
+
+        /// <summary>Cuts a stitch.</summary>
+        public void RemoveStitch(int stitch)
+        {
+            Simulation?.RemoveStitch(stitch);
+            WakeUp();
+        }
+
+        /// <summary>Force of a stitch's thread in the last step, N.</summary>
+        public float StitchTension(int stitch) => Simulation == null ? 0.0f : Simulation.StitchTension(stitch);
+
+        /// <summary>Length of a stitch: its points are at most this far apart.</summary>
+        public float StitchLength(int stitch) => Simulation == null ? 0.0f : Simulation.StitchLength(stitch);
+
+        /// <summary>Length of the tissue between a stitch's points without stress (pre-strain, skin layer), its default target.</summary>
+        public float StitchNaturalLength(int stitch) => Simulation == null ? 0.0f : Simulation.StitchNaturalLength(stitch);
+
         /// <summary>Moves the attachments to their targets for the next step; true when a target moved.</summary>
         private bool MoveAttachments()
         {

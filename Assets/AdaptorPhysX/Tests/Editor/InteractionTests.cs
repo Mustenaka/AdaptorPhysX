@@ -1495,8 +1495,12 @@ namespace AdaptorPhysX.Tests
             }
 
             Frames(20);
+            int a = sim.AddMaterialPoint(new float3(-0.01f, 0.07f, -0.03f)), b = sim.AddMaterialPoint(new float3(0.01f, 0.07f, -0.03f));
             sim.Cut(new float3(0.0f, 0.5f, -0.2f), new float3(0.0f, -0.5f, -0.2f), new float3(0.0f, 0.5f, 0.0f),
                 new float3(0.0f, -0.5f, 0.0f));
+            // A stitch across the incision drawn shorter than before the cut: the cut-face contact holds the walls (TODO SUT-5).
+            sim.SetStitchTarget(sim.AddStitch(a, b, 0.02f), 0.012f);
+            Assert.Greater(sim.CutFacePairCount, 0);
             Frames(5);
             SoftBodyState state = sim.CaptureState();
             int nodes = sim.NodeCount;
