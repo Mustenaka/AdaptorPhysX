@@ -284,6 +284,65 @@ namespace AdaptorPhysX.Tests
         }
 
         /// <summary>
+        /// A press on a side of the tissue cuts into that side (TODO BUG-20): on the -x face of a 10 cm cube (cell 6.25 mm, no
+        /// gravity) the stroke takes the face's normal as its axis, the pointer moves on the plane of the face, and dragging
+        /// along z cuts a horizontal incision 15 mm into the face, at the height of the press and nowhere else.
+        /// </summary>
+        [Test]
+        public void ScalpelToolCutsIntoASideOfTheTissue()
+        {
+            ApxSoftBody body = CreateBody(16);
+            var scalpel = InScene(new GameObject("Scalpel")).AddComponent<ApxScalpel>();
+            var tool = InScene(new GameObject("Tool")).AddComponent<ApxScalpelTool>();
+            tool.scalpel = scalpel;
+            ApxToolInput Side(float z, bool down, bool held, bool up) => new ApxToolInput
+            {
+                Ray = new Ray(new Vector3(-0.3f, 0.05f, z), Vector3.right),
+                ViewForward = Vector3.right,
+                Down = down,
+                Held = held,
+                Up = up,
+                DeltaTime = Dt,
+            };
+            Frame(tool, scalpel, body, Side(-0.03f, true, true, false));
+            Assert.Greater(Vector3.Dot(tool.StrokeAxis, Vector3.left), 0.99f, $"axis {tool.StrokeAxis}");
+            for (int f = 1; f <= 40; f++)
+            {
+                Frame(tool, scalpel, body, Side(-0.03f + 0.0015f * f, false, true, false));
+            }
+            Assert.Greater(Vector3.Dot(tool.blade.EdgeDirection, Vector3.right), 0.99f, "the blade enters the face horizontally");
+            Frame(tool, scalpel, body, Side(0.03f, false, false, true));
+            Frame(tool, scalpel, body, Side(0.03f, false, false, false));
+            SoftBodySimulation sim = body.Simulation;
+            float h = sim.CellSize;
+            int severed = 0;
+            float3 low = new float3(float.MaxValue), high = new float3(float.MinValue);
+            for (int c = 0; c < sim.CellCount; c++)
+            {
+                for (int e = 0; e < Lattice.EdgeCount; e++)
+                {
+                    if ((sim.Severed[c] & (1 << e)) == 0)
+                    {
+                        continue;
+                    }
+                    float3 u = math.lerp((float3)Lattice.CornerOffset(Lattice.EdgeCorners[2 * e]),
+                        Lattice.CornerOffset(Lattice.EdgeCorners[2 * e + 1]), sim.EdgeT[c * Lattice.EdgeCount + e]);
+                    float3 p = sim.Grid.Origin + ((float3)sim.CellCoord[c] + u) * h;
+                    low = math.min(low, p);
+                    high = math.max(high, p);
+                    severed++;
+                }
+            }
+            TestContext.WriteLine($"{severed} severed edges between {low * 1000} and {high * 1000} mm (rest, body at its centre)");
+            Assert.Greater(severed, 0);
+            Assert.Less(high.x, -0.05f + 0.015f + h, "only within the depth of the blade from the -x face");
+            Assert.Less(math.abs(low.y), h, "at the height of the press");
+            Assert.Less(math.abs(high.y), h, "at the height of the press");
+            Assert.Greater(high.z - low.z, 0.03f, "along the face");
+            Assert.AreEqual(1, sim.CountPieces());
+        }
+
+        /// <summary>
         /// A second stroke along an incision that has opened keeps the blade's depth below the tissue beside the incision
         /// (TODO BUG-19): a pre-tensioned flap 12 x 1.6 x 8 cm (cell 5 mm) held at its ends, an incision 12 mm deep along z that
         /// gapes, then a stroke 1.5 mm beside it. With the height of the tissue taken within one cell of the blade, the floor of

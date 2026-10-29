@@ -4,10 +4,11 @@ namespace AdaptorPhysX.Tools
 {
     /// <summary>
     /// Orientation and depth of a scalpel blade held at a point of the tissue surface. The edge runs
-    /// from the heel above the surface to the tip below it. <see cref="heading"/> turns the cutting
-    /// direction about the world up axis, <see cref="tilt"/> leans the blade sideways about the cutting
-    /// direction (a bevelled cut), <see cref="rake"/> leans the edge forward within the blade plane.
-    /// Depth and clearance are measured vertically, so a leaning blade still reaches the same depth.
+    /// from the heel outside the surface to the tip inside it. <see cref="heading"/> turns the cutting
+    /// direction about the surface's reference axis (<see cref="normal"/>; world up on the top of the
+    /// tissue), <see cref="tilt"/> leans the blade sideways about the cutting direction (a bevelled cut),
+    /// <see cref="rake"/> leans the edge forward within the blade plane. Depth and clearance are measured
+    /// along the reference axis, so a leaning blade still reaches the same depth.
     /// </summary>
     [System.Serializable]
     public struct ApxBladePose
@@ -25,20 +26,34 @@ namespace AdaptorPhysX.Tools
         public float depth;
         [Tooltip("Heel above the surface point, metres (vertical).")]
         public float clearance;
+        [Tooltip("Outward normal of the surface the blade enters (a side face); zero: world up, the top of the tissue.")]
+        public Vector3 normal;
 
-        public Quaternion Rotation =>
+        /// <summary>Whether the blade enters a surface other than the top (<see cref="normal"/> set).</summary>
+        public bool OnSide => normal.sqrMagnitude > 1e-12f;
+
+        /// <summary>Turns world up to the reference axis: identity on the top of the tissue.</summary>
+        public Quaternion Frame => OnSide ? Quaternion.FromToRotation(Vector3.up, normal.normalized) : Quaternion.identity;
+
+        /// <summary>The reference axis: outward from the surface the blade enters.</summary>
+        public Vector3 Up => OnSide ? normal.normalized : Vector3.up;
+
+        public Quaternion Rotation => OnSide ? Frame * LocalRotation : LocalRotation;
+
+        private Quaternion LocalRotation =>
             Quaternion.Euler(0.0f, heading, 0.0f) * Quaternion.AngleAxis(tilt, Vector3.forward) * Quaternion.AngleAxis(-rake, Vector3.right);
 
         /// <summary>Unit vector from heel to tip.</summary>
         public Vector3 EdgeDirection => Rotation * Vector3.down;
 
-        /// <summary>Horizontal cutting direction.</summary>
-        public Vector3 Forward => Quaternion.Euler(0.0f, heading, 0.0f) * Vector3.forward;
+        /// <summary>Cutting direction, across the reference axis (horizontal on the top of the tissue).</summary>
+        public Vector3 Forward => OnSide ? Frame * (Quaternion.Euler(0.0f, heading, 0.0f) * Vector3.forward)
+            : Quaternion.Euler(0.0f, heading, 0.0f) * Vector3.forward;
 
         /// <summary>Edge length for the current depth, clearance and lean.</summary>
         public float EdgeLength => (depth + clearance) / VerticalCosine;
 
-        private float VerticalCosine => Mathf.Max(-EdgeDirection.y, 0.1f);
+        private float VerticalCosine => Mathf.Max(OnSide ? -Vector3.Dot(EdgeDirection, Up) : -EdgeDirection.y, 0.1f);
 
         /// <summary>Heel and tip of the edge through <paramref name="surfacePoint"/>.</summary>
         public void GetEdge(Vector3 surfacePoint, out Vector3 heel, out Vector3 tip)
@@ -61,6 +76,9 @@ namespace AdaptorPhysX.Tools
 
         /// <summary>Heading (degrees) of a horizontal direction.</summary>
         public static float HeadingOf(Vector3 direction) => Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg;
+
+        /// <summary>Heading (degrees) of a direction across the reference axis, as <see cref="heading"/> counts it.</summary>
+        public float HeadingIn(Vector3 direction) => HeadingOf(OnSide ? Quaternion.Inverse(Frame) * direction : direction);
 
         /// <summary>
         /// Draws a blade outline: the edge, the back of the blade behind it (against

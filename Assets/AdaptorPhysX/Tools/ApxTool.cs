@@ -152,27 +152,73 @@ namespace AdaptorPhysX.Tools
         }
 
         /// <summary>
-        /// Height of the topmost real node of <paramref name="body"/> within two cells of the vertical through
-        /// <paramref name="point"/>. Within two cells the walls of an incision that has opened (up to about four cells wide)
-        /// hold the height: with one cell, the floor of the incision was the surface, and a blade drawn along it again went its
-        /// depth below the floor, through a 16 mm flap (TODO BUG-19).
+        /// Height of the surface of <paramref name="body"/> at <paramref name="point"/> along <paramref name="axis"/>: the coordinate
+        /// along the axis of the outermost real node within two cells of the line through the point. Within two cells the walls
+        /// of an incision that has opened (up to about four cells wide) hold the height: with one cell, the floor of the
+        /// incision was the surface, and a blade drawn along it again went its depth below the floor, through a 16 mm flap
+        /// (TODO BUG-19).
         /// </summary>
-        public static bool SurfaceHeight(ApxSoftBody body, Vector3 point, out float height)
+        public static bool SurfaceHeight(ApxSoftBody body, Vector3 point, Vector3 axis, out float height)
         {
-            height = point.y;
+            height = Vector3.Dot(point, axis);
             SoftBodySimulation sim = body != null ? body.Simulation : null;
             if (sim == null)
             {
                 return false;
             }
             Bounds bounds = body.WorldBounds;
-            int node = sim.PickNode(new Vector3(point.x, bounds.max.y + sim.CellSize, point.z), Vector3.down, 2.0f * sim.CellSize);
+            // From outside the body along the axis.
+            float reach = Vector3.Dot(bounds.extents, new Vector3(Mathf.Abs(axis.x), Mathf.Abs(axis.y), Mathf.Abs(axis.z))) +
+                          Vector3.Dot(bounds.center - point, axis) + sim.CellSize;
+            int node = sim.PickNode(point + axis * reach, -axis, 2.0f * sim.CellSize);
             if (node < 0)
             {
                 return false;
             }
-            height = sim.Positions[node].y;
+            height = Vector3.Dot(sim.Positions[node], axis);
             return true;
+        }
+
+        /// <summary>Height of the top of <paramref name="body"/> at <paramref name="point"/> (<see cref="SurfaceHeight(ApxSoftBody, Vector3, Vector3, out float)"/> along up).</summary>
+        public static bool SurfaceHeight(ApxSoftBody body, Vector3 point, out float height) =>
+            SurfaceHeight(body, point, Vector3.up, out height);
+
+        /// <summary>
+        /// Outward normal of the surface at real node <paramref name="node"/>: away from the centre of the real nodes within 1.5
+        /// cells of it.
+        /// </summary>
+        public static Vector3 SurfaceNormal(ApxSoftBody body, int node)
+        {
+            SoftBodySimulation sim = body.Simulation;
+            Vector3 p = sim.Positions[node];
+            float radius = 1.5f * sim.CellSize;
+            Vector3 sum = Vector3.zero;
+            int count = 0;
+            for (int n = 0; n < sim.NodeCount; n++)
+            {
+                if (sim.NodeReal[n] == 0)
+                {
+                    continue;
+                }
+                Vector3 q = sim.Positions[n];
+                if ((q - p).sqrMagnitude <= radius * radius)
+                {
+                    sum += q;
+                    count++;
+                }
+            }
+            return count > 0 ? (p - sum / count).normalized : Vector3.up;
+        }
+
+        /// <summary>
+        /// Reference axis of a stroke started at real node <paramref name="node"/>: world up on the top of the tissue (surface
+        /// normal within 45 degrees of up), else the horizontal part of the normal: a side of the tissue.
+        /// </summary>
+        public static Vector3 StrokeAxis(ApxSoftBody body, int node)
+        {
+            Vector3 normal = SurfaceNormal(body, node);
+            Vector3 horizontal = new Vector3(normal.x, 0.0f, normal.z);
+            return normal.y >= 0.7071f || horizontal.sqrMagnitude < 1e-4f ? Vector3.up : horizontal.normalized;
         }
     }
 }

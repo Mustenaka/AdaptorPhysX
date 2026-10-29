@@ -5,10 +5,14 @@ namespace AdaptorPhysX.Tools
 {
     /// <summary>
     /// Drives an <see cref="ApxScalpel"/> with the pointer. Press on the tissue (or beside it, for a
-    /// cut that enters from the side) and drag: the pointer moves on the horizontal plane through the
-    /// press point, and the blade trails it on a string of length <see cref="stabilizer"/>, keeps its
-    /// depth below the tissue under it and, with <see cref="followStroke"/>, turns to the direction it
-    /// moves in. The cut starts once the pointer has moved <see cref="startDistance"/>, so that the
+    /// cut that enters from the side) and drag: the pointer moves on the plane through the press point
+    /// across the surface's reference axis, and the blade trails it on a string of length
+    /// <see cref="stabilizer"/>, keeps its depth inside the tissue under it and, with
+    /// <see cref="followStroke"/>, turns to the direction it moves in. On the top of the tissue the axis is
+    /// world up: the pointer moves on the horizontal plane and the blade cuts downwards. A press on a side
+    /// of the tissue (surface normal more than 45 degrees from up) takes the horizontal part of the
+    /// surface normal as the axis: the pointer moves on the plane of that side and the blade enters it
+    /// horizontally. The cut starts once the pointer has moved <see cref="startDistance"/>, so that the
     /// first heading is the stroke's. The orientation (<see cref="blade"/>) is set with the keys;
     /// Shift while dragging keeps the stroke on a straight line along the heading.
     /// </summary>
@@ -39,7 +43,7 @@ namespace AdaptorPhysX.Tools
         public override string DisplayName => "Scalpel";
 
         public override string Help =>
-            "LMB drag: cut (press on or beside the tissue)\n" +
+            "LMB drag: cut (press on the top or a side of the tissue, or beside it)\n" +
             "Shift + drag: straight stroke along the heading\n" +
             "Q / E or Ctrl + wheel: depth   Z / X: tilt   C / V: rake\n" +
             "A / D: heading   T: follow stroke on/off   B: upright blade\n" +
@@ -48,6 +52,7 @@ namespace AdaptorPhysX.Tools
         public override string Status =>
             $"heading {blade.heading:0}°  tilt {blade.tilt:0}°  rake {blade.rake:0}°  depth {blade.depth * 1000.0f:0.0} mm\n" +
             $"{(followStroke ? "heading follows the stroke" : "fixed heading")}, stabilizer {stabilizer * 1000.0f:0} mm" +
+            (_pressed && blade.OnSide ? "   side cut" : "") +
             (_pressed ? (IsCutting ? "   CUTTING" : "   move to start") : "") +
             $"\nstroke: {StrokeLength * 1000.0f:0} mm, {SeveredThisStroke} edges severed";
 
@@ -57,14 +62,18 @@ namespace AdaptorPhysX.Tools
         public int SeveredThisStroke => scalpel != null && _strokeUsed ? scalpel.StrokeSeveredEdges : 0;
         /// <summary>Point of the tissue surface the blade is held at.</summary>
         public Vector3 BladePoint => _point;
+        /// <summary>Reference axis of the current stroke: world up on the top of the tissue, horizontal on a side.</summary>
+        public Vector3 StrokeAxis => _axis;
         public IReadOnlyList<Vector3> Trail => _trail;
 
         private bool _pressed;
         private bool _started;
         private bool _strokeUsed;
         private ApxSoftBody _body;
-        /// <summary>Height of the plane the pointer moves on during the stroke.</summary>
-        private float _planeHeight;
+        /// <summary>Plane the pointer moves on during the stroke, through the press point across the stroke's axis.</summary>
+        private Plane _plane;
+        private Vector3 _axis = Vector3.up;
+        /// <summary>The tissue surface under the blade, as a coordinate along the stroke's axis.</summary>
         private float _height;
         private Vector3 _point;
         private Vector3 _pointer;
@@ -72,6 +81,7 @@ namespace AdaptorPhysX.Tools
         private Vector3 _headingAnchor;
         private bool _hover;
         private Vector3 _hoverPoint;
+        private Vector3 _hoverAxis = Vector3.up;
         private readonly List<Vector3> _trail = new List<Vector3>();
 
         private void Start()
@@ -114,14 +124,22 @@ namespace AdaptorPhysX.Tools
                 EndStroke();
             }
             scalpel.cutting = IsCutting;
-            _hover = !_pressed && ApxToolUtil.PickSurface(input.Ray, out _hoverPoint, out _, out _);
+            _hover = false;
+            _hoverAxis = Vector3.up;
+            if (!_pressed && ApxToolUtil.PickSurface(input.Ray, out _hoverPoint, out ApxSoftBody hoverBody, out int hoverNode))
+            {
+                _hover = true;
+                _hoverAxis = ApxToolUtil.StrokeAxis(hoverBody, hoverNode);
+            }
         }
 
         private void BeginStroke(Ray ray)
         {
-            if (ApxToolUtil.PickSurface(ray, out Vector3 hit, out ApxSoftBody body, out _))
+            Vector3 axis = Vector3.up;
+            if (ApxToolUtil.PickSurface(ray, out Vector3 hit, out ApxSoftBody body, out int node))
             {
                 _point = hit;
+                axis = ApxToolUtil.StrokeAxis(body, node);
             }
             else if (ApxToolUtil.PickBeside(ray, besideMargin, out hit, out body))
             {
@@ -132,8 +150,10 @@ namespace AdaptorPhysX.Tools
                 return;
             }
             _body = body;
-            _planeHeight = _point.y;
-            _height = _point.y;
+            _axis = axis;
+            blade.normal = axis == Vector3.up ? Vector3.zero : axis;
+            _plane = new Plane(axis, _point);
+            _height = Vector3.Dot(_point, axis);
             _origin = _point;
             _pointer = _point;
             _headingAnchor = _point;
@@ -164,7 +184,7 @@ namespace AdaptorPhysX.Tools
             // The plane stays at the height of the press for the whole stroke. Following the tissue
             // height instead would move the pointer along the view direction whenever the surface
             // under the blade drops, e.g. into the opening cut, and the blade would jump with it.
-            if (!new Plane(Vector3.up, new Vector3(0.0f, _planeHeight, 0.0f)).Raycast(input.Ray, out float enter))
+            if (!_plane.Raycast(input.Ray, out float enter))
             {
                 return;
             }
@@ -176,7 +196,7 @@ namespace AdaptorPhysX.Tools
             }
             _pointer = target;
             Vector3 move = target - _point;
-            move.y = 0.0f;
+            move -= _axis * Vector3.Dot(move, _axis);
             if (!_started)
             {
                 if (move.magnitude < startDistance)
@@ -185,7 +205,7 @@ namespace AdaptorPhysX.Tools
                 }
                 // The stroke begins where the blade was pressed, turned along the first motion; it
                 // moves on from the next frame so that the scalpel sweeps from this pose.
-                blade.heading = ApxBladePose.HeadingOf(move);
+                blade.heading = blade.HeadingIn(move);
                 _headingAnchor = _point;
                 StartCut();
                 return;
@@ -202,22 +222,22 @@ namespace AdaptorPhysX.Tools
             if (followStroke && !input.Shift)
             {
                 Vector3 travel = next - _headingAnchor;
-                travel.y = 0.0f;
+                travel -= _axis * Vector3.Dot(travel, _axis);
                 if (travel.magnitude >= headingStep)
                 {
-                    blade.heading = Mathf.MoveTowardsAngle(blade.heading, ApxBladePose.HeadingOf(travel),
+                    blade.heading = Mathf.MoveTowardsAngle(blade.heading, blade.HeadingIn(travel),
                         maxTurnRate * Mathf.Max(input.DeltaTime, 1e-3f));
                     blade.Clamp(maxDepth);
                     _headingAnchor = next;
                 }
             }
             // The blade keeps its depth below the tissue under it; beyond the tissue it keeps the last height.
-            if (ApxToolUtil.SurfaceHeight(_body, next, out float surface))
+            if (ApxToolUtil.SurfaceHeight(_body, next, _axis, out float surface))
             {
                 _height = surface;
             }
-            next.y = _height;
-            StrokeLength += new Vector2(next.x - _point.x, next.z - _point.z).magnitude;
+            next += _axis * (_height - Vector3.Dot(next, _axis));
+            StrokeLength += Vector3.ProjectOnPlane(next - _point, _axis).magnitude;
             _point = next;
             if ((_point - _trail[_trail.Count - 1]).sqrMagnitude > 1e-6f)
             {
@@ -230,6 +250,9 @@ namespace AdaptorPhysX.Tools
         {
             _pressed = false;
             _started = false;
+            // The next press finds its own surface.
+            blade.normal = Vector3.zero;
+            _axis = Vector3.up;
             if (scalpel != null)
             {
                 scalpel.cutting = false;
@@ -289,18 +312,22 @@ namespace AdaptorPhysX.Tools
                 return;
             }
             Vector3 point = _pressed ? _point : _hoverPoint;
-            blade.GetEdge(point, out Vector3 heel, out Vector3 tip);
+            // Hovering over a side of the tissue shows the blade as a press there would hold it.
+            ApxBladePose pose = blade;
+            Vector3 axis = _pressed ? _axis : _hoverAxis;
+            pose.normal = axis == Vector3.up ? Vector3.zero : axis;
+            pose.GetEdge(point, out Vector3 heel, out Vector3 tip);
             Color color = IsCutting ? new Color(1.0f, 0.2f, 0.15f) : _pressed ? new Color(1.0f, 0.6f, 0.1f) : new Color(0.2f, 0.9f, 1.0f);
-            ApxBladePose.Draw(view.Overlay, heel, tip, blade.Rotation * Vector3.forward, color);
+            ApxBladePose.Draw(view.Overlay, heel, tip, pose.Rotation * Vector3.forward, color);
             // Surface level across the blade and the cutting direction.
-            Vector3 forward = blade.Forward;
+            Vector3 forward = pose.Forward;
             view.Overlay.Line(point - forward * 0.006f, point + forward * 0.006f, new Color(1.0f, 1.0f, 1.0f, 0.8f));
             view.Overlay.Arrow(point, point + forward * 0.015f, new Color(1.0f, 1.0f, 1.0f, 0.5f));
-            view.Overlay.Line(tip, new Vector3(tip.x, point.y, tip.z), new Color(1.0f, 1.0f, 1.0f, 0.3f));
+            view.Overlay.Line(tip, tip - axis * Vector3.Dot(tip - point, axis), new Color(1.0f, 1.0f, 1.0f, 0.3f));
             if (IsCutting)
             {
                 // The string from the blade to the pointer.
-                var pointer = new Vector3(_pointer.x, point.y, _pointer.z);
+                Vector3 pointer = _pointer - _axis * Vector3.Dot(_pointer - point, _axis);
                 view.Overlay.Line(point, pointer, new Color(1.0f, 0.85f, 0.2f, 0.6f));
                 view.Overlay.Cross(pointer, 0.002f, new Color(1.0f, 0.85f, 0.2f, 0.9f));
             }
