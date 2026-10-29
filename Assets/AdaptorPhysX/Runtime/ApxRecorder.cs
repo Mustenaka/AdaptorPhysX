@@ -524,6 +524,13 @@ namespace AdaptorPhysX
                 if (!_sampled[i] || !pose.Position.Equals(_lastPoses[i].Position) || !pose.Rotation.Equals(_lastPoses[i].Rotation))
                 {
                     Recording.Poses.Add(pose);
+                    // Unity normalizes a rotation when it is set, and a rotation read back and set again can change in its last
+                    // bits: the recording sets the pose it stores, as the replay will, so both step with the same rotation.
+                    // The next steps compare with what the Transform holds then.
+                    t.localPosition = pose.Position;
+                    t.localRotation = pose.Rotation;
+                    pose.Position = t.localPosition;
+                    pose.Rotation = t.localRotation;
                     _lastPoses[i] = pose;
                 }
                 ApxInstrumentSample settings = SettingsOf(t);

@@ -120,6 +120,59 @@ namespace AdaptorPhysX.Tests
             Assert.That(replayed.Recorder.DivergedTick, Is.InRange(40, Steps), "the checks agree before the ball touches");
         }
 
+        /// <summary>
+        /// An instrument turned every step to a rotation composed of three turns, as a tool turns a grasper: Unity normalizes a
+        /// rotation when it is set, and setting a rotation read from a Transform again changes its last bits in some cases. The
+        /// rotations the bodies would read after each step's start are the same in the replay as in the recording, bit for bit.
+        /// </summary>
+        [Test]
+        public void ReplayRepeatsTheInstrumentRotationsBitForBit()
+        {
+            const int steps = 2000;
+            Quaternion[] Run(ApxRecording replay, out ApxRecording recording)
+            {
+                Transform instrument = InScene(new GameObject("Instrument")).transform;
+                var recorder = InScene(new GameObject("Recorder")).AddComponent<ApxRecorder>();
+                recorder.instruments = new[] { instrument };
+                recorder.checkInterval = 0;
+                var random = new System.Random(1);
+                var read = new Quaternion[steps];
+                if (replay == null)
+                {
+                    recorder.StartRecording();
+                }
+                else
+                {
+                    recorder.Replay(replay);
+                }
+                for (int tick = 0; tick < steps; tick++)
+                {
+                    if (replay == null)
+                    {
+                        instrument.SetPositionAndRotation(new Vector3(0.0f, 0.1f, 0.0f),
+                            Quaternion.AngleAxis(360.0f * (float)random.NextDouble(), Vector3.up) *
+                            Quaternion.LookRotation(Vector3.forward, Vector3.up) *
+                            Quaternion.AngleAxis(90.0f * (float)random.NextDouble(), Vector3.forward));
+                    }
+                    recorder.Step();
+                    read[tick] = instrument.rotation;
+                }
+                recording = replay == null ? recorder.StopRecording() : null;
+                return read;
+            }
+
+            Quaternion[] recorded = Run(null, out ApxRecording made);
+            Clear();
+            Quaternion[] replayed = Run(ApxRecording.FromJson(made.ToJson()), out _);
+            int different = 0;
+            for (int tick = 0; tick < steps; tick++)
+            {
+                different += recorded[tick].Equals(replayed[tick]) ? 0 : 1;
+            }
+            TestContext.WriteLine($"{made.Poses.Count} poses recorded; {different} of {steps} rotations differ in the replay");
+            Assert.AreEqual(0, different);
+        }
+
         private sealed class Setup
         {
             public ApxSoftBody Strip;
@@ -172,6 +225,9 @@ namespace AdaptorPhysX.Tests
             // The grasper closes on the free end within 20 steps, lifts it by 2 cm and opens at step 160.
             s.Grasper.gap = tick < 160 ? Mathf.Lerp(0.014f, 0.006f, tick / 20.0f) : 0.014f;
             s.Grasper.transform.position = new Vector3(0.04f, 0.1f + 0.02f * Mathf.Clamp01((tick - 30) / 60.0f), 0.0f);
+            // It turns by 30 degrees about the strip while it lifts: rotations that are not exact, whose bits the replay must repeat.
+            float turn = Mathf.Clamp01((tick - 40) / 60.0f);
+            s.Grasper.transform.rotation = Quaternion.AngleAxis(30.0f * turn, Vector3.right) * Quaternion.AngleAxis(10.0f * turn, Vector3.up);
             // The ball (radius 6 mm) comes down 3 mm into the strip by step 40, stays and goes back up by step 100.
             float press = tick < 70 ? Mathf.Clamp01((tick - 10) / 30.0f) : Mathf.Clamp01((100 - tick) / 30.0f);
             s.Ball.position = new Vector3(-0.025f, 0.125f - 0.017f * press, 0.0f);
