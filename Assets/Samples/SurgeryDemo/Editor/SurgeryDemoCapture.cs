@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using AdaptorPhysX.Tools;
 using UnityEditor;
@@ -8,7 +9,7 @@ using UnityEngine;
 namespace AdaptorPhysX.Samples.Editor
 {
     /// <summary>
-    /// Runs the standard scenarios (ROADMAP S1-S6) on the demo scene in edit mode with a
+    /// Runs the standard scenarios (ROADMAP S1-S7) on the demo scene in edit mode with a
     /// scripted scalpel and forceps, and writes a PNG per stage. Batch use:
     /// Unity -batchmode -projectPath . -executeMethod AdaptorPhysX.Samples.Editor.SurgeryDemoCapture.CaptureBatch -apxCaptureDir &lt;dir&gt;
     /// </summary>
@@ -21,6 +22,7 @@ namespace AdaptorPhysX.Samples.Editor
         private static ApxScalpel _scalpel;
         private static ApxDebugView _debugView;
         private static string _directory;
+        private static readonly List<StitchLine> _stitchLines = new List<StitchLine>();
 
         [MenuItem("AdaptorPhysX/Capture Standard Scenarios")]
         public static void CaptureMenu()
@@ -80,6 +82,7 @@ namespace AdaptorPhysX.Samples.Editor
                 SurgeryDemoSceneBuilder.Build();
             }
             EditorSceneManager.OpenScene(ScenePath);
+            _stitchLines.Clear();
             try
             {
                 RunScenarios();
@@ -195,6 +198,30 @@ namespace AdaptorPhysX.Samples.Editor
             // S6: short, shallow incision into the solid tissue pad. Skin tension opens it; the tissue
             // below the incision stays solid. Then the forceps retract one edge to show the layers.
             float padTop = SurfaceHeight(pad, new Vector3(0.0f, 0.3f, -0.21f));
+            // For S7 (below): material points across the incision placed before it is cut, so each keeps its side. Three
+            // stitches 6 mm apart join points 3 mm either side of it and 1 mm below the rendered skin (the topmost node
+            // lies up to a cell above it); the points at the surface above them hold the drawn threads, and pairs on the
+            // two walls just below the surface measure the opening.
+            float skin = SkinHeight(pad, 0.0f, -0.21f);
+            var stitchA = new int[3];
+            var stitchB = new int[3];
+            var threadA = new int[3];
+            var threadB = new int[3];
+            for (int i = 0; i < 3; i++)
+            {
+                float x = 0.006f * (i - 1);
+                stitchA[i] = pad.AddMaterialPoint(new Vector3(x, skin - 0.001f, -0.213f));
+                stitchB[i] = pad.AddMaterialPoint(new Vector3(x, skin - 0.001f, -0.207f));
+                threadA[i] = pad.AddMaterialPoint(new Vector3(x, skin - 0.0002f, -0.213f));
+                threadB[i] = pad.AddMaterialPoint(new Vector3(x, skin - 0.0002f, -0.207f));
+            }
+            var walls = new List<Vector2Int>();
+            for (int i = -5; i <= 5; i++)
+            {
+                walls.Add(new Vector2Int(pad.AddMaterialPoint(new Vector3(0.002f * i, skin - 0.0002f, -0.2102f)),
+                    pad.AddMaterialPoint(new Vector3(0.002f * i, skin - 0.0002f, -0.2098f))));
+            }
+            float[] wallRest = walls.ConvertAll(w => Vector3.Distance(pad.MaterialPointPosition(w.x), pad.MaterialPointPosition(w.y))).ToArray();
             Stroke(new Vector3(-0.012f, padTop + 0.01f, -0.21f), new Vector3(0.012f, padTop + 0.01f, -0.21f), Vector3.zero,
                 new Vector3(0.0f, -0.018f, 0.0f), 30);
             Run(60);
@@ -217,6 +244,100 @@ namespace AdaptorPhysX.Samples.Editor
                 new Vector3(0.025f, padTop + 0.045f, -0.27f), new Vector3(0.025f, padTop - 0.004f, -0.205f));
 
             Shot("99_overview", new Vector3(0.0f, 0.32f, -0.42f), new Vector3(0.0f, 0.03f, 0.0f));
+
+            // S7: once the retracted edge is back, the three stitches across the S6 incision are drawn at 1 cm/s to the
+            // length of the skin between their points without stress; the incision closes. The threads are drawn over the skin.
+            Run(60);
+            float opened = Opening(pad, walls, wallRest);
+            var stitches = new int[3];
+            for (int i = 0; i < 3; i++)
+            {
+                stitches[i] = pad.AddStitch(stitchA[i], stitchB[i], 0.01f);
+                _stitchLines.Add(StitchLine.Create(pad, threadA[i], threadB[i]));
+            }
+            Run(150);
+            Log("S7 sutured");
+            Debug.Log($"[ApxCapture] S7: opening at the surface {opened * 1000:0.00} -> {Opening(pad, walls, wallRest) * 1000:0.00} mm, " +
+                      $"tensions {string.Join(" / ", Array.ConvertAll(stitches, t => pad.StitchTension(t).ToString("0.000")))} N");
+            Shot("S7a_pad_sutured", new Vector3(0.0f, padTop + 0.06f, -0.27f), new Vector3(0.0f, padTop, -0.21f));
+            Shot("S7b_pad_sutured_close", new Vector3(0.0f, skin + 0.03f, -0.218f), new Vector3(0.0f, skin, -0.21f));
+        }
+
+        /// <summary>
+        /// Largest opening of an incision: the distance of each pair of wall points less the one before the cut; negative where
+        /// the walls press into each other everywhere.
+        /// </summary>
+        private static float Opening(ApxSoftBody body, List<Vector2Int> walls, float[] rest)
+        {
+            float opening = float.MinValue;
+            for (int i = 0; i < walls.Count; i++)
+            {
+                opening = Mathf.Max(opening,
+                    Vector3.Distance(body.MaterialPointPosition(walls[i].x), body.MaterialPointPosition(walls[i].y)) - rest[i]);
+            }
+            return opening;
+        }
+
+        /// <summary>
+        /// A stitch drawn as a thread over the skin: a thin tube from one material point at the surface in an arc over the
+        /// incision to the other.
+        /// </summary>
+        private sealed class StitchLine
+        {
+            private const int Segments = 8;
+            private const int Sides = 6;
+            /// <summary>Height of the arc over the incision and radius of the thread, m.</summary>
+            private const float Lift = 0.0012f;
+            private const float Radius = 0.00025f;
+
+            private Mesh _mesh;
+            private ApxSoftBody _body;
+            private int _a, _b;
+            private readonly Vector3[] _vertices = new Vector3[(Segments + 1) * Sides];
+
+            public static StitchLine Create(ApxSoftBody body, int a, int b)
+            {
+                var thread = new GameObject("Stitch", typeof(MeshFilter), typeof(MeshRenderer));
+                thread.GetComponent<MeshRenderer>().sharedMaterial =
+                    new Material(Shader.Find("Unlit/Color")) { color = new Color(0.25f, 0.12f, 0.45f) };
+                var stitch = new StitchLine { _mesh = new Mesh(), _body = body, _a = a, _b = b };
+                var triangles = new int[Segments * Sides * 6];
+                for (int i = 0, t = 0; i < Segments; i++)
+                for (int k = 0; k < Sides; k++)
+                {
+                    int p = i * Sides + k, q = i * Sides + (k + 1) % Sides;
+                    triangles[t++] = p;
+                    triangles[t++] = p + Sides;
+                    triangles[t++] = q;
+                    triangles[t++] = q;
+                    triangles[t++] = p + Sides;
+                    triangles[t++] = q + Sides;
+                }
+                stitch.Update();
+                stitch._mesh.triangles = triangles;
+                thread.GetComponent<MeshFilter>().sharedMesh = stitch._mesh;
+                return stitch;
+            }
+
+            public void Update()
+            {
+                Vector3 a = _body.MaterialPointPosition(_a), b = _body.MaterialPointPosition(_b);
+                Vector3 side = Vector3.Cross(b - a, Vector3.up).normalized;
+                for (int i = 0; i <= Segments; i++)
+                {
+                    float t = i / (float)Segments;
+                    Vector3 center = Vector3.Lerp(a, b, t) + Vector3.up * (Lift * Mathf.Sin(Mathf.PI * t));
+                    Vector3 tangent = (b - a) + Vector3.up * (Lift * Mathf.PI * Mathf.Cos(Mathf.PI * t));
+                    Vector3 normal = Vector3.Cross(side, tangent).normalized;
+                    for (int k = 0; k < Sides; k++)
+                    {
+                        float angle = 2.0f * Mathf.PI * k / Sides;
+                        _vertices[i * Sides + k] = center + Radius * (Mathf.Cos(angle) * side + Mathf.Sin(angle) * normal);
+                    }
+                }
+                _mesh.vertices = _vertices;
+                _mesh.RecalculateBounds();
+            }
         }
 
         private static void DebugShot(string name, ApxDebugLayers layers, bool hideSurfaces, Vector3 position, Vector3 target)
@@ -245,6 +366,22 @@ namespace AdaptorPhysX.Samples.Editor
             return node >= 0 ? sim.Positions[node].y : above.y;
         }
 
+        /// <summary>Height of the rendered skin at (<paramref name="x"/>, <paramref name="z"/>): its highest vertex within 2 mm.</summary>
+        private static float SkinHeight(ApxSoftBody body, float x, float z)
+        {
+            float height = float.MinValue;
+            Matrix4x4 toWorld = body.transform.localToWorldMatrix;
+            foreach (Vector3 v in body.Surface.Mesh.vertices)
+            {
+                Vector3 p = toWorld.MultiplyPoint3x4(v);
+                if (Mathf.Abs(p.x - x) < 0.002f && Mathf.Abs(p.z - z) < 0.002f)
+                {
+                    height = Mathf.Max(height, p.y);
+                }
+            }
+            return height;
+        }
+
         private static ApxSoftBody Find(string name) => GameObject.Find(name).GetComponent<ApxSoftBody>();
 
         private static void Run(int frames)
@@ -265,6 +402,10 @@ namespace AdaptorPhysX.Samples.Editor
             foreach (ApxSoftBody body in ApxSoftBody.Active)
             {
                 body.UpdateRender();
+            }
+            foreach (StitchLine line in _stitchLines)
+            {
+                line.Update();
             }
         }
 

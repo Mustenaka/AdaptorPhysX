@@ -9,9 +9,9 @@ Unity 开源体素柔体插件，支持动态切割与半切割，面向虚拟�
 |---|---|---|---|
 | ![S1](docs/images/S1b_block_pulled.png) | ![S2](docs/images/S2_flap_incision.png) | ![S4](docs/images/S4_flap_retraction_close.png) | ![S5](docs/images/S5b_liver_wedge_lifted.png) |
 
-| 十字切与再次切割后拉开的 5 块 | 实体组织上的小切口 | 牵开切口，露出真皮与脂肪 |
-|---|---|---|
-| ![S3b](docs/images/S3b_block_pieces_apart.png) | ![S6a](docs/images/S6a_pad_incision.png) | ![S6b](docs/images/S6b_pad_retracted.png) |
+| 十字切与再次切割后拉开的 5 块 | 实体组织上的小切口 | 牵开切口，露出真皮与脂肪 | 缝合 3 针后切口闭合 |
+|---|---|---|---|
+| ![S3b](docs/images/S3b_block_pieces_apart.png) | ![S6a](docs/images/S6a_pad_incision.png) | ![S6b](docs/images/S6b_pad_retracted.png) | ![S7b](docs/images/S7b_pad_sutured_close.png) |
 
 | 软体之间的接触 | 钢球（Rigidbody）落在组织上 | 环形器械（距离场）压入 | 粘附的平板提起组织 |
 |---|---|---|---|
@@ -174,7 +174,7 @@ docs/                               设计说明、路线图、待办清单（TO
 "D:/Program Files/Unity/Hub/Editor/2022.3.54f1/Editor/Unity.exe" -batchmode -projectPath . -executeMethod AdaptorPhysX.Samples.Editor.SurgeryDemoCapture.CaptureBatch -apxCaptureDir Captures
 ```
 
-截图工具按脚本执行 `docs/ROADMAP.md` 中的标准场景 S1–S6，输出 PNG，并在日志中记录每个阶段的块大小与耗时。
+截图工具按脚本执行 `docs/ROADMAP.md` 中的标准场景 S1–S7，输出 PNG，并在日志中记录每个阶段的块大小与耗时。
 交互场景 S8–S11 用 `AdaptorPhysX.Samples.Editor.InteractionDemoCapture.CaptureBatch`（参数相同），
 编辑器内为菜单 `AdaptorPhysX/Capture Interaction Scenarios`；真实网格场景 S12 用
 `AdaptorPhysX.Samples.Editor.RealMeshDemoCapture.CaptureBatch`，菜单 `AdaptorPhysX/Capture Real Mesh Scenarios`。

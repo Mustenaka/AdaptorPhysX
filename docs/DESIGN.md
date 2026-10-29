@@ -516,8 +516,10 @@
 - `AdaptorPhysX/Capture Interaction Scenarios`：在编辑模式下按脚本执行 S8–S11（PhysX 由脚本步进），输出 PNG，
   日志记录各物体的包围盒、钢球高度、环形器械下方与塑性块中部的表面高度。batchmode 入口
   `AdaptorPhysX.Samples.Editor.InteractionDemoCapture.CaptureBatch`，参数同上。
-- `AdaptorPhysX/Capture Standard Scenarios`：在编辑模式下按脚本执行 S1–S6，并输出 PNG 与日志
-  （每个阶段的块大小、副本数、耗时）。菜单执行前提示保存已修改的场景，结束后从磁盘重新加载原场景；
+- `AdaptorPhysX/Capture Standard Scenarios`：在编辑模式下按脚本执行 S1–S7，并输出 PNG 与日志
+  （每个阶段的块大小、副本数、耗时；S7 另记切口表面的张开量与针脚张力）。S7 的针脚点在 S6 切开之前放置，
+  高度取渲染皮肤的高度（最高节点可能高出皮肤近一个体素）；缝线画为两点之间、高出皮肤 1.2 mm 的弧形细管，只用于截图
+  （`LineRenderer` 在编辑模式下随相机移动只渲染出部分线段，未采用）。菜单执行前提示保存已修改的场景，结束后从磁盘重新加载原场景；
   Play 模式下不可用。batchmode 用法：
   `Unity -batchmode -projectPath . -executeMethod AdaptorPhysX.Samples.Editor.SurgeryDemoCapture.CaptureBatch -apxCaptureDir <目录>`
 - `AdaptorPhysX/Run Benchmarks`（`Assets/AdaptorPhysX/Benchmarks/Editor/`）：在新的空场景中，对每个网格、每个分辨率
